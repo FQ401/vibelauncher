@@ -55,9 +55,27 @@ impl RunningGame {
             .child
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        // The descendants first: once the parent is gone the tree cannot be walked any more.
+        #[cfg(windows)]
+        kill_tree(self.pid);
         // The process may have ended already; that is the outcome wanted.
         let _ = child.kill();
     }
+}
+
+/// Ends the descendants of `pid` too: on Windows `java.exe` can be a launcher shim that starts
+/// the real runtime as a child, and killing the shim alone leaves the game running.
+#[cfg(windows)]
+fn kill_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
 }
 
 /// Starts `command` without a shell, in its working directory, with no input.

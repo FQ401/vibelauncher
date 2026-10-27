@@ -299,3 +299,55 @@ fn prepare_installs_chooses_java_and_warns() {
     let err = prepare(&installer, &input, &Job::new()).expect_err("no java");
     assert_eq!(err.kind, ErrorKind::Java);
 }
+
+#[test]
+fn launchwrapper_versions_get_java_8_even_when_newer_is_installed() {
+    let server = Arc::new(FakeServer::default());
+    add_version(
+        &server,
+        "1.0",
+        "1.0",
+        json!({}),
+        json!({
+            "mainClass": "net.minecraft.launchwrapper.Launch",
+            "javaVersion": null,
+        }),
+    );
+    let dir = TempDir::new();
+    let installer = installer(&server, dir.path());
+    let game = dir.path().join("game");
+    let settings = Settings::default();
+    let session = session();
+    let runtimes = [runtime(21, Arch::X86_64), runtime(8, Arch::X86_64)];
+    let input = PrepareInput {
+        version: "1.0",
+        game_dir: &game,
+        session: &session,
+        settings: &settings,
+        runtimes: &runtimes,
+        fixed_java: None,
+        launcher_name: "VibeLauncher",
+        launcher_version: "1",
+    };
+    let prepared = prepare(&installer, &input, &Job::new()).expect("prepare");
+    assert_eq!(prepared.java.runtime.major, 8);
+
+    // A 32-bit Java is the last resort and its heap is limited.
+    let only_32_bit = [runtime(8, Arch::X86)];
+    let input = PrepareInput {
+        runtimes: &only_32_bit,
+        ..input
+    };
+    let prepared = prepare(&installer, &input, &Job::new()).expect("prepare");
+    assert_eq!(prepared.command.args[1], "-Xmx1024M");
+    assert!(prepared.warnings.iter().any(|w| w.contains("32-bit")));
+
+    // Only a newer Java: refused, since the game cannot run on it.
+    let only_new = [runtime(21, Arch::X86_64)];
+    let input = PrepareInput {
+        runtimes: &only_new,
+        ..input
+    };
+    let err = prepare(&installer, &input, &Job::new()).expect_err("too new");
+    assert_eq!(err.kind, ErrorKind::Java);
+}
