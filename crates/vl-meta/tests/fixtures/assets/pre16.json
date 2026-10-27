@@ -1,0 +1,7 @@
+{
+  "map_to_resources": true,
+  "objects": {
+    "newsound/mob/ghast/moan1.ogg": { "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 2000 },
+    "music/calm1.ogg": { "hash": "cccccccccccccccccccccccccccccccccccccccc", "size": 30000 }
+  }
+}

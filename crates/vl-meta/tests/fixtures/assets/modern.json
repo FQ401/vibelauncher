@@ -1,0 +1,8 @@
+{
+  "objects": {
+    "icons/icon_16x16.png": { "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 100 },
+    "minecraft/sounds/mob/cow/say1.ogg": { "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 2000 },
+    "minecraft/sounds/mob/cow/say2.ogg": { "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 2000 },
+    "minecraft/lang/en_us.json": { "hash": "cccccccccccccccccccccccccccccccccccccccc", "size": 30000 }
+  }
+}
