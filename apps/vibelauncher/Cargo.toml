@@ -1,0 +1,23 @@
+[package]
+name = "vl-app"
+description = "VibeLauncher desktop app: an eframe window around the shared egui interface."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "app"
+
+[[bin]]
+name = "vibelauncher"
+path = "src/main.rs"
+
+[dependencies]
+vl-core.workspace = true
+vl-mock.workspace = true
+vl-ui-egui.workspace = true
+eframe.workspace = true
+
+[lints]
+workspace = true
