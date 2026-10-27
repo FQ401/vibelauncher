@@ -45,6 +45,7 @@ impl BackendConfig {
 pub struct Backend {
     config: BackendConfig,
     store: Store,
+    instances: vl_instance::Instances,
     events: Arc<EventBus>,
     java: java::JavaService,
 }
@@ -54,11 +55,13 @@ impl Backend {
     /// migrating it to the current format).
     pub fn new(config: BackendConfig) -> vl_core::Result<Self> {
         let store = Store::open(&config.store_options())?;
+        let instances = vl_instance::Instances::open(&store.data_dir().join("instances"))?;
         let events = Arc::new(EventBus::default());
         Ok(Self {
             java: java::JavaService::new(&config, Arc::clone(&events)),
             config,
             store,
+            instances,
             events,
         })
     }
@@ -110,11 +113,10 @@ pub(crate) fn not_yet(replier: Replier, domain: &str, command: &impl std::fmt::D
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vl_core::ErrorKind;
     use vl_core::instance::InstanceCommand;
 
     #[test]
-    fn says_hello_and_reports_unhandled_commands() {
+    fn says_hello_and_lists_no_instances_in_a_fresh_directory() {
         let dir = std::env::temp_dir().join(format!("vl-backend-test-{}", std::process::id()));
         let backend = Backend::new(BackendConfig {
             data_dir: Some(dir.clone()),
@@ -122,11 +124,11 @@ mod tests {
         .unwrap();
         let hello = backend.call(Command::Hello).wait().unwrap();
         assert!(matches!(hello, Response::Hello(info) if !info.mock));
-        let err = backend
+        let list = backend
             .call(Command::Instances(InstanceCommand::List))
             .wait()
-            .unwrap_err();
-        assert_eq!(err.kind, ErrorKind::Unsupported);
+            .unwrap();
+        assert!(matches!(list, Response::Instances(i) if i.is_empty()));
         drop(backend);
         let _ = std::fs::remove_dir_all(dir);
     }
