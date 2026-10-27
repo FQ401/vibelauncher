@@ -156,6 +156,27 @@ front end subscribes before sending a command whose events it follows.
 with the exit code and whether it was a crash or a user stop. `LaunchCommand::Stop` stops a
 preparing or running game.
 
+`vl-launch` does the work behind it:
+
+- `Installer::install` makes a version ready below the shared game files (`libraries/`, `assets/`,
+  `versions/<id>/`): version JSON and the version manifest (HTTP cache; an installed version needs
+  no network), client jar, libraries, logging configuration, asset objects in one verified,
+  cancellable download batch with byte progress, natives unpacked with `extract.exclude`, and the
+  files of the `virtual` and `map_to_resources` asset layouts restored. `VersionCommand::Install`
+  runs it as a task without starting the game.
+- `prepare` adds the Java choice (the version's major version; a game started through
+  LaunchWrapper is kept on Java 8), the memory check (a warning when `-Xmx` exceeds the free
+  memory, a 1 GiB limit on 32-bit Java), and the command line: memory, user JVM arguments, the
+  version's JVM arguments, logging, main class, game arguments with `${variables}` substituted.
+- The player's session (`LaunchSession`: name, UUID, access token, user type) is a parameter of
+  `prepare`. The backend takes it from the account and refreshes an expiring token first.
+- `process::spawn` starts Java without a shell in the instance's game directory, streams both
+  output streams line by line (the access token is masked), and reports the exit code; a stop
+  kills the whole process tree.
+- Apple silicon: LWJGL 3 versions without arm64 natives get LWJGL 3.3.3 from Maven Central;
+  LWJGL 2 versions (up to 1.12.2) are installed for `x86_64` and need an `x86_64` Java (Rosetta).
+
+
 ### Threading
 
 The facade needs no async runtime: replies and event streams are channels. A backend runs its

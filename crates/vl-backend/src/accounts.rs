@@ -7,6 +7,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use vl_auth::{
     AccountBook, AuthError, Authenticator, MsaConfig, NetHttp, Session, TokenStore,
@@ -14,7 +15,8 @@ use vl_auth::{
 };
 use vl_core::account::{Account, AccountCommand, AccountEvent, AccountKind, DeviceCodePrompt};
 use vl_core::task::{TaskEvent, TaskInfo, TaskKind, TaskOutcome};
-use vl_core::{AccountId, Error, Event, EventBus, Replier, Response, TaskId};
+use vl_core::{AccountId, Error, ErrorKind, Event, EventBus, Replier, Response, TaskId};
+use vl_launch::LaunchSession;
 use vl_net::{CancelToken, NetConfig};
 use vl_store::Store;
 
@@ -25,6 +27,7 @@ pub(crate) fn handle(backend: &Backend, command: AccountCommand, replier: Replie
 }
 
 /// The account domain: list, sign-in, refresh, removal.
+#[derive(Clone)]
 pub(crate) struct Service {
     shared: Arc<Shared>,
 }
@@ -76,6 +79,16 @@ impl Service {
                 next_task: AtomicU64::new(1),
             }),
         })
+    }
+
+    /// The session the game starts with, for `account` or the default account. The access token
+    /// is refreshed first when it is about to expire (unless `offline`).
+    pub(crate) fn launch_session(
+        &self,
+        account: Option<&AccountId>,
+        offline: bool,
+    ) -> vl_core::Result<LaunchSession> {
+        self.shared.launch_session(account, offline)
     }
 
     pub(crate) fn handle(&self, command: AccountCommand, replier: Replier) {
@@ -151,6 +164,78 @@ impl Shared {
                     Err(e) => Err(e),
                 }
             }
+        })
+    }
+
+    fn launch_session(
+        &self,
+        requested: Option<&AccountId>,
+        offline: bool,
+    ) -> vl_core::Result<LaunchSession> {
+        let account = {
+            let book = self.book();
+            match requested {
+                Some(id) => book.get(id).cloned(),
+                None => book
+                    .accounts()
+                    .iter()
+                    .find(|a| a.is_default)
+                    .or_else(|| book.accounts().first())
+                    .cloned(),
+            }
+        }
+        .ok_or_else(|| match requested {
+            Some(id) => Error::not_found(format!("account {id}")),
+            None => Error::new(ErrorKind::Auth, "there is no account; sign in first"),
+        })?;
+        if account.kind != AccountKind::Microsoft {
+            return Err(Error::unsupported(format!(
+                "account {} cannot start the game",
+                account.id
+            )));
+        }
+        let sign_in_again = || Error::new(ErrorKind::Auth, "sign in to this account again");
+        if account.needs_sign_in {
+            return Err(sign_in_again());
+        }
+        let tokens = self
+            .tokens
+            .get(account.id.as_str())?
+            .ok_or_else(sign_in_again)?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let (name, uuid, token) = if tokens.minecraft_expires_at > now.saturating_add(120) {
+            (account.name, account.uuid, tokens.minecraft_token)
+        } else if offline {
+            return Err(Error::new(
+                ErrorKind::Auth,
+                "the saved sign-in has expired; go online to refresh it",
+            ));
+        } else {
+            match self.auth.refresh(&tokens.refresh_token) {
+                Ok(session) => {
+                    self.store_session(&session)?;
+                    (
+                        session.profile.name.clone(),
+                        session.profile.uuid.clone(),
+                        session.minecraft_token.clone(),
+                    )
+                }
+                Err(AuthError::SignInRequired) => {
+                    self.mark_sign_in_required(&account.id)?;
+                    return Err(sign_in_again());
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
+        Ok(LaunchSession {
+            player_name: name,
+            uuid,
+            access_token: vl_launch::Secret::new(token.expose()),
+            user_type: "msa".to_owned(),
+            xuid: None,
+            client_id: None,
         })
     }
 

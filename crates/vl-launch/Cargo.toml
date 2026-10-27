@@ -17,6 +17,15 @@ vl-store.workspace = true
 vl-java.workspace = true
 vl-instance.workspace = true
 vl-tasks.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+zip.workspace = true
+# Selects the pure-Rust deflate backend that `zip` needs.
+flate2.workspace = true
+
+[dev-dependencies]
+sha1.workspace = true
 
 [lints]
 workspace = true

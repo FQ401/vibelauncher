@@ -1,10 +1,297 @@
 //! Launch commands, served by `vl-launch`.
+//!
+//! `Launch` runs a `Launch` task that installs the version, takes the session from the account,
+//! chooses Java, builds the command line and starts the process; the task ends once the game is
+//! running. The instance then moves `Preparing → Running → Stopped` and the process end is
+//! published as `LaunchEvent::Exited`. `Stop` cancels a preparing launch or kills a running game.
+//!
+//! The same module runs `VersionCommand::Install` (see `versions.rs`).
 
-use vl_core::Replier;
-use vl_core::launch::LaunchCommand;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use vl_core::instance::InstanceState;
+use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
+use vl_core::log::{LogLevel, LogLine, LogSource};
+use vl_core::settings::Settings;
+use vl_core::task::{Progress, TaskKind};
+use vl_core::{Error, ErrorKind, Event, EventBus, InstanceId, Replier, Response};
+use vl_launch::process::{self, RunningGame};
+use vl_launch::{Installer, InstallerOptions, Job, Layout, PrepareInput};
+use vl_net::{CancelToken, Client, NetConfig};
+use vl_store::Store;
+use vl_tasks::{TaskContext, TaskHandle, TaskSpec};
 
 use crate::Backend;
 
-pub(crate) fn handle(_backend: &Backend, command: LaunchCommand, replier: Replier) {
-    crate::not_yet(replier, "launch", &command);
+const LAUNCHER_NAME: &str = "VibeLauncher";
+const LAUNCHER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// What the backend keeps for an instance that is not stopped.
+enum Active {
+    /// The launch task is running.
+    Preparing(TaskHandle),
+    /// The game process runs.
+    Running(RunningGame),
+}
+
+/// Launching and installing.
+#[derive(Clone)]
+pub(crate) struct Service {
+    installer: Arc<Installer>,
+    active: Arc<Mutex<HashMap<InstanceId, Active>>>,
+    events: Arc<EventBus>,
+}
+
+impl Service {
+    pub(crate) fn new(store: &Store, events: Arc<EventBus>) -> vl_core::Result<Self> {
+        let mut config = NetConfig::new(LAUNCHER_VERSION);
+        config.cache_dir = Some(store.cache_dir().join("http"));
+        let client = Client::new(config)?;
+        let installer = Installer::new(
+            client,
+            Layout::new(store.data_dir()),
+            InstallerOptions::default(),
+        );
+        Ok(Self {
+            installer: Arc::new(installer),
+            active: Arc::default(),
+            events,
+        })
+    }
+
+    fn active(&self) -> MutexGuard<'_, HashMap<InstanceId, Active>> {
+        self.active.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn state(&self, instance: &InstanceId, state: InstanceState) {
+        self.events
+            .publish(&Event::Launch(LaunchEvent::StateChanged {
+                instance: instance.clone(),
+                state,
+            }));
+    }
+
+    fn log(&self, source: LogSource, level: LogLevel, text: String) {
+        self.events.publish(&Event::Log(LogLine {
+            source,
+            level,
+            text,
+        }));
+    }
+}
+
+pub(crate) fn handle(backend: &Backend, command: LaunchCommand, replier: Replier) {
+    replier.send(match command {
+        LaunchCommand::Launch(request) => launch(backend, request),
+        LaunchCommand::Stop { instance } => stop(&backend.launch, &instance),
+        other => Err(Error::unsupported(format!(
+            "vl-backend does not handle launch {other:?}"
+        ))),
+    });
+}
+
+fn stop(service: &Service, instance: &InstanceId) -> vl_core::Result<Response> {
+    match service.active().get(instance) {
+        Some(Active::Preparing(task)) => task.cancel(),
+        Some(Active::Running(game)) => game.stop(),
+        None => {
+            return Err(Error::not_found(format!(
+                "instance {instance} has no running game"
+            )));
+        }
+    }
+    Ok(Response::Done)
+}
+
+/// Everything a launch task needs, gathered before the task starts.
+struct Plan {
+    request: LaunchRequest,
+    version: String,
+    game_dir: std::path::PathBuf,
+    settings: Settings,
+    accounts: crate::accounts::Service,
+    java: crate::java::JavaService,
+    instances: vl_instance::Instances,
+}
+
+fn launch(backend: &Backend, request: LaunchRequest) -> vl_core::Result<Response> {
+    let service = backend.launch.clone();
+    let id = request.instance.clone();
+    let config = backend.instances.load(&id)?;
+    let version = config
+        .game_version()
+        .map(str::to_owned)
+        .ok_or_else(|| Error::invalid_input(format!("instance {id} has no game version")))?;
+    let plan = Plan {
+        game_dir: backend.instances.game_dir(&id)?,
+        settings: backend.settings().effective(&id).value,
+        accounts: backend.accounts.clone(),
+        java: backend.java.clone(),
+        instances: backend.instances.clone(),
+        version,
+        request,
+    };
+
+    let mut active = service.active();
+    if active.contains_key(&id) {
+        return Err(Error::conflict(format!("instance {id} is already running")));
+    }
+    // The task waits for this signal, so `Preparing` is published before anything it causes.
+    let (go_tx, go_rx) = mpsc::channel::<()>();
+    let worker = service.clone();
+    let handle = backend.tasks().spawn(
+        TaskSpec::new(TaskKind::Launch).subject(&config.name),
+        move |ctx| {
+            let _ = go_rx.recv();
+            let id = plan.request.instance.clone();
+            let result = run_launch(&worker, ctx, &plan);
+            if result.is_err() {
+                worker.active().remove(&id);
+                worker.state(&id, InstanceState::Stopped);
+            }
+            result
+        },
+    );
+    let task = handle.id();
+    active.insert(id.clone(), Active::Preparing(handle));
+    drop(active);
+    service.state(&id, InstanceState::Preparing { task });
+    let _ = go_tx.send(());
+    Ok(Response::Task(task))
+}
+
+fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Result<()> {
+    let id = &plan.request.instance;
+    let prepared = with_job(ctx, |job| {
+        ctx.set_stage("account");
+        let session = plan
+            .accounts
+            .launch_session(plan.request.account.as_ref(), plan.request.offline)?;
+        job.check()?;
+        let runtimes = plan.java.runtimes();
+        let fixed = match &plan.settings.java.path {
+            Some(path) => Some(plan.java.probe(path)?),
+            None => None,
+        };
+        let input = PrepareInput {
+            version: &plan.version,
+            game_dir: &plan.game_dir,
+            session: &session,
+            settings: &plan.settings,
+            runtimes: &runtimes,
+            fixed_java: fixed.as_ref(),
+            launcher_name: LAUNCHER_NAME,
+            launcher_version: LAUNCHER_VERSION,
+        };
+        vl_launch::prepare(&service.installer, &input, job)
+    })?;
+    ctx.check()?;
+
+    for warning in &prepared.warnings {
+        service.log(LogSource::Launcher, LogLevel::Warn, warning.clone());
+    }
+    service.log(
+        LogSource::Launcher,
+        LogLevel::Info,
+        prepared.command.display_redacted(),
+    );
+
+    let started = Instant::now();
+    let line_service = service.clone();
+    let line_source = LogSource::Game(id.clone());
+    let exit_service = service.clone();
+    let instances = plan.instances.clone();
+    let exit_id = id.clone();
+    let game = process::spawn(
+        &prepared.command,
+        move |line| {
+            line_service.log(line_source.clone(), LogLevel::Unknown, line.text);
+        },
+        move |exit| {
+            exit_service.active().remove(&exit_id);
+            if let Err(e) = instances.record_play(&exit_id, started.elapsed().as_secs()) {
+                exit_service.log(
+                    LogSource::Launcher,
+                    LogLevel::Warn,
+                    format!("cannot record the play time: {}", e.message),
+                );
+            }
+            exit_service
+                .events
+                .publish(&Event::Launch(LaunchEvent::Exited {
+                    instance: exit_id.clone(),
+                    exit,
+                }));
+            exit_service.state(&exit_id, InstanceState::Stopped);
+        },
+    )?;
+    let pid = game.pid();
+    service.active().insert(id.clone(), Active::Running(game));
+    service.state(id, InstanceState::Running { pid: Some(pid) });
+    Ok(())
+}
+
+/// Runs `work` with a [`Job`] wired to the task: the task's cancellation stops the job's
+/// downloads, and the job's progress becomes the task's progress.
+fn with_job<T>(
+    ctx: &TaskContext,
+    work: impl FnOnce(&Job) -> vl_core::Result<T>,
+) -> vl_core::Result<T> {
+    let net_cancel = CancelToken::new();
+    let latest: Arc<Mutex<Option<Progress>>> = Arc::default();
+    let sink = Arc::clone(&latest);
+    let job = Job::with_cancel(net_cancel.clone()).on_progress(move |p| {
+        *sink.lock().unwrap_or_else(PoisonError::into_inner) = Some(p);
+    });
+    let finished = AtomicBool::new(false);
+    thread::scope(|scope| {
+        let bridge = || {
+            loop {
+                if ctx.is_cancelled() {
+                    net_cancel.cancel();
+                }
+                let progress = latest.lock().unwrap_or_else(PoisonError::into_inner).take();
+                if let Some(p) = progress {
+                    if let Some(stage) = &p.stage {
+                        ctx.set_stage(stage);
+                    }
+                    ctx.report(p.done, p.total, p.unit);
+                }
+                if finished.load(Ordering::SeqCst) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        };
+        // Without the bridge the work still runs; only cancelling and progress are lost.
+        let watcher = thread::Builder::new()
+            .name("vl-task-bridge".into())
+            .spawn_scoped(scope, bridge);
+        let result = work(&job);
+        finished.store(true, Ordering::SeqCst);
+        drop(watcher);
+        result
+    })
+}
+
+/// `VersionCommand::Install`: a task that installs `version` without starting it.
+pub(crate) fn install(backend: &Backend, version: &str) -> vl_core::Result<Response> {
+    if !vl_launch::layout::is_safe_component(version) {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            format!("invalid version id {version:?}"),
+        ));
+    }
+    let installer = Arc::clone(&backend.launch.installer);
+    let version = version.to_owned();
+    let handle = backend.tasks().spawn(
+        TaskSpec::new(TaskKind::InstallVersion).subject(&version),
+        move |ctx| with_job(ctx, |job| installer.install(&version, None, job)).map(|_| ()),
+    );
+    Ok(Response::Task(handle.id()))
 }

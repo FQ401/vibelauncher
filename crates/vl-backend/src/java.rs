@@ -12,6 +12,7 @@ use vl_java::{FinderOptions, JavaFinder};
 use crate::{Backend, BackendConfig};
 
 /// The Java runtimes of this machine: scanned on demand, remembered until the next rescan.
+#[derive(Clone)]
 pub(crate) struct JavaService {
     inner: Arc<Inner>,
 }
@@ -25,6 +26,21 @@ struct Inner {
 }
 
 impl JavaService {
+    /// The runtimes of the last scan; scans first when there was none.
+    pub(crate) fn runtimes(&self) -> Vec<JavaRuntime> {
+        self.inner.runtimes(false)
+    }
+
+    /// Checks one executable, for a Java the user chose by path.
+    pub(crate) fn probe(&self, path: &std::path::Path) -> vl_core::Result<JavaRuntime> {
+        self.inner.finder.probe(path).map_err(|e| {
+            Error::new(
+                vl_core::ErrorKind::Java,
+                format!("{} is not a working Java: {e}", path.display()),
+            )
+        })
+    }
+
     pub(crate) fn new(config: &BackendConfig, events: Arc<EventBus>) -> Self {
         let options = match &config.data_dir {
             Some(dir) => FinderOptions {
