@@ -6,7 +6,7 @@ Status: early development.
 
 ## Disclaimer
 
-NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT. VibeLauncher is an independent project. Minecraft is a trademark of Mojang AB. Microsoft and Xbox are trademarks of Microsoft Corporation. The launcher contains no Minecraft game files; they are downloaded from Mojang's servers.
+NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT. VibeLauncher is an independent project. Minecraft is a trademark of Mojang AB. Microsoft and Xbox are trademarks of Microsoft Corporation. The launcher contains no Minecraft game files; they are downloaded from Mojang's servers. VibeLauncher is published by the VibeLauncher contributors; contact: <vibelauncher@vibefork.me>.
 
 ## Privacy
 
