@@ -226,6 +226,8 @@ Secrets — Microsoft refresh and access tokens, and API keys the user enters (s
 CurseForge API key) — live in the OS keyring, never in the data directory, logs, events or error
 messages. The launcher ships with no third-party API keys.
 
+The Microsoft application (client) ID is a build constant (`vl_auth::DEFAULT_CLIENT_ID`); the `VL_MS_CLIENT_ID` environment variable replaces it, so forks and development builds use their own registration.
+
 The settings model (`vl_core::settings`) has eight groups: Java, memory, window, console,
 commands (pre-launch, wrapper, post-exit), environment variables, performance (GameMode,
 MangoHud, discrete GPU, Zink) and natives (system GLFW, OpenAL, SDL). The effective value of a

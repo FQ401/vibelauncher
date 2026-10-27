@@ -19,6 +19,9 @@ commands:
   instances create <name> <version>   create a vanilla instance
   versions list [--snapshots] [--old] list game versions
   accounts list                       list accounts
+  accounts login                      sign in with Microsoft (device code)
+  accounts remove <account>           remove an account (id or name)
+  accounts refresh <account>          renew a Microsoft sign-in
   java list                           list Java runtimes
   launch <instance> [--offline]       launch and follow the game log";
 
