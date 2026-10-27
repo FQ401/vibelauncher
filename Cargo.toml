@@ -35,6 +35,7 @@ serde_json = "1.0.150"
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+tar = { version = "0.4.45", default-features = false }
 toml = "1.1.8"
 windows-native-keyring-store = "1.1.0"
 zbus-secret-service-keyring-store = { version = "1.0.1", default-features = false, features = ["rt-async-io-crypto-rust"] }

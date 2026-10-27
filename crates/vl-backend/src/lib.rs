@@ -71,7 +71,7 @@ impl Backend {
         let accounts = accounts::Service::new(&store, Arc::clone(&events))?;
         let launch = launch::Service::new(&store, Arc::clone(&events))?;
         Ok(Self {
-            java: java::JavaService::new(&config, Arc::clone(&events)),
+            java: java::JavaService::new(store.data_dir(), store.cache_dir(), Arc::clone(&events)),
             config,
             store,
             instances,

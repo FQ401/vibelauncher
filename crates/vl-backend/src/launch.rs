@@ -238,7 +238,7 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
 
 /// Runs `work` with a [`Job`] wired to the task: the task's cancellation stops the job's
 /// downloads, and the job's progress becomes the task's progress.
-fn with_job<T>(
+pub(crate) fn with_job<T>(
     ctx: &TaskContext,
     work: impl FnOnce(&Job) -> vl_core::Result<T>,
 ) -> vl_core::Result<T> {
