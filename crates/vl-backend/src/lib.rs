@@ -19,6 +19,7 @@ mod versions;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use vl_settings::SettingsStore;
 use vl_store::{Store, StoreOptions};
 
 use vl_core::{
@@ -50,6 +51,7 @@ pub struct Backend {
     config: BackendConfig,
     store: Store,
     instances: vl_instance::Instances,
+    settings: SettingsStore,
     events: Arc<EventBus>,
     java: java::JavaService,
     tasks: TaskEngine,
@@ -61,6 +63,7 @@ impl Backend {
     pub fn new(config: BackendConfig) -> vl_core::Result<Self> {
         let store = Store::open(&config.store_options())?;
         let instances = vl_instance::Instances::open(&store.data_dir().join("instances"))?;
+        let settings = SettingsStore::new(store.data_dir());
         let events = Arc::new(EventBus::default());
         let tasks = TaskEngine::new(Arc::clone(&events), MAX_PARALLEL_TASKS);
         Ok(Self {
@@ -68,6 +71,7 @@ impl Backend {
             config,
             store,
             instances,
+            settings,
             events,
             tasks,
         })
@@ -81,6 +85,16 @@ impl Backend {
     /// The engine every domain module runs its long operations on.
     pub fn tasks(&self) -> &TaskEngine {
         &self.tasks
+    }
+
+    /// The settings files.
+    pub fn settings(&self) -> &SettingsStore {
+        &self.settings
+    }
+
+    /// The event bus shared by the domain modules.
+    pub(crate) fn events(&self) -> &EventBus {
+        &self.events
     }
 
     /// The configuration the backend started with.

@@ -432,14 +432,7 @@ fn non_empty<'a>(value: &'a str, what: &str) -> Result<&'a str> {
 }
 
 fn check_settings(settings: &Settings) -> Result<()> {
-    let memory = settings.memory;
-    if memory.min_mib == 0 || memory.min_mib > memory.max_mib {
-        return Err(Error::invalid_input(format!(
-            "memory: min {} MiB, max {} MiB",
-            memory.min_mib, memory.max_mib
-        )));
-    }
-    Ok(())
+    settings.validate()
 }
 
 fn unsupported(command: &impl std::fmt::Debug) -> Error {
