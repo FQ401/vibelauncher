@@ -18,8 +18,9 @@ use vl_core::instance::InstanceState;
 use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
 use vl_core::log::{LogLevel, LogLine, LogSource};
 use vl_core::settings::Settings;
-use vl_core::task::{Progress, TaskKind};
+use vl_core::task::{Progress, ProgressUnit, TaskKind};
 use vl_core::{Error, ErrorKind, Event, EventBus, InstanceId, Replier, Response};
+use vl_java::select::JavaRequirement;
 use vl_launch::process::{self, RunningGame};
 use vl_launch::{Installer, InstallerOptions, Job, Layout, PrepareInput};
 use vl_net::{CancelToken, Client, NetConfig};
@@ -173,6 +174,9 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
             .accounts
             .launch_session(plan.request.account.as_ref(), plan.request.offline)?;
         job.check()?;
+        if plan.settings.java.path.is_none() {
+            ensure_java(service, plan, job)?;
+        }
         let runtimes = plan.java.runtimes();
         let fixed = match &plan.settings.java.path {
             Some(path) => Some(plan.java.probe(path)?),
@@ -234,6 +238,24 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
     service.active().insert(id.clone(), Active::Running(game));
     service.state(id, InstanceState::Running { pid: Some(pid) });
     Ok(())
+}
+
+/// Downloads a managed Java when no installed one runs the version, so the launch never stops
+/// at "no Java found". A Java fixed in the settings is never replaced.
+fn ensure_java(service: &Service, plan: &Plan, job: &Job) -> vl_core::Result<()> {
+    let installed = service
+        .installer
+        .install(&plan.version, Some(&plan.game_dir), job)?;
+    let wanted = installed.version.java_version_or_default();
+    let arch = installed.platform.arch;
+    if vl_launch::java::choose(&plan.java.runtimes(), wanted.major_version, None, arch).is_ok() {
+        return Ok(());
+    }
+    job.report("java", 0, None, ProgressUnit::Bytes);
+    let requirement = JavaRequirement::new(wanted.component, wanted.major_version);
+    plan.java
+        .ensure(&requirement, None, &crate::java::job_control(job))
+        .map(|_| ())
 }
 
 /// Runs `work` with a [`Job`] wired to the task: the task's cancellation stops the job's

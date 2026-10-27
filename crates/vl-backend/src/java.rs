@@ -90,9 +90,7 @@ impl JavaService {
         let list = self.inner.runtimes(false);
         match select::resolve(&list, requirement, Platform::current().arch, None) {
             Resolution::Use(runtime) => Ok(runtime),
-            Resolution::Download(requirement) => {
-                self.install(&requirement, control)
-            }
+            Resolution::Download(requirement) => self.install(&requirement, control),
         }
     }
 
@@ -193,9 +191,7 @@ pub(crate) fn handle(backend: &Backend, command: JavaCommand, replier: Replier) 
                 move |ctx| {
                     crate::launch::with_job(ctx, |job| {
                         let requirement = JavaRequirement::from_major(major);
-                        service
-                            .install(&requirement, &job_control(job))
-                            .map(|_| ())
+                        service.install(&requirement, &job_control(job)).map(|_| ())
                     })
                 },
             );
