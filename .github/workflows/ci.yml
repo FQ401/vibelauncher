@@ -22,19 +22,24 @@ env:
 
 jobs:
   check:
+    name: ${{ matrix.stage }} (${{ matrix.os }})
     if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        stage: [lint, test]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Toolchain (rust-toolchain.toml)
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: CI
-        run: cargo xtask ci
+        with:
+          # lint (check builds) and test (full builds) keep separate caches.
+          key: ${{ matrix.stage }}
+      - name: CI (${{ matrix.stage }})
+        run: cargo xtask ci ${{ matrix.stage }}
 
   macos:
     if: github.event_name == 'schedule'
