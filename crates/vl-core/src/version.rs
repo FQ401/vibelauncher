@@ -17,6 +17,20 @@ pub enum VersionKind {
     OldAlpha,
 }
 
+impl VersionKind {
+    /// The kind a version manifest `type` denotes (`release`, `snapshot`, `old_beta`,
+    /// `old_alpha`); `None` for an unknown type.
+    pub fn from_mojang_name(name: &str) -> Option<Self> {
+        match name {
+            "release" => Some(Self::Release),
+            "snapshot" => Some(Self::Snapshot),
+            "old_beta" => Some(Self::OldBeta),
+            "old_alpha" => Some(Self::OldAlpha),
+            _ => None,
+        }
+    }
+}
+
 /// One game version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameVersion {
