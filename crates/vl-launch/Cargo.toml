@@ -1,0 +1,22 @@
+[package]
+name = "vl-launch"
+description = "Game preparation and launch: files, command line, process, logs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-meta.workspace = true
+vl-net.workspace = true
+vl-store.workspace = true
+vl-java.workspace = true
+vl-instance.workspace = true
+vl-tasks.workspace = true
+
+[lints]
+workspace = true

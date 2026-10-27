@@ -1,0 +1,110 @@
+//! Instances: what the launcher lists, creates, renames and deletes.
+
+use serde::{Deserialize, Serialize};
+
+use crate::ids::{InstanceId, TaskId};
+
+/// The mod loader an instance runs on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "version")]
+#[non_exhaustive]
+pub enum Loader {
+    /// The game without a mod loader.
+    Vanilla,
+    /// Fabric Loader of the given version.
+    Fabric(String),
+    /// Quilt Loader of the given version.
+    Quilt(String),
+    /// NeoForge of the given version.
+    NeoForge(String),
+    /// Forge of the given version.
+    Forge(String),
+}
+
+/// What an instance's game process is doing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum InstanceState {
+    /// No game process.
+    Stopped,
+    /// The launch task is checking and downloading files.
+    Preparing {
+        /// The launch task.
+        task: TaskId,
+    },
+    /// The game process is running.
+    Running {
+        /// The OS process id, when known.
+        pid: Option<u32>,
+    },
+}
+
+/// One row of the instance list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstanceSummary {
+    /// The instance's identifier.
+    pub id: InstanceId,
+    /// The display name.
+    pub name: String,
+    /// The group the instance is shown in, if any.
+    pub group: Option<String>,
+    /// The game version id (as in the version manifest).
+    pub game_version: String,
+    /// The mod loader.
+    pub loader: Loader,
+    /// Total play time in seconds.
+    pub play_time_secs: u64,
+    /// When the game was last started, in Unix seconds.
+    pub last_played_unix: Option<i64>,
+    /// What the game process is doing.
+    pub state: InstanceState,
+    /// Why the instance cannot be used (a damaged config), if it cannot.
+    pub problem: Option<String>,
+}
+
+/// The parameters of a new instance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NewInstance {
+    /// The display name; the backend derives a free directory name from it.
+    pub name: String,
+    /// The game version id.
+    pub game_version: String,
+    /// The group to show the instance in.
+    pub group: Option<String>,
+}
+
+/// Instance commands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum InstanceCommand {
+    /// All instances → `Response::Instances`.
+    List,
+    /// Creates an instance → `Response::Instance`.
+    Create(NewInstance),
+    /// Renames an instance and its directory → `Response::Instance`.
+    Rename {
+        /// The instance.
+        id: InstanceId,
+        /// The new display name.
+        name: String,
+    },
+    /// Deletes a stopped instance → `Response::Done`.
+    Delete {
+        /// The instance.
+        id: InstanceId,
+    },
+}
+
+/// Changes to the instance list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum InstanceEvent {
+    /// An instance was created or found.
+    Added(InstanceSummary),
+    /// An instance's summary changed (name, play time, state).
+    Changed(InstanceSummary),
+    /// An instance was deleted.
+    Removed(InstanceId),
+}

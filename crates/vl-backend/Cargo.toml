@@ -1,0 +1,25 @@
+[package]
+name = "vl-backend"
+description = "The real facade: composes the native crates and serves commands and events."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "backend"
+
+[dependencies]
+vl-core.workspace = true
+vl-meta.workspace = true
+vl-store.workspace = true
+vl-net.workspace = true
+vl-tasks.workspace = true
+vl-settings.workspace = true
+vl-auth.workspace = true
+vl-java.workspace = true
+vl-instance.workspace = true
+vl-launch.workspace = true
+
+[lints]
+workspace = true

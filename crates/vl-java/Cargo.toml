@@ -1,0 +1,18 @@
+[package]
+name = "vl-java"
+description = "Java runtimes: discovery, probing, managed downloads."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-net.workspace = true
+vl-store.workspace = true
+
+[lints]
+workspace = true
