@@ -1,0 +1,183 @@
+{
+  "id": "1.16.5-synth",
+  "type": "release",
+  "releaseTime": "2021-01-14T16:05:32+00:00",
+  "time": "2021-01-14T16:05:32+00:00",
+  "mainClass": "net.minecraft.client.main.Main",
+  "minimumLauncherVersion": 21,
+  "arguments": {
+    "game": [
+      "--username",
+      "${auth_player_name}",
+      "--version",
+      "${version_name}",
+      "--gameDir",
+      "${game_directory}",
+      "--assetsDir",
+      "${assets_root}",
+      "--assetIndex",
+      "${assets_index_name}",
+      "--uuid",
+      "${auth_uuid}",
+      "--accessToken",
+      "${auth_access_token}",
+      "--userType",
+      "${user_type}",
+      "--versionType",
+      "${version_type}",
+      {
+        "rules": [
+          {
+            "action": "allow",
+            "features": {
+              "is_demo_user": true
+            }
+          }
+        ],
+        "value": "--demo"
+      },
+      {
+        "rules": [
+          {
+            "action": "allow",
+            "features": {
+              "has_custom_resolution": true
+            }
+          }
+        ],
+        "value": [
+          "--width",
+          "${resolution_width}",
+          "--height",
+          "${resolution_height}"
+        ]
+      }
+    ],
+    "jvm": [
+      {
+        "rules": [
+          {
+            "action": "allow",
+            "os": {
+              "name": "osx"
+            }
+          }
+        ],
+        "value": [
+          "-XstartOnFirstThread"
+        ]
+      },
+      {
+        "rules": [
+          {
+            "action": "allow",
+            "os": {
+              "name": "windows"
+            }
+          }
+        ],
+        "value": "-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump"
+      },
+      "-Djava.library.path=${natives_directory}",
+      "-Dminecraft.launcher.brand=${launcher_name}",
+      "-Dminecraft.launcher.version=${launcher_version}",
+      "-cp",
+      "${classpath}"
+    ]
+  },
+  "assets": "1.16",
+  "assetIndex": {
+    "id": "1.16",
+    "sha1": "1111111111111111111111111111111111111111",
+    "size": 2000,
+    "totalSize": 1000000,
+    "url": "https://indexes.example.invalid/1.16.json"
+  },
+  "javaVersion": {
+    "component": "jre-legacy",
+    "majorVersion": 8
+  },
+  "downloads": {
+    "client": {
+      "sha1": "1111111111111111111111111111111111111111",
+      "size": 5000000,
+      "url": "https://downloads.example.invalid/1.16.5/client.jar"
+    }
+  },
+  "libraries": [
+    {
+      "name": "com.mojang:brigadier:1.0.18",
+      "downloads": {
+        "artifact": {
+          "path": "com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar"
+        }
+      }
+    },
+    {
+      "name": "com.google.guava:guava:21.0",
+      "downloads": {
+        "artifact": {
+          "path": "com/google/guava/guava/21.0/guava-21.0.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/com/google/guava/guava/21.0/guava-21.0.jar"
+        }
+      }
+    },
+    {
+      "name": "org.lwjgl:lwjgl:3.2.2",
+      "natives": {
+        "linux": "natives-linux",
+        "windows": "natives-windows",
+        "osx": "natives-macos"
+      },
+      "downloads": {
+        "classifiers": {
+          "natives-linux": {
+            "path": "org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-linux.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-linux.jar"
+          },
+          "natives-windows": {
+            "path": "org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-windows.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-windows.jar"
+          },
+          "natives-macos": {
+            "path": "org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-macos.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-macos.jar"
+          }
+        },
+        "artifact": {
+          "path": "org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2.jar"
+        }
+      },
+      "extract": {
+        "exclude": [
+          "META-INF/"
+        ]
+      }
+    },
+    {
+      "name": "org.apache.logging.log4j:log4j-core:2.14.1",
+      "downloads": {
+        "artifact": {
+          "path": "org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar"
+        }
+      }
+    }
+  ]
+}
