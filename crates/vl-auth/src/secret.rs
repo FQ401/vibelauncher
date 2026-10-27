@@ -49,6 +49,11 @@ pub trait TokenStore: Send + Sync {
     fn put(&self, account: &str, tokens: StoredTokens) -> Result<(), AuthError>;
     /// Forgets the tokens of `account`; absent tokens are not an error.
     fn remove(&self, account: &str) -> Result<(), AuthError>;
+    /// A warning for the user when the store is not keeping tokens safely across restarts
+    /// (for instance, the system keyring is unavailable and tokens live in memory only).
+    fn notice(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A [`TokenStore`] in memory.

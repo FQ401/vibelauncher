@@ -28,4 +28,4 @@ pub use control::{CancelToken, Control, Progress, ProgressFn};
 pub use download::{Download, Downloaded};
 pub use error::{NetError, redact_url};
 pub use hash::{Checksum, sha256_hex};
-pub use transport::{HttpRequest, HttpResponse, HttpTransport, UreqTransport};
+pub use transport::{HttpRequest, HttpResponse, HttpTransport, PostRequest, UreqTransport};

@@ -10,8 +10,11 @@ use crate::error::AuthError;
 use crate::http::AuthHttp;
 use crate::minecraft;
 use crate::msa::{self, DeviceCode, MsaTokens};
-use crate::secret::{Secret, StoredTokens};
+use crate::secret::{Secret, StoredTokens, TokenStore};
 use crate::xbox;
+
+/// A Minecraft token that expires within this time is renewed before use.
+pub const FRESH_MARGIN: Duration = Duration::from_secs(300);
 
 /// Time for the flow, replaceable in tests.
 pub trait Clock: Send + Sync {
@@ -138,6 +141,23 @@ impl Authenticator {
     pub fn refresh(&self, refresh_token: &Secret) -> Result<Session, AuthError> {
         let tokens = msa::refresh(self.http.as_ref(), &self.config, refresh_token)?;
         self.session_from_tokens(tokens, Some(refresh_token))
+    }
+
+    /// The stored tokens of `account`, renewed first when the Minecraft token has expired or
+    /// expires within [`FRESH_MARGIN`]. Call before launching. [`AuthError::SignInRequired`]
+    /// means there are no tokens or Microsoft rejected the refresh token.
+    pub fn fresh_tokens(
+        &self,
+        store: &dyn TokenStore,
+        account: &str,
+    ) -> Result<StoredTokens, AuthError> {
+        let tokens = store.get(account)?.ok_or(AuthError::SignInRequired)?;
+        if tokens.minecraft_expires_at > self.clock.now_unix() + FRESH_MARGIN.as_secs() {
+            return Ok(tokens);
+        }
+        let renewed = self.refresh(&tokens.refresh_token)?.stored_tokens();
+        store.put(account, renewed.clone())?;
+        Ok(renewed)
     }
 
     /// Xbox Live → XSTS → Minecraft login → entitlements → profile, from Microsoft tokens.
@@ -471,5 +491,58 @@ mod tests {
         let err = auth.refresh(&Secret::new("OLD")).unwrap_err();
         assert_eq!(err, AuthError::SignInRequired);
         assert!(!err.to_string().contains("OLD"));
+    }
+
+    fn stored(expires_at: u64) -> StoredTokens {
+        StoredTokens {
+            refresh_token: Secret::new("OLD-REFRESH"),
+            minecraft_token: Secret::new("OLD-MC"),
+            minecraft_expires_at: expires_at,
+        }
+    }
+
+    #[test]
+    fn fresh_tokens_are_used_as_they_are() {
+        let http = Arc::new(Scripted::default());
+        let (auth, _) = setup(&http);
+        let store = crate::MemoryTokenStore::new();
+        store.put("a", stored(1_000 + 3_600)).unwrap();
+        let t = auth.fresh_tokens(&store, "a").unwrap();
+        assert_eq!(t.minecraft_token.expose(), "OLD-MC");
+        assert!(http.urls().is_empty());
+    }
+
+    #[test]
+    fn expiring_tokens_are_renewed_and_kept() {
+        let http = Arc::new(Scripted::default());
+        http.route(
+            MS_TOKEN,
+            [json(200, r#"{"access_token":"A","expires_in":3600}"#)],
+        );
+        script_chain(&http);
+        let (auth, _) = setup(&http);
+        let store = crate::MemoryTokenStore::new();
+        store.put("a", stored(1_000 + 60)).unwrap();
+        let t = auth.fresh_tokens(&store, "a").unwrap();
+        assert_eq!(t.minecraft_token.expose(), "MC-SECRET");
+        assert_eq!(t.refresh_token.expose(), "OLD-REFRESH");
+        assert_eq!(store.get("a").unwrap(), Some(t));
+    }
+
+    #[test]
+    fn missing_or_revoked_tokens_need_a_new_sign_in() {
+        let http = Arc::new(Scripted::default());
+        http.route(MS_TOKEN, [json(400, r#"{"error":"invalid_grant"}"#)]);
+        let (auth, _) = setup(&http);
+        let store = crate::MemoryTokenStore::new();
+        assert_eq!(
+            auth.fresh_tokens(&store, "a").unwrap_err(),
+            AuthError::SignInRequired
+        );
+        store.put("a", stored(0)).unwrap();
+        assert_eq!(
+            auth.fresh_tokens(&store, "a").unwrap_err(),
+            AuthError::SignInRequired
+        );
     }
 }
