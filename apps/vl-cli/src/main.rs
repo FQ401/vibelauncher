@@ -7,6 +7,7 @@
 //! the commands. `--dir` selects a portable data directory.
 
 mod commands;
+mod progress;
 
 use std::io::Write;
 use std::path::PathBuf;
