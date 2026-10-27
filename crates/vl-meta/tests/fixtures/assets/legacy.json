@@ -1,0 +1,8 @@
+{
+  "virtual": true,
+  "objects": {
+    "icons/icon_16x16.png": { "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 100 },
+    "sound/mob/cow/say1.ogg": { "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 2000 },
+    "sound/mob/cow/say2.ogg": { "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 2000 }
+  }
+}
