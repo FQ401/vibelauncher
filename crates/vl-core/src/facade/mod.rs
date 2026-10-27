@@ -39,6 +39,8 @@ pub trait Facade: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+// Settings values are large and rarely sent; boxing them would only complicate every caller.
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Which backend this is → `Response::Hello`.
     Hello,
@@ -62,6 +64,8 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+// See `Command`.
+#[allow(clippy::large_enum_variant)]
 pub enum Response {
     /// The command is done and returns nothing.
     Done,

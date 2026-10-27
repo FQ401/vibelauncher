@@ -12,6 +12,8 @@ layer = "native"
 [dependencies]
 vl-core.workspace = true
 vl-store.workspace = true
+serde.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

@@ -226,9 +226,24 @@ Secrets — Microsoft refresh and access tokens, and API keys the user enters (s
 CurseForge API key) — live in the OS keyring, never in the data directory, logs, events or error
 messages. The launcher ships with no third-party API keys.
 
-The settings model (`vl_core::settings`) has groups — Java, memory, window, and more as they are
-added. An instance overrides a whole group or inherits it; `Settings::with_overrides` computes the
-effective settings.
+The settings model (`vl_core::settings`) has eight groups: Java, memory, window, console,
+commands (pre-launch, wrapper, post-exit), environment variables, performance (GameMode,
+MangoHud, discrete GPU, Zink) and natives (system GLFW, OpenAL, SDL). The effective value of a
+group is the instance's override if it has one, else the global group, which starts from the
+built-in defaults. An instance overrides a whole group or inherits it (`Option` per group in
+`Overrides`); `Settings::with_overrides` computes the effective settings. Every group has range
+checks (`validate`) and every type keeps unknown fields (`Extra`).
+
+On disk (`vl-settings`, TOML, written with `vl_store::write_atomic`):
+
+- `settings/global.toml` holds `schema_version` and one table per group;
+- `settings/instances/<id>.toml` holds the same for an instance; a table present means the group is
+  overridden, and a file with no tables does not exist;
+- missing keys take their defaults, unknown keys and groups survive a load and save, and a file from
+  a newer schema keeps its version number;
+- a file that cannot be parsed gives defaults, a malformed or out-of-range group is reset to its
+  default (in an instance file: dropped, so the instance inherits), each with a
+  `SettingsEvent::Warning`; the original is copied to `<file>.bad` first.
 
 ## Front ends
 
