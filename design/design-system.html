@@ -1,0 +1,147 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VibeLauncher — дизайн-система</title><style>*{box-sizing:border-box}
+body{margin:0;font-family:Inter,"Noto Sans","Segoe UI",system-ui,sans-serif;font-size:14px;line-height:20px;background:#fff;color:#111}
+.wrap{max-width:1500px;margin:0 auto;padding:16px}
+h1{font-size:28px;margin:8px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(480px,100%),1fr));gap:16px}
+.theme{--mono:"JetBrains Mono","Noto Sans Mono",Consolas,monospace;background:var(--bg);color:var(--text);padding:24px;border-radius:14px;border:1px solid var(--border)}
+.theme h2{margin:0 0 8px;font-size:22px}
+.theme h3{margin:24px 0 8px;font-size:18px}
+.sws{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.sw{display:flex;flex-direction:column;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;line-height:16px}
+.sw i{height:28px;border-radius:4px;border:1px solid var(--border)}
+.sw code{color:var(--text-muted);font-family:var(--mono)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.row.end{justify-content:flex-end}
+.mut{color:var(--text-muted);font-size:12px;line-height:18px}
+.btn{font:inherit;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);cursor:pointer}
+.btn.sm{height:28px}
+.btn.hover,.btn:hover{background:var(--surface-hover)}
+.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.btn.primary.hover,.btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn.primary.active{background:var(--accent-active);border-color:var(--accent-active)}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.danger{background:var(--danger);border-color:var(--danger);color:var(--on-danger)}
+.btn.focus,.btn:focus-visible,.fld.focus,.fld:focus-visible,.tab.foc{outline:2px solid var(--focus-ring);outline-offset:2px}
+.btn:disabled,.fld:disabled{opacity:.5;cursor:not-allowed}
+.fld{font:inherit;height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface-sunken);color:var(--text)}
+.fld.err{border-color:var(--danger);border-width:2px}
+.err-t{color:var(--danger);font-size:12px;margin:0}
+.card{display:flex;gap:12px;align-items:center;background:var(--surface-raised);border:1px solid var(--border);border-radius:10px;padding:12px;min-width:min(300px,100%);flex:1;box-shadow:0 1px 3px #0003}
+.card.sel{border:2px solid var(--accent);background:var(--accent-subtle)}
+.card.dis{border-color:var(--danger)}
+.card>div:nth-child(2){flex:1}
+.ico{width:48px;height:48px;border-radius:10px;background:var(--accent-subtle);color:var(--accent);display:grid;place-items:center;font-size:24px;flex:none}
+.ico.run{background:var(--success-subtle);color:var(--success)}
+.list{list-style:none;margin:0;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;max-width:360px}
+.list li{padding:6px 12px;border-radius:6px}
+.list .h{background:var(--surface-hover)}
+.list .s{background:var(--accent-subtle);box-shadow:inset 3px 0 var(--accent)}
+.list .d{color:var(--text-disabled)}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border)}
+.tab{padding:6px 12px;color:var(--text-muted)}
+.tab.on{color:var(--accent);border-bottom:2px solid var(--accent);font-weight:600}
+.tab.dis{color:var(--text-disabled)}
+.bar{height:8px;border-radius:999px;background:var(--surface-sunken);border:1px solid var(--border);overflow:hidden;margin:6px 0}
+.bar span{display:block;height:100%;background:var(--accent)}
+.bar.ind span{width:30%;margin-left:20%}
+.bar.ok span{background:var(--success)}
+.bar.bad span{background:var(--danger)}
+.toast{padding:10px 12px;border-radius:6px;margin:6px 0;border-left:4px solid;max-width:480px}
+.toast.info{background:var(--info-subtle);border-color:var(--info);color:var(--info)}
+.toast.success{background:var(--success-subtle);border-color:var(--success);color:var(--success)}
+.toast.warning{background:var(--warning-subtle);border-color:var(--warning);color:var(--warning)}
+.toast.danger{background:var(--danger-subtle);border-color:var(--danger);color:var(--danger)}
+.empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:24px;border:1px dashed var(--border-strong);border-radius:10px;text-align:center}
+.scrim{background:var(--scrim);padding:24px;border-radius:10px}
+.dlg{background:var(--surface-raised);border:1px solid var(--border);border-radius:14px;padding:16px;max-width:380px;margin:auto;box-shadow:0 12px 32px #0006}
+.chip{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:12px}
+table{border-collapse:collapse;width:100%;font-size:12px}
+td,th{border-bottom:1px solid var(--border);padding:3px 6px;text-align:left}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body><div class="wrap"><h1>VibeLauncher — дизайн-система</h1><p>Токены и компоненты в светлой и тёмной темах. Источник токенов: <code>tokens.json</code>. Витрина справочная; приложение рисуется средствами egui.</p><div class="grid"><section class="theme" data-theme="light" style="--bg:#F6F7F9;--surface:#FFFFFF;--surface-raised:#FFFFFF;--surface-sunken:#ECEEF2;--surface-hover:#EEF0F4;--border:#D5D9E0;--border-strong:#7C8596;--text:#14171F;--text-muted:#4B5565;--text-disabled:#8A93A3;--accent:#4F46E5;--accent-hover:#4338CA;--accent-active:#3730A3;--on-accent:#FFFFFF;--accent-subtle:#E7E6FB;--focus-ring:#4F46E5;--selection:#C7C4F5;--success:#166534;--warning:#92400E;--danger:#B91C1C;--info:#1D4ED8;--on-danger:#FFFFFF;--success-subtle:#DDF3E4;--warning-subtle:#FBEBD0;--danger-subtle:#FBE0E0;--info-subtle:#DEE7FB;--scrim:#14171F99;">
+<h2>Светлая тема</h2>
+<h3>Палитра</h3><div class="sws"><div class="sw"><i style="background:#F6F7F9"></i><span>bg</span><code>#F6F7F9</code></div><div class="sw"><i style="background:#FFFFFF"></i><span>surface</span><code>#FFFFFF</code></div><div class="sw"><i style="background:#FFFFFF"></i><span>surface-raised</span><code>#FFFFFF</code></div><div class="sw"><i style="background:#ECEEF2"></i><span>surface-sunken</span><code>#ECEEF2</code></div><div class="sw"><i style="background:#EEF0F4"></i><span>surface-hover</span><code>#EEF0F4</code></div><div class="sw"><i style="background:#D5D9E0"></i><span>border</span><code>#D5D9E0</code></div><div class="sw"><i style="background:#7C8596"></i><span>border-strong</span><code>#7C8596</code></div><div class="sw"><i style="background:#14171F"></i><span>text</span><code>#14171F</code></div><div class="sw"><i style="background:#4B5565"></i><span>text-muted</span><code>#4B5565</code></div><div class="sw"><i style="background:#8A93A3"></i><span>text-disabled</span><code>#8A93A3</code></div><div class="sw"><i style="background:#4F46E5"></i><span>accent</span><code>#4F46E5</code></div><div class="sw"><i style="background:#4338CA"></i><span>accent-hover</span><code>#4338CA</code></div><div class="sw"><i style="background:#3730A3"></i><span>accent-active</span><code>#3730A3</code></div><div class="sw"><i style="background:#FFFFFF"></i><span>on-accent</span><code>#FFFFFF</code></div><div class="sw"><i style="background:#E7E6FB"></i><span>accent-subtle</span><code>#E7E6FB</code></div><div class="sw"><i style="background:#4F46E5"></i><span>focus-ring</span><code>#4F46E5</code></div><div class="sw"><i style="background:#C7C4F5"></i><span>selection</span><code>#C7C4F5</code></div><div class="sw"><i style="background:#166534"></i><span>success</span><code>#166534</code></div><div class="sw"><i style="background:#92400E"></i><span>warning</span><code>#92400E</code></div><div class="sw"><i style="background:#B91C1C"></i><span>danger</span><code>#B91C1C</code></div><div class="sw"><i style="background:#1D4ED8"></i><span>info</span><code>#1D4ED8</code></div><div class="sw"><i style="background:#FFFFFF"></i><span>on-danger</span><code>#FFFFFF</code></div><div class="sw"><i style="background:#DDF3E4"></i><span>success-subtle</span><code>#DDF3E4</code></div><div class="sw"><i style="background:#FBEBD0"></i><span>warning-subtle</span><code>#FBEBD0</code></div><div class="sw"><i style="background:#FBE0E0"></i><span>danger-subtle</span><code>#FBE0E0</code></div><div class="sw"><i style="background:#DEE7FB"></i><span>info-subtle</span><code>#DEE7FB</code></div><div class="sw"><i style="background:#14171F99"></i><span>scrim</span><code>#14171F99</code></div></div>
+<h3>Типографика</h3>
+<p style="font-size:28px;line-height:34px;font-weight:600;margin:0">Заголовок 1 — 28/34</p>
+<p style="font-size:22px;line-height:28px;font-weight:600;margin:0">Заголовок 2 — 22/28</p>
+<p style="font-size:18px;line-height:24px;font-weight:600;margin:0">Заголовок 3 — 18/24</p>
+<p style="margin:0">Основной текст 14/20: Съешь ещё этих мягких французских булок.</p>
+<p class="mut" style="margin:0">Малый текст 12/18, приглушённый</p>
+<p style="font-family:var(--mono);font-size:13px;margin:0">Моноширинный 13: java -Xmx4G -jar app.jar</p>
+<h3>Кнопки</h3>
+<div class="row"><button class="btn primary">Играть</button><button class="btn primary hover">Hover</button><button class="btn primary active">Pressed</button><button class="btn primary focus">Focus</button><button class="btn primary" disabled>Disabled</button></div>
+<div class="row"><button class="btn">Вторичная</button><button class="btn hover">Hover</button><button class="btn focus">Focus</button><button class="btn" disabled>Disabled</button><button class="btn ghost">Текстовая</button><button class="btn danger">Удалить</button></div>
+<h3>Поля</h3>
+<div class="row"><input class="fld" value="Мой модпак" aria-label="Обычное"><input class="fld focus" value="Фокус" aria-label="Фокус"><input class="fld err" value="a/b" aria-label="Ошибка"><input class="fld" disabled value="Отключено" aria-label="Отключено"></div>
+<p class="err-t">Недопустимый символ «/» в имени инстанса.</p>
+<h3>Карточки инстансов</h3>
+<div class="row">
+<div class="card"><div class="ico">⬢</div><div><b>Survival 1.21</b><div class="mut">Fabric · 1.21.1 · 3 ч 20 м</div></div><button class="btn primary sm">Играть</button></div>
+<div class="card sel"><div class="ico">⬢</div><div><b>Тестовый (выбран)</b><div class="mut">Vanilla · 1.20.4</div></div><button class="btn sm">Играть</button></div>
+<div class="card"><div class="ico run">⬢</div><div><b>Запущен</b><div class="mut">Forge · 1.19.2</div></div><button class="btn danger sm">Стоп</button></div>
+<div class="card dis"><div class="ico">⬢</div><div><b>Ошибка запуска</b><div class="mut" style="color:var(--danger)">Java не найдена</div></div><button class="btn sm">Детали</button></div>
+</div>
+<h3>Список</h3>
+<ul class="list"><li>По умолчанию</li><li class="h">Наведение</li><li class="s">Выбран</li><li class="d">Отключён</li></ul>
+<h3>Вкладки</h3>
+<div class="tabs" role="tablist"><span class="tab on" role="tab" aria-selected="true">Обзор</span><span class="tab" role="tab">Моды</span><span class="tab foc" role="tab">Фокус</span><span class="tab dis" role="tab">Отключена</span></div>
+<h3>Прогресс</h3>
+<div class="bar"><span style="width:62%"></span></div><p class="mut" style="margin:4px 0">Скачивание: 62%</p>
+<div class="bar ind"><span></span></div><p class="mut" style="margin:4px 0">Неопределённый (при reduced-motion — статичный сегмент)</p>
+<div class="bar ok"><span style="width:100%"></span></div><div class="bar bad"><span style="width:40%"></span></div>
+<h3>Уведомления</h3>
+<div class="toast info">Доступна новая версия лаунчера.</div><div class="toast success">Инстанс создан.</div><div class="toast warning">Мало места на диске.</div><div class="toast danger">Не удалось скачать библиотеку.</div>
+<h3>Пустое состояние</h3>
+<div class="empty"><div class="ico">⬢</div><b>Инстансов пока нет</b><div class="mut">Создайте первый инстанс или импортируйте готовый.</div><button class="btn primary">Создать инстанс</button></div>
+<h3>Диалог</h3>
+<div class="scrim"><div class="dlg" role="dialog" aria-label="Удалить инстанс"><b style="font-size:18px">Удалить инстанс?</b><p class="mut">Мир и настройки будут удалены без возможности восстановления.</p><div class="row end"><button class="btn">Отмена</button><button class="btn danger">Удалить</button></div></div></div>
+<h3>Иконки (Lucide, ISC)</h3>
+<p class="mut">Имена иконок набора для инстансов; в приложении подключается шрифт lucide.ttf.</p>
+<div class="row"><code class="chip">box</code><code class="chip">sword</code><code class="chip">pickaxe</code><code class="chip">flask-conical</code><code class="chip">leaf</code><code class="chip">flame</code><code class="chip">snowflake</code><code class="chip">zap</code><code class="chip">rocket</code><code class="chip">gem</code><code class="chip">compass</code><code class="chip">map</code><code class="chip">castle</code><code class="chip">tree-pine</code><code class="chip">ghost</code><code class="chip">skull</code><code class="chip">heart</code><code class="chip">star</code><code class="chip">wrench</code><code class="chip">play</code></div>
+<h3>Контрасты WCAG</h3>
+<table><tr><th>Передний план</th><th>Фон</th><th>Контраст</th><th>AA</th></tr><tr><td>text</td><td>bg</td><td>16.71:1</td><td>AA</td></tr><tr><td>text</td><td>surface</td><td>17.92:1</td><td>AA</td></tr><tr><td>text</td><td>surface-raised</td><td>17.92:1</td><td>AA</td></tr><tr><td>text-muted</td><td>bg</td><td>7.03:1</td><td>AA</td></tr><tr><td>text-muted</td><td>surface</td><td>7.54:1</td><td>AA</td></tr><tr><td>text-muted</td><td>surface-hover</td><td>6.61:1</td><td>AA</td></tr><tr><td>text-disabled</td><td>surface</td><td>3.1:1</td><td>—</td></tr><tr><td>on-accent</td><td>accent</td><td>6.29:1</td><td>AA</td></tr><tr><td>on-accent</td><td>accent-hover</td><td>7.9:1</td><td>AA</td></tr><tr><td>on-accent</td><td>accent-active</td><td>9.93:1</td><td>AA</td></tr><tr><td>accent</td><td>surface</td><td>6.29:1</td><td>AA</td></tr><tr><td>accent</td><td>bg</td><td>5.87:1</td><td>AA</td></tr><tr><td>text</td><td>accent-subtle</td><td>14.6:1</td><td>AA</td></tr><tr><td>accent</td><td>accent-subtle</td><td>5.12:1</td><td>AA</td></tr><tr><td>success</td><td>surface</td><td>7.13:1</td><td>AA</td></tr><tr><td>warning</td><td>surface</td><td>7.09:1</td><td>AA</td></tr><tr><td>danger</td><td>surface</td><td>6.47:1</td><td>AA</td></tr><tr><td>info</td><td>surface</td><td>6.7:1</td><td>AA</td></tr><tr><td>success</td><td>success-subtle</td><td>6.12:1</td><td>AA</td></tr><tr><td>warning</td><td>warning-subtle</td><td>6.04:1</td><td>AA</td></tr><tr><td>danger</td><td>danger-subtle</td><td>5.19:1</td><td>AA</td></tr><tr><td>info</td><td>info-subtle</td><td>5.4:1</td><td>AA</td></tr><tr><td>on-danger</td><td>danger</td><td>6.47:1</td><td>—</td></tr><tr><td>border-strong</td><td>surface</td><td>3.72:1</td><td>AA</td></tr><tr><td>border-strong</td><td>bg</td><td>3.47:1</td><td>AA</td></tr><tr><td>focus-ring</td><td>surface</td><td>6.29:1</td><td>AA</td></tr><tr><td>focus-ring</td><td>bg</td><td>5.87:1</td><td>AA</td></tr><tr><td>accent</td><td>surface</td><td>6.29:1</td><td>AA</td></tr></table>
+</section>
+<section class="theme" data-theme="dark" style="--bg:#0F1117;--surface:#171A22;--surface-raised:#1E222C;--surface-sunken:#0B0D12;--surface-hover:#222735;--border:#2B3040;--border-strong:#6B7488;--text:#E8EAF0;--text-muted:#A3ABBB;--text-disabled:#6B7488;--accent:#818CF8;--accent-hover:#A5B4FC;--accent-active:#7077F2;--on-accent:#0F1117;--accent-subtle:#262B4D;--focus-ring:#A5B4FC;--selection:#3A4180;--success:#4ADE80;--warning:#FBBF24;--danger:#F87171;--info:#60A5FA;--on-danger:#0F1117;--success-subtle:#16301F;--warning-subtle:#37290C;--danger-subtle:#3A1717;--info-subtle:#152642;--scrim:#000000B3;">
+<h2>Тёмная тема</h2>
+<h3>Палитра</h3><div class="sws"><div class="sw"><i style="background:#0F1117"></i><span>bg</span><code>#0F1117</code></div><div class="sw"><i style="background:#171A22"></i><span>surface</span><code>#171A22</code></div><div class="sw"><i style="background:#1E222C"></i><span>surface-raised</span><code>#1E222C</code></div><div class="sw"><i style="background:#0B0D12"></i><span>surface-sunken</span><code>#0B0D12</code></div><div class="sw"><i style="background:#222735"></i><span>surface-hover</span><code>#222735</code></div><div class="sw"><i style="background:#2B3040"></i><span>border</span><code>#2B3040</code></div><div class="sw"><i style="background:#6B7488"></i><span>border-strong</span><code>#6B7488</code></div><div class="sw"><i style="background:#E8EAF0"></i><span>text</span><code>#E8EAF0</code></div><div class="sw"><i style="background:#A3ABBB"></i><span>text-muted</span><code>#A3ABBB</code></div><div class="sw"><i style="background:#6B7488"></i><span>text-disabled</span><code>#6B7488</code></div><div class="sw"><i style="background:#818CF8"></i><span>accent</span><code>#818CF8</code></div><div class="sw"><i style="background:#A5B4FC"></i><span>accent-hover</span><code>#A5B4FC</code></div><div class="sw"><i style="background:#7077F2"></i><span>accent-active</span><code>#7077F2</code></div><div class="sw"><i style="background:#0F1117"></i><span>on-accent</span><code>#0F1117</code></div><div class="sw"><i style="background:#262B4D"></i><span>accent-subtle</span><code>#262B4D</code></div><div class="sw"><i style="background:#A5B4FC"></i><span>focus-ring</span><code>#A5B4FC</code></div><div class="sw"><i style="background:#3A4180"></i><span>selection</span><code>#3A4180</code></div><div class="sw"><i style="background:#4ADE80"></i><span>success</span><code>#4ADE80</code></div><div class="sw"><i style="background:#FBBF24"></i><span>warning</span><code>#FBBF24</code></div><div class="sw"><i style="background:#F87171"></i><span>danger</span><code>#F87171</code></div><div class="sw"><i style="background:#60A5FA"></i><span>info</span><code>#60A5FA</code></div><div class="sw"><i style="background:#0F1117"></i><span>on-danger</span><code>#0F1117</code></div><div class="sw"><i style="background:#16301F"></i><span>success-subtle</span><code>#16301F</code></div><div class="sw"><i style="background:#37290C"></i><span>warning-subtle</span><code>#37290C</code></div><div class="sw"><i style="background:#3A1717"></i><span>danger-subtle</span><code>#3A1717</code></div><div class="sw"><i style="background:#152642"></i><span>info-subtle</span><code>#152642</code></div><div class="sw"><i style="background:#000000B3"></i><span>scrim</span><code>#000000B3</code></div></div>
+<h3>Типографика</h3>
+<p style="font-size:28px;line-height:34px;font-weight:600;margin:0">Заголовок 1 — 28/34</p>
+<p style="font-size:22px;line-height:28px;font-weight:600;margin:0">Заголовок 2 — 22/28</p>
+<p style="font-size:18px;line-height:24px;font-weight:600;margin:0">Заголовок 3 — 18/24</p>
+<p style="margin:0">Основной текст 14/20: Съешь ещё этих мягких французских булок.</p>
+<p class="mut" style="margin:0">Малый текст 12/18, приглушённый</p>
+<p style="font-family:var(--mono);font-size:13px;margin:0">Моноширинный 13: java -Xmx4G -jar app.jar</p>
+<h3>Кнопки</h3>
+<div class="row"><button class="btn primary">Играть</button><button class="btn primary hover">Hover</button><button class="btn primary active">Pressed</button><button class="btn primary focus">Focus</button><button class="btn primary" disabled>Disabled</button></div>
+<div class="row"><button class="btn">Вторичная</button><button class="btn hover">Hover</button><button class="btn focus">Focus</button><button class="btn" disabled>Disabled</button><button class="btn ghost">Текстовая</button><button class="btn danger">Удалить</button></div>
+<h3>Поля</h3>
+<div class="row"><input class="fld" value="Мой модпак" aria-label="Обычное"><input class="fld focus" value="Фокус" aria-label="Фокус"><input class="fld err" value="a/b" aria-label="Ошибка"><input class="fld" disabled value="Отключено" aria-label="Отключено"></div>
+<p class="err-t">Недопустимый символ «/» в имени инстанса.</p>
+<h3>Карточки инстансов</h3>
+<div class="row">
+<div class="card"><div class="ico">⬢</div><div><b>Survival 1.21</b><div class="mut">Fabric · 1.21.1 · 3 ч 20 м</div></div><button class="btn primary sm">Играть</button></div>
+<div class="card sel"><div class="ico">⬢</div><div><b>Тестовый (выбран)</b><div class="mut">Vanilla · 1.20.4</div></div><button class="btn sm">Играть</button></div>
+<div class="card"><div class="ico run">⬢</div><div><b>Запущен</b><div class="mut">Forge · 1.19.2</div></div><button class="btn danger sm">Стоп</button></div>
+<div class="card dis"><div class="ico">⬢</div><div><b>Ошибка запуска</b><div class="mut" style="color:var(--danger)">Java не найдена</div></div><button class="btn sm">Детали</button></div>
+</div>
+<h3>Список</h3>
+<ul class="list"><li>По умолчанию</li><li class="h">Наведение</li><li class="s">Выбран</li><li class="d">Отключён</li></ul>
+<h3>Вкладки</h3>
+<div class="tabs" role="tablist"><span class="tab on" role="tab" aria-selected="true">Обзор</span><span class="tab" role="tab">Моды</span><span class="tab foc" role="tab">Фокус</span><span class="tab dis" role="tab">Отключена</span></div>
+<h3>Прогресс</h3>
+<div class="bar"><span style="width:62%"></span></div><p class="mut" style="margin:4px 0">Скачивание: 62%</p>
+<div class="bar ind"><span></span></div><p class="mut" style="margin:4px 0">Неопределённый (при reduced-motion — статичный сегмент)</p>
+<div class="bar ok"><span style="width:100%"></span></div><div class="bar bad"><span style="width:40%"></span></div>
+<h3>Уведомления</h3>
+<div class="toast info">Доступна новая версия лаунчера.</div><div class="toast success">Инстанс создан.</div><div class="toast warning">Мало места на диске.</div><div class="toast danger">Не удалось скачать библиотеку.</div>
+<h3>Пустое состояние</h3>
+<div class="empty"><div class="ico">⬢</div><b>Инстансов пока нет</b><div class="mut">Создайте первый инстанс или импортируйте готовый.</div><button class="btn primary">Создать инстанс</button></div>
+<h3>Диалог</h3>
+<div class="scrim"><div class="dlg" role="dialog" aria-label="Удалить инстанс"><b style="font-size:18px">Удалить инстанс?</b><p class="mut">Мир и настройки будут удалены без возможности восстановления.</p><div class="row end"><button class="btn">Отмена</button><button class="btn danger">Удалить</button></div></div></div>
+<h3>Иконки (Lucide, ISC)</h3>
+<p class="mut">Имена иконок набора для инстансов; в приложении подключается шрифт lucide.ttf.</p>
+<div class="row"><code class="chip">box</code><code class="chip">sword</code><code class="chip">pickaxe</code><code class="chip">flask-conical</code><code class="chip">leaf</code><code class="chip">flame</code><code class="chip">snowflake</code><code class="chip">zap</code><code class="chip">rocket</code><code class="chip">gem</code><code class="chip">compass</code><code class="chip">map</code><code class="chip">castle</code><code class="chip">tree-pine</code><code class="chip">ghost</code><code class="chip">skull</code><code class="chip">heart</code><code class="chip">star</code><code class="chip">wrench</code><code class="chip">play</code></div>
+<h3>Контрасты WCAG</h3>
+<table><tr><th>Передний план</th><th>Фон</th><th>Контраст</th><th>AA</th></tr><tr><td>text</td><td>bg</td><td>15.69:1</td><td>AA</td></tr><tr><td>text</td><td>surface</td><td>14.46:1</td><td>AA</td></tr><tr><td>text</td><td>surface-raised</td><td>13.22:1</td><td>AA</td></tr><tr><td>text-muted</td><td>bg</td><td>8.18:1</td><td>AA</td></tr><tr><td>text-muted</td><td>surface</td><td>7.54:1</td><td>AA</td></tr><tr><td>text-muted</td><td>surface-hover</td><td>6.46:1</td><td>AA</td></tr><tr><td>text-disabled</td><td>surface</td><td>3.71:1</td><td>—</td></tr><tr><td>on-accent</td><td>accent</td><td>6.33:1</td><td>AA</td></tr><tr><td>on-accent</td><td>accent-hover</td><td>9.47:1</td><td>AA</td></tr><tr><td>on-accent</td><td>accent-active</td><td>5.04:1</td><td>AA</td></tr><tr><td>accent</td><td>surface</td><td>5.83:1</td><td>AA</td></tr><tr><td>accent</td><td>bg</td><td>6.33:1</td><td>AA</td></tr><tr><td>text</td><td>accent-subtle</td><td>11.37:1</td><td>AA</td></tr><tr><td>accent</td><td>accent-subtle</td><td>4.59:1</td><td>AA</td></tr><tr><td>success</td><td>surface</td><td>9.98:1</td><td>AA</td></tr><tr><td>warning</td><td>surface</td><td>10.42:1</td><td>AA</td></tr><tr><td>danger</td><td>surface</td><td>6.29:1</td><td>AA</td></tr><tr><td>info</td><td>surface</td><td>6.84:1</td><td>AA</td></tr><tr><td>success</td><td>success-subtle</td><td>8.16:1</td><td>AA</td></tr><tr><td>warning</td><td>warning-subtle</td><td>8.47:1</td><td>AA</td></tr><tr><td>danger</td><td>danger-subtle</td><td>5.77:1</td><td>AA</td></tr><tr><td>info</td><td>info-subtle</td><td>5.95:1</td><td>AA</td></tr><tr><td>on-danger</td><td>danger</td><td>6.82:1</td><td>—</td></tr><tr><td>border-strong</td><td>surface</td><td>3.71:1</td><td>AA</td></tr><tr><td>border-strong</td><td>bg</td><td>4.02:1</td><td>AA</td></tr><tr><td>focus-ring</td><td>surface</td><td>8.73:1</td><td>AA</td></tr><tr><td>focus-ring</td><td>bg</td><td>9.47:1</td><td>AA</td></tr><tr><td>accent</td><td>surface</td><td>5.83:1</td><td>AA</td></tr></table>
+</section>
+</div></div></body></html>
