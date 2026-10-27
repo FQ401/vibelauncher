@@ -3,9 +3,11 @@ name = "xtask"
 description = "Project tasks: `cargo xtask ci`, `cargo xtask version`."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

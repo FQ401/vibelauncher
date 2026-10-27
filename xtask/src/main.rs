@@ -1,8 +1,10 @@
 //! Project tasks, run as `cargo xtask <task>`:
-//! - `ci` — every check a PR must pass: format, clippy, tests, layers, dependency sources;
+//! - `ci` — every check a PR must pass: layers, format, clippy, tests, wasm build of the core layer;
 //! - `version` — prints the launcher version (`[workspace.package] version`, the only place it lives);
 //! - `version set X.Y.Z[-pre]` — sets it.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // a command-line tool reports to the terminal
+
+mod layers;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -36,6 +38,7 @@ fn root() -> PathBuf {
 /// Runs the checks in order and stops at the first failure.
 fn ci() -> Result<(), String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let core = check_layers(&cargo)?;
     let steps: [(&str, &str, &[&str]); 3] = [
         ("format", &cargo, &["fmt", "--all", "--check"]),
         (
@@ -55,8 +58,47 @@ fn ci() -> Result<(), String> {
     for (name, program, args) in steps {
         run(name, program, args)?;
     }
+    // The core layer is pure: it must build for the browser.
+    let mut wasm = vec!["check", "--target", "wasm32-unknown-unknown"];
+    for package in &core {
+        wasm.extend(["-p", package.as_str()]);
+    }
+    run("wasm", &cargo, &wasm)?;
     println!("xtask ci: all checks passed");
     Ok(())
+}
+
+/// Checks the layer rules; returns the packages of the core layer.
+fn check_layers(cargo: &str) -> Result<Vec<String>, String> {
+    println!("== layers: {cargo} metadata --no-deps");
+    let output = Command::new(cargo)
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(root())
+        .output()
+        .map_err(|e| format!("layers: cannot run {cargo}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "layers: cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let packages = layers::packages(&String::from_utf8_lossy(&output.stdout))?;
+    let errors = layers::violations(&packages);
+    if !errors.is_empty() {
+        return Err(format!(
+            "layer violations (docs/architecture.md):
+  {}",
+            errors.join(
+                "
+  "
+            )
+        ));
+    }
+    println!("layers ok: {} packages", packages.len());
+    Ok(layers::in_layer(&packages, layers::WASM_LAYER)
+        .into_iter()
+        .map(str::to_owned)
+        .collect())
 }
 
 fn run(name: &str, program: &str, args: &[&str]) -> Result<(), String> {
