@@ -184,8 +184,21 @@ the browser.
 | Cache | `%LOCALAPPDATA%\VibeLauncher\cache` | `~/Library/Caches/VibeLauncher` | `$XDG_CACHE_HOME/vibelauncher` |
 | Logs | `<data>/logs` | `~/Library/Logs/VibeLauncher` | `$XDG_STATE_HOME/vibelauncher/logs` |
 
-In portable mode (`--dir <path>`, or a marker file next to the executable) all three live under
-that one directory and nothing is written outside it.
+In portable mode all three live under that one directory (`<dir>`, `<dir>/cache`, `<dir>/logs`)
+and nothing is written outside it. `--dir <path>` selects it; otherwise a `vibelauncher.portable`
+file next to the executable selects `<executable directory>/data`. `--dir` wins over the marker.
+
+`vl-store` also provides, for every native crate:
+
+- `write_atomic` / `write_atomic_with` — write a temporary file next to the target, flush, rename;
+  readers see the old or the new file, never a partial one.
+- `Store::open` — creates the directories, takes an exclusive lock on the data directory
+  (`.lock`, released by the OS on exit or crash, so a second launcher is refused with a conflict
+  error) and migrates the data to the current format.
+- The format version (`format.json` in the data directory) and the migration chain
+  (`format::MIGRATIONS`, one step per version). A directory with content and no version file is
+  format 0. Before the first step the data is copied to `snapshots/format-<n>`; the version is
+  recorded after each step. Data from a newer format is refused and left untouched.
 
 The data directory holds:
 

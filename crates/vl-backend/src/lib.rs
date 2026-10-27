@@ -18,6 +18,8 @@ mod versions;
 
 use std::path::PathBuf;
 
+use vl_store::{Store, StoreOptions};
+
 use vl_core::{
     BackendInfo, Command, Error, EventBus, EventStream, Facade, Replier, Reply, Response,
     reply_channel,
@@ -30,19 +32,36 @@ pub struct BackendConfig {
     pub data_dir: Option<PathBuf>,
 }
 
+impl BackendConfig {
+    fn store_options(&self) -> StoreOptions {
+        StoreOptions {
+            portable_dir: self.data_dir.clone(),
+        }
+    }
+}
+
 /// The real launcher behind the facade.
 pub struct Backend {
     config: BackendConfig,
+    store: Store,
     events: EventBus,
 }
 
 impl Backend {
-    /// Starts the backend.
+    /// Starts the backend: opens the data directory (locking it against a second launcher and
+    /// migrating it to the current format).
     pub fn new(config: BackendConfig) -> vl_core::Result<Self> {
+        let store = Store::open(&config.store_options())?;
         Ok(Self {
             config,
+            store,
             events: EventBus::default(),
         })
+    }
+
+    /// The opened data directory.
+    pub fn store(&self) -> &Store {
+        &self.store
     }
 
     /// The configuration the backend started with.
@@ -92,7 +111,11 @@ mod tests {
 
     #[test]
     fn says_hello_and_reports_unhandled_commands() {
-        let backend = Backend::new(BackendConfig::default()).unwrap();
+        let dir = std::env::temp_dir().join(format!("vl-backend-test-{}", std::process::id()));
+        let backend = Backend::new(BackendConfig {
+            data_dir: Some(dir.clone()),
+        })
+        .unwrap();
         let hello = backend.call(Command::Hello).wait().unwrap();
         assert!(matches!(hello, Response::Hello(info) if !info.mock));
         let err = backend
@@ -100,5 +123,7 @@ mod tests {
             .wait()
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Unsupported);
+        drop(backend);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
