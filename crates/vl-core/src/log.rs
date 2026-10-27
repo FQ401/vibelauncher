@@ -42,3 +42,27 @@ pub struct LogLine {
     /// The text, without the trailing newline.
     pub text: String,
 }
+
+/// One line of a [`LogBatch`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogEntry {
+    /// When the launcher received the line, milliseconds since the Unix epoch.
+    pub time_ms: u64,
+    /// Its level.
+    pub level: LogLevel,
+    /// The text, without the trailing newline.
+    pub text: String,
+}
+
+/// Game output delivered in groups instead of one event per line, so a chatty game cannot flood
+/// a front end. The full log is in the log file of the launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogBatch {
+    /// Where the lines come from.
+    pub source: LogSource,
+    /// The lines in output order.
+    pub lines: Vec<LogEntry>,
+    /// Lines left out of this batch (and of the stream) because the game wrote faster than a
+    /// front end can show; they are in the log file.
+    pub skipped: u64,
+}

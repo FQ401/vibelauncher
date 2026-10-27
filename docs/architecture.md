@@ -123,7 +123,8 @@ pub trait Facade: Send + Sync {
 | Event | Carries |
 |---|---|
 | `Task(TaskEvent)` | `Started(TaskInfo)`, `Progress { id, progress }`, `Finished { id, outcome }` |
-| `Log(LogLine)` | a launcher or game log line with its source and level |
+| `Log(LogLine)` | a launcher log line with its source and level |
+| `LogBatch(LogBatch)` | a group of game output lines (level, time, text) with a count of lines left out |
 | `Instance(InstanceEvent)` | `Added`, `Changed`, `Removed` |
 | `Launch(LaunchEvent)` | `StateChanged { instance, state }`, `Exited { instance, exit }` |
 | `Account(AccountEvent)` | `DeviceCode(prompt)` for sign-in, `ListChanged` |
@@ -152,8 +153,10 @@ front end subscribes before sending a command whose events it follows.
 
 `LaunchCommand::Launch` answers `Response::Task` for the preparation task. The instance moves
 `Preparing → Running → Stopped` (`LaunchEvent::StateChanged`); game output arrives as
-`Event::Log` with `LogSource::Game(instance)`; the end of the process is `LaunchEvent::Exited`
-with the exit code and whether it was a crash or a user stop. `LaunchCommand::Stop` stops a
+`Event::LogBatch` with `LogSource::Game(instance)`, a few batches a second; the end of the process
+is `LaunchEvent::Exited` with the exit code, the session time, whether it was a crash or a user
+stop, the crash report and `hs_err_pid*.log` written during the run, the log file and the last
+lines. `LaunchCommand::Stop` stops a
 preparing or running game.
 
 `vl-launch` does the work behind it:
@@ -170,9 +173,14 @@ preparing or running game.
   version's JVM arguments, logging, main class, game arguments with `${variables}` substituted.
 - The player's session (`LaunchSession`: name, UUID, access token, user type) is a parameter of
   `prepare`. The backend takes it from the account and refreshes an expiring token first.
-- `process::spawn` starts Java without a shell in the instance's game directory, streams both
-  output streams line by line (the access token is masked), and reports the exit code; a stop
-  kills the whole process tree.
+- `process::spawn` starts Java without a shell in the instance's game directory and reports the
+  exit; a stop kills the whole process tree (`taskkill /T` on Windows, a process group on Unix).
+  Reader threads only hand lines over, so the game never waits for a front end. A collector parses
+  them (log4j XML events and plain lines into levels; the access token is masked), writes the full
+  output to `<instance>/logs/vl-game-<UTC time>.log` (the newest 10 are kept), keeps the last
+  `console.max_lines` lines in memory (at most 16 MiB) and delivers batches every 100 ms of at
+  most 500 lines; the surplus is counted as skipped. A run is a crash when the code is not 0 or a
+  new file appeared in `crash-reports/` or as `hs_err_pid*.log` in the game directory.
 - Apple silicon: LWJGL 3 versions without arm64 natives get LWJGL 3.3.3 from Maven Central;
   LWJGL 2 versions (up to 1.12.2) are installed for `x86_64` and need an `x86_64` Java (Rosetta).
 

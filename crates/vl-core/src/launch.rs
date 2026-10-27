@@ -2,7 +2,9 @@
 //!
 //! `LaunchCommand::Launch` answers `Response::Task` for the preparation; then the instance moves
 //! `Preparing → Running → Stopped` (`LaunchEvent::StateChanged`), the game's output arrives as
-//! `Event::Log` with `LogSource::Game`, and the end of the process as `LaunchEvent::Exited`.
+//! `Event::LogBatch` with `LogSource::Game` (groups of lines, a few per second), and the end of the process as `LaunchEvent::Exited`.
+
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -25,10 +27,26 @@ pub struct LaunchRequest {
 pub struct GameExit {
     /// The exit code, when the OS reports one.
     pub code: Option<i32>,
-    /// Whether the launcher considers it a crash.
+    /// Whether the launcher considers it a crash: a non-zero exit, a new crash report or a new
+    /// JVM error log, unless the user stopped the game.
     pub crashed: bool,
     /// Whether the user stopped it.
     pub stopped_by_user: bool,
+    /// How long the process ran, in milliseconds.
+    #[serde(default)]
+    pub session_ms: u64,
+    /// The crash report the game wrote during this run (`crash-reports/`), when there is one.
+    #[serde(default)]
+    pub crash_report: Option<PathBuf>,
+    /// The JVM fatal error log (`hs_err_pid*.log`) written during this run, when there is one.
+    #[serde(default)]
+    pub hs_err: Option<PathBuf>,
+    /// The file with the full output of this run.
+    #[serde(default)]
+    pub log_file: Option<PathBuf>,
+    /// The last lines of the output, oldest first.
+    #[serde(default)]
+    pub tail: Vec<String>,
 }
 
 /// Launch commands.

@@ -16,12 +16,12 @@ use std::time::{Duration, Instant};
 
 use vl_core::instance::InstanceState;
 use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
-use vl_core::log::{LogLevel, LogLine, LogSource};
+use vl_core::log::{LogBatch, LogLevel, LogLine, LogSource};
 use vl_core::settings::Settings;
 use vl_core::task::{Progress, ProgressUnit, TaskKind};
 use vl_core::{Error, ErrorKind, Event, EventBus, InstanceId, Replier, Response};
 use vl_java::select::JavaRequirement;
-use vl_launch::process::{self, RunningGame};
+use vl_launch::process::{self, GameBatch, RunningGame, SpawnOptions};
 use vl_launch::{Installer, InstallerOptions, Job, Layout, PrepareInput};
 use vl_net::{CancelToken, Client, NetConfig};
 use vl_store::Store;
@@ -114,6 +114,7 @@ struct Plan {
     request: LaunchRequest,
     version: String,
     game_dir: std::path::PathBuf,
+    log_dir: std::path::PathBuf,
     settings: Settings,
     accounts: crate::accounts::Service,
     java: crate::java::JavaService,
@@ -130,6 +131,7 @@ fn launch(backend: &Backend, request: LaunchRequest) -> vl_core::Result<Response
         .ok_or_else(|| Error::invalid_input(format!("instance {id} has no game version")))?;
     let plan = Plan {
         game_dir: backend.instances.game_dir(&id)?,
+        log_dir: backend.instances.dir(&id)?.join("logs"),
         settings: backend.settings().effective(&id).value,
         accounts: backend.accounts.clone(),
         java: backend.java.clone(),
@@ -211,10 +213,17 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
     let exit_service = service.clone();
     let instances = plan.instances.clone();
     let exit_id = id.clone();
+    let mut options = SpawnOptions::new(plan.settings.console.max_lines as usize);
+    options.log_dir = Some(plan.log_dir.clone());
     let game = process::spawn(
         &prepared.command,
-        move |line| {
-            line_service.log(line_source.clone(), LogLevel::Unknown, line.text);
+        &options,
+        move |batch: GameBatch| {
+            line_service.events.publish(&Event::LogBatch(LogBatch {
+                source: line_source.clone(),
+                lines: batch.lines,
+                skipped: batch.skipped,
+            }));
         },
         move |exit| {
             exit_service.active().remove(&exit_id);
@@ -235,6 +244,13 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
         },
     )?;
     let pid = game.pid();
+    if let Some(file) = game.log_file() {
+        service.log(
+            LogSource::Launcher,
+            LogLevel::Info,
+            format!("game log: {}", file.display()),
+        );
+    }
     service.active().insert(id.clone(), Active::Running(game));
     service.state(id, InstanceState::Running { pid: Some(pid) });
     Ok(())

@@ -21,7 +21,7 @@ use crate::ids::TaskId;
 use crate::instance::{InstanceCommand, InstanceEvent, InstanceSummary};
 use crate::java::{JavaCommand, JavaEvent, JavaRuntime};
 use crate::launch::{LaunchCommand, LaunchEvent};
-use crate::log::LogLine;
+use crate::log::{LogBatch, LogLine};
 use crate::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
 use crate::task::{TaskCommand, TaskEvent, TaskSnapshot};
 use crate::version::{GameVersion, VersionCommand, VersionEvent};
@@ -107,6 +107,8 @@ pub enum Event {
     Task(TaskEvent),
     /// A launcher or game log line.
     Log(LogLine),
+    /// A group of game output lines.
+    LogBatch(LogBatch),
     /// Instance list changes.
     Instance(InstanceEvent),
     /// Game process lifecycle.
