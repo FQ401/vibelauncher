@@ -28,6 +28,9 @@ vl-ui-egui = { path = "crates/vl-ui-egui" }
 # Third-party crates.
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+ureq = { version = "3.5.0", default-features = false, features = ["rustls", "socks-proxy"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
