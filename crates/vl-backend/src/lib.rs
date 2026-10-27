@@ -17,6 +17,7 @@ mod tasks;
 mod versions;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use vl_store::{Store, StoreOptions};
 
@@ -44,7 +45,8 @@ impl BackendConfig {
 pub struct Backend {
     config: BackendConfig,
     store: Store,
-    events: EventBus,
+    events: Arc<EventBus>,
+    java: java::JavaService,
 }
 
 impl Backend {
@@ -52,10 +54,12 @@ impl Backend {
     /// migrating it to the current format).
     pub fn new(config: BackendConfig) -> vl_core::Result<Self> {
         let store = Store::open(&config.store_options())?;
+        let events = Arc::new(EventBus::default());
         Ok(Self {
+            java: java::JavaService::new(&config, Arc::clone(&events)),
             config,
             store,
-            events: EventBus::default(),
+            events,
         })
     }
 
