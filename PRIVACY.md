@@ -37,10 +37,6 @@ The launcher contacts the following services. Each request is made directly from
 
 Like any network request, these requests expose the device's IP address to the receiving service.
 
-### AI model requests
-
-Where the user configures an AI model for Vibefork, the content of a request is sent to the provider the user has configured, using the user's own credentials. The launcher sends no such request without that configuration.
-
 ## Telemetry
 
 The launcher collects no telemetry and does not track usage.
