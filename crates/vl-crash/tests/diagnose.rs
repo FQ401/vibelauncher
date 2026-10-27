@@ -324,7 +324,7 @@ fn no_signature_is_undetermined() {
 #[test]
 fn garbage_input_never_panics() {
     let long = "x".repeat(200_000);
-    let multibyte = "ж\u{0}\u{feff}at \tat (((\n".repeat(500);
+    let multibyte = "\u{436}\u{0}\u{feff}at \tat (((\n".repeat(500);
     let samples = [
         "",
         "\0\0\0",
