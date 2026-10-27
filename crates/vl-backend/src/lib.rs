@@ -55,6 +55,7 @@ pub struct Backend {
     events: Arc<EventBus>,
     java: java::JavaService,
     tasks: TaskEngine,
+    accounts: accounts::Service,
 }
 
 impl Backend {
@@ -66,6 +67,7 @@ impl Backend {
         let settings = SettingsStore::new(store.data_dir());
         let events = Arc::new(EventBus::default());
         let tasks = TaskEngine::new(Arc::clone(&events), MAX_PARALLEL_TASKS);
+        let accounts = accounts::Service::new(&store, Arc::clone(&events))?;
         Ok(Self {
             java: java::JavaService::new(&config, Arc::clone(&events)),
             config,
@@ -74,6 +76,7 @@ impl Backend {
             settings,
             events,
             tasks,
+            accounts,
         })
     }
 

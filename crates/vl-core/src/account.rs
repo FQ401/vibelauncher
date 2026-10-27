@@ -60,6 +60,12 @@ pub enum AccountCommand {
         /// The player name.
         name: String,
     },
+    /// Renews a Microsoft account's sign-in from its stored refresh token → `Response::Task`;
+    /// when the token is rejected the account is marked `needs_sign_in` and the task fails.
+    Refresh {
+        /// The account.
+        id: AccountId,
+    },
     /// Removes an account and its stored secrets → `Response::Done`.
     Remove {
         /// The account.
