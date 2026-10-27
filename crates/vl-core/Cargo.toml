@@ -1,0 +1,9 @@
+[package]
+name = "vl-core"
+description = "VibeLauncher core types."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
