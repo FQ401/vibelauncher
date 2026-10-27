@@ -55,4 +55,4 @@ Changes to this policy are made in this repository and are visible in its histor
 
 ## Contact
 
-Questions about privacy: open an issue at <https://github.com/FQ401/vibelauncher/issues>.
+Questions about privacy: <vibelauncher@vibefork.me>. Issues: <https://github.com/FQ401/vibelauncher/issues>.
