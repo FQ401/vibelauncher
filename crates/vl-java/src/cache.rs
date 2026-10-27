@@ -9,8 +9,10 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 use vl_core::java::JavaRuntime;
 
+use crate::probe::Probed;
+
 /// The on-disk format version; a file of another version is ignored.
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 
 /// What identifies one state of an executable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +36,9 @@ fn stamp(path: &Path) -> Option<Stamp> {
 struct Entry {
     stamp: Stamp,
     runtime: JavaRuntime,
+    /// The `java.home` the runtime reported.
+    #[serde(default)]
+    home: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,19 +88,24 @@ impl ProbeCache {
     }
 
     /// The remembered result for `path`, if the executable is unchanged since.
-    pub fn get(&self, path: &Path) -> Option<JavaRuntime> {
+    pub fn get(&self, path: &Path) -> Option<Probed> {
         let entry = self.entries.get(path)?;
-        (stamp(path)? == entry.stamp).then(|| entry.runtime.clone())
+        (stamp(path)? == entry.stamp).then(|| Probed {
+            runtime: entry.runtime.clone(),
+            home: entry.home.clone(),
+        })
     }
 
-    /// Remembers a successful probe of `runtime.path`.
-    pub fn insert(&mut self, runtime: &JavaRuntime) {
+    /// Remembers a successful probe of `probed.runtime.path`.
+    pub fn insert(&mut self, probed: &Probed) {
+        let runtime = &probed.runtime;
         if let Some(stamp) = stamp(&runtime.path) {
             self.entries.insert(
                 runtime.path.clone(),
                 Entry {
                     stamp,
                     runtime: runtime.clone(),
+                    home: probed.home.clone(),
                 },
             );
         }
@@ -123,14 +133,17 @@ mod tests {
     use crate::discover::testutil::TempDir;
     use vl_core::platform::Arch;
 
-    fn runtime(path: &Path) -> JavaRuntime {
-        JavaRuntime {
-            path: path.to_path_buf(),
-            major: 17,
-            version: "17.0.2".into(),
-            arch: Arch::X86_64,
-            vendor: "Synthetic".into(),
-            managed: false,
+    fn runtime(path: &Path) -> Probed {
+        Probed {
+            runtime: JavaRuntime {
+                path: path.to_path_buf(),
+                major: 17,
+                version: "17.0.2".into(),
+                arch: Arch::X86_64,
+                vendor: "Synthetic".into(),
+                managed: false,
+            },
+            home: Some(PathBuf::from("/opt/home")),
         }
     }
 
@@ -142,7 +155,7 @@ mod tests {
         let mut cache = ProbeCache::default();
         assert!(cache.get(&exe).is_none());
         cache.insert(&runtime(&exe));
-        assert_eq!(cache.get(&exe).map(|r| r.major), Some(17));
+        assert_eq!(cache.get(&exe).map(|p| p.runtime.major), Some(17));
 
         fs::write(&exe, b"a different binary").unwrap();
         assert!(cache.get(&exe).is_none());
@@ -162,7 +175,10 @@ mod tests {
 
         let loaded = ProbeCache::load(&file);
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded.get(&exe).map(|r| r.vendor), Some("Synthetic".into()));
+        assert_eq!(
+            loaded.get(&exe).map(|p| (p.runtime.vendor, p.home)),
+            Some(("Synthetic".into(), Some(PathBuf::from("/opt/home"))))
+        );
     }
 
     #[test]

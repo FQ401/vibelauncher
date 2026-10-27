@@ -24,6 +24,7 @@ commands:
   accounts remove <account>           remove an account (id or name)
   accounts refresh <account>          renew a Microsoft sign-in
   java list                           list Java runtimes
+  java install <major>                download a Java runtime (8, 17, 21...)
   launch <instance> [--offline]       launch and follow the game log";
 
 /// A failed command line.
@@ -105,6 +106,13 @@ mod tests {
         assert!(out.contains("libraries 12/12"), "{out}");
         assert!(out.contains("Mock game line 5"), "{out}");
         assert!(out.contains("exited with code 0"), "{out}");
+    }
+
+    #[test]
+    fn java_install_checks_its_argument() {
+        let err = run_mock(&["java", "install", "latest"]).unwrap_err();
+        assert!(err.to_string().contains("number"), "{err}");
+        assert!(run_mock(&["java", "install"]).is_err());
     }
 
     #[test]

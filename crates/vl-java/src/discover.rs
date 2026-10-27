@@ -468,7 +468,7 @@ pub fn dedupe(candidates: Vec<Candidate>) -> Vec<Candidate> {
 }
 
 /// Removes the `\\?\` prefix `canonicalize` adds on Windows, so spellings compare equal.
-fn strip_verbatim(path: PathBuf) -> PathBuf {
+pub(crate) fn strip_verbatim(path: PathBuf) -> PathBuf {
     let text = path.to_string_lossy();
     match text.strip_prefix(r"\\?\") {
         Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest.to_ascii_lowercase()),

@@ -32,6 +32,13 @@ pub enum JavaCommand {
     List,
     /// Scans and checks runtimes again → `Response::Task`.
     Rescan,
+    /// Makes a launcher-managed runtime of this major version available: downloads it unless one
+    /// is already installed → `Response::Task` (kind `JavaDownload`, cancellable); the list
+    /// changes when it succeeds.
+    Install {
+        /// The Java major version (8, 17, 21...).
+        major: u32,
+    },
 }
 
 /// Changes to the runtime list.

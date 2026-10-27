@@ -8,13 +8,17 @@
 //!   name. A broken or hanging Java is skipped and never stops the scan.
 //! - Cache ([`cache`]): results are remembered by path and validated by the executable's
 //!   modification time and size.
-//! - Managed downloads of runtimes and the choice of a runtime for a game version belong here
-//!   too, in later work.
+//! - Managed downloads ([`install`]): a runtime comes from Mojang's runtime manifest, or from
+//!   Adoptium when Mojang has none for the platform; files are verified, installed atomically
+//!   into the launcher's `java/<component>` directory and checked with the probe.
+//! - Selection ([`select`]): the runtime for a game version, or the one to download.
 
 pub mod cache;
 pub mod discover;
+pub mod install;
 pub mod probe;
 mod run;
+pub mod select;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,6 +29,7 @@ use vl_core::java::JavaRuntime;
 
 use cache::ProbeCache;
 use discover::{Candidate, Env};
+use probe::Probed;
 
 /// How a [`JavaFinder`] works.
 #[derive(Debug, Clone)]
@@ -82,7 +87,7 @@ impl JavaFinder {
     pub fn check(&self, candidates: Vec<Candidate>) -> Vec<JavaRuntime> {
         let candidates = discover::dedupe(candidates);
         let next = AtomicUsize::new(0);
-        let results: Mutex<Vec<JavaRuntime>> = Mutex::new(Vec::new());
+        let results: Mutex<Vec<Probed>> = Mutex::new(Vec::new());
         let workers = self.options.jobs.clamp(1, candidates.len().max(1));
         std::thread::scope(|scope| {
             for _ in 0..workers {
@@ -102,50 +107,84 @@ impl JavaFinder {
                 });
             }
         });
-        let mut found = results.into_inner().unwrap_or_else(PoisonError::into_inner);
+        let probed = results.into_inner().unwrap_or_else(PoisonError::into_inner);
+        {
+            let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+            cache.retain(|path| probed.iter().any(|p| p.runtime.path == path));
+            if let Some(file) = &self.options.cache_file {
+                // A cache that cannot be written only costs time on the next run.
+                let _ = cache.save(file);
+            }
+        }
+
+        let mut found = collapse_by_home(probed);
         found.sort_by(|a, b| {
             b.major
                 .cmp(&a.major)
                 .then(b.managed.cmp(&a.managed))
                 .then_with(|| a.path.cmp(&b.path))
         });
-
-        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
-        cache.retain(|path| found.iter().any(|r| r.path == path));
-        if let Some(file) = &self.options.cache_file {
-            // A cache that cannot be written only costs time on the next run.
-            let _ = cache.save(file);
-        }
         found
     }
 
     /// The runtime behind one candidate, from the cache or by a check; `None` when it is not a
     /// working Java.
-    fn check_one(&self, candidate: &Candidate) -> Option<JavaRuntime> {
+    fn check_one(&self, candidate: &Candidate) -> Option<Probed> {
         let cached = self
             .cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&candidate.path);
-        let mut runtime = match cached {
-            Some(runtime) => runtime,
+        let mut probed = match cached {
+            Some(probed) => probed,
             None => {
-                let runtime = probe::probe(&candidate.path, self.options.probe_timeout).ok()?;
+                let probed =
+                    probe::probe_with_home(&candidate.path, self.options.probe_timeout).ok()?;
                 self.cache
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .insert(&runtime);
-                runtime
+                    .insert(&probed);
+                probed
             }
         };
-        runtime.managed = candidate.managed;
-        Some(runtime)
+        probed.runtime.managed = candidate.managed;
+        Some(probed)
     }
 
     /// Checks one executable without caching.
     pub fn probe(&self, java: &Path) -> Result<JavaRuntime, probe::ProbeError> {
         probe::probe(java, self.options.probe_timeout)
     }
+}
+
+/// Keeps one runtime per installation. Launcher stubs (`javapath\\java.exe` on Windows) and
+/// links report the `java.home` of the real installation, so they collapse into it: a managed
+/// runtime wins, then the executable that lives inside its home, then the first listed.
+fn collapse_by_home(probed: Vec<Probed>) -> Vec<JavaRuntime> {
+    let canonical = |p: &Path| {
+        discover::strip_verbatim(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()))
+    };
+    let mut groups: Vec<(Option<PathBuf>, Probed)> = Vec::new();
+    for item in probed {
+        let home = item.home.as_deref().map(canonical);
+        let slot = home
+            .as_ref()
+            .and_then(|h| groups.iter().position(|(g, _)| g.as_ref() == Some(h)));
+        let Some(i) = slot else {
+            groups.push((home, item));
+            continue;
+        };
+        let inside = |p: &Probed| {
+            home.as_ref()
+                .is_some_and(|h| canonical(&p.runtime.path).starts_with(h))
+        };
+        let better = (item.runtime.managed, inside(&item))
+            > (groups[i].1.runtime.managed, inside(&groups[i].1));
+        if better {
+            groups[i].1 = item;
+        }
+    }
+    groups.into_iter().map(|(_, p)| p.runtime).collect()
 }
 
 #[cfg(test)]
@@ -178,12 +217,21 @@ mod tests {
                 "{}for /l %%i in (1,1,3000) do echo {NOISE} 1>&2\r\n",
                 say("java.version = 17.0.2")
             ),
-            version => format!(
-                "{}{}{}",
-                say(&format!("java.version = {version}")),
-                say("java.vendor = Synthetic"),
-                say("os.arch = amd64")
-            ),
+            spec => {
+                let (version, home) = spec.split_once('|').unwrap_or((spec, ""));
+                let home_line = if home.is_empty() {
+                    String::new()
+                } else {
+                    say(&format!("java.home = {home}"))
+                };
+                format!(
+                    "{}{}{}{}",
+                    say(&format!("java.version = {version}")),
+                    say("java.vendor = Synthetic"),
+                    say("os.arch = amd64"),
+                    home_line
+                )
+            }
         };
         format!("@echo off\r\n{body}")
     }
@@ -198,12 +246,21 @@ mod tests {
                 "{}i=0\nwhile [ $i -lt 3000 ]; do echo {NOISE} >&2; i=$((i+1)); done\n",
                 say("java.version = 17.0.2")
             ),
-            version => format!(
-                "{}{}{}",
-                say(&format!("java.version = {version}")),
-                say("java.vendor = Synthetic"),
-                say("os.arch = amd64")
-            ),
+            spec => {
+                let (version, home) = spec.split_once('|').unwrap_or((spec, ""));
+                let home_line = if home.is_empty() {
+                    String::new()
+                } else {
+                    say(&format!("java.home = {home}"))
+                };
+                format!(
+                    "{}{}{}{}",
+                    say(&format!("java.version = {version}")),
+                    say("java.vendor = Synthetic"),
+                    say("os.arch = amd64"),
+                    home_line
+                )
+            }
         };
         format!("#!/bin/sh\n{body}")
     }
@@ -224,10 +281,14 @@ mod tests {
         }
     }
 
+    /// Tests that start fake programs run one at a time (see below).
+    static FAKES: Mutex<()> = Mutex::new(());
+
     // One test starts every fake program: parallel tests forking while a script is being
     // written can make `exec` fail with a busy-file error on Linux.
     #[test]
     fn broken_and_hanging_javas_do_not_stop_the_scan() {
+        let _serial = FAKES.lock().unwrap_or_else(PoisonError::into_inner);
         let tmp = TempDir::new();
         let good8 = fake(tmp.path(), "good8", "1.8.0_345");
         let good21 = fake(tmp.path(), "good21", "21.0.1");
@@ -242,7 +303,7 @@ mod tests {
 
         let cache_file = tmp.path().join("cache").join("java-cache.json");
         let options = FinderOptions {
-            probe_timeout: Duration::from_secs(2),
+            probe_timeout: Duration::from_secs(8),
             cache_file: Some(cache_file.clone()),
             ..FinderOptions::default()
         };
@@ -283,5 +344,33 @@ mod tests {
         let cached = again.cache.lock().map(|c| c.len()).unwrap_or(0);
         assert_eq!(cached, 4);
         assert_eq!(again.check(list), found);
+    }
+
+    #[test]
+    fn a_launcher_stub_collapses_into_the_installation_it_points_to() {
+        let _serial = FAKES.lock().unwrap_or_else(PoisonError::into_inner);
+        let tmp = TempDir::new();
+        let real = fake(
+            tmp.path(),
+            "real",
+            &format!("21.0.1|{}", tmp.path().join("real").display()),
+        );
+        let stub = fake(
+            tmp.path(),
+            "stub",
+            &format!("21.0.1|{}", tmp.path().join("real").display()),
+        );
+        let other = fake(tmp.path(), "other", "17.0.9");
+        let finder = JavaFinder::new(FinderOptions {
+            probe_timeout: Duration::from_secs(5),
+            ..FinderOptions::default()
+        });
+        let found = finder.check(vec![
+            candidate(&stub, false),
+            candidate(&other, false),
+            candidate(&real, false),
+        ]);
+        let paths: Vec<&PathBuf> = found.iter().map(|r| &r.path).collect();
+        assert_eq!(paths, vec![&real, &other], "{found:?}");
     }
 }

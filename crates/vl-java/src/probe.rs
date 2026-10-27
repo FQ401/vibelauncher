@@ -40,8 +40,23 @@ impl fmt::Display for ProbeError {
 
 impl std::error::Error for ProbeError {}
 
+/// A checked runtime together with the `java.home` it reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Probed {
+    /// The runtime (`managed` is `false`).
+    pub runtime: JavaRuntime,
+    /// The `java.home` property: the real installation behind a launcher stub or a link.
+    pub home: Option<PathBuf>,
+}
+
 /// Runs the check on `java` and returns the runtime it describes (`managed` is `false`).
 pub fn probe(java: &Path, timeout: Duration) -> Result<JavaRuntime, ProbeError> {
+    probe_with_home(java, timeout).map(|p| p.runtime)
+}
+
+/// Like [`probe`], and also returns `java.home`, which tells apart a runtime from the stub
+/// executables that point to it (such as `Common Files\Oracle\Java\javapath\java.exe`).
+pub fn probe_with_home(java: &Path, timeout: Duration) -> Result<Probed, ProbeError> {
     let output = run_capped(
         java,
         &["-XshowSettings:properties", "-version"],
@@ -55,7 +70,19 @@ pub fn probe(java: &Path, timeout: Duration) -> Result<JavaRuntime, ProbeError> 
     })?;
     let mut runtime = parse_properties(&output.text).ok_or(ProbeError::NotJava)?;
     runtime.path = java.to_path_buf();
-    Ok(runtime)
+    Ok(Probed {
+        home: parse_java_home(&output.text),
+        runtime,
+    })
+}
+
+/// The `java.home` property of a property listing, if present.
+pub fn parse_java_home(text: &str) -> Option<PathBuf> {
+    text.lines()
+        .filter_map(|line| line.strip_prefix("    java.home = "))
+        .map(str::trim)
+        .find(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Reads the output of `java -XshowSettings:properties -version`.
@@ -189,6 +216,28 @@ openjdk version \"17.0.2\" 2022-01-18
         assert_eq!(r.arch, Arch::Aarch64);
         assert_eq!(r.vendor, "Synthetic Vendor");
         assert!(!r.managed);
+    }
+
+    #[test]
+    fn reads_java_home() {
+        assert_eq!(
+            parse_java_home(MODERN),
+            Some(PathBuf::from("/opt/synthetic/jdk-17"))
+        );
+        assert_eq!(
+            parse_java_home(
+                "    java.version = 8
+"
+            ),
+            None
+        );
+        assert_eq!(
+            parse_java_home(
+                "        java.home = nested
+"
+            ),
+            None
+        );
     }
 
     #[test]
