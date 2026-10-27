@@ -1,9 +1,19 @@
 [package]
 name = "vl-core"
-description = "VibeLauncher core types."
+description = "VibeLauncher core: domain types and the facade contract. Pure, builds for wasm32."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
+
+[package.metadata.vl]
+layer = "core"
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

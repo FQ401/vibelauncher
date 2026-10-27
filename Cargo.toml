@@ -1,14 +1,33 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "xtask"]
+members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
+license = "MIT"
 publish = false
 
+# Workspace crates: every package is `vl-<name>` and declares its layer in
+# `[package.metadata.vl] layer`; `cargo xtask ci` checks the layer rules (docs/architecture.md).
 [workspace.dependencies]
 vl-core = { path = "crates/vl-core" }
+vl-meta = { path = "crates/vl-meta" }
+vl-store = { path = "crates/vl-store" }
+vl-net = { path = "crates/vl-net" }
+vl-tasks = { path = "crates/vl-tasks" }
+vl-settings = { path = "crates/vl-settings" }
+vl-auth = { path = "crates/vl-auth" }
+vl-java = { path = "crates/vl-java" }
+vl-instance = { path = "crates/vl-instance" }
+vl-launch = { path = "crates/vl-launch" }
+vl-backend = { path = "crates/vl-backend" }
+vl-mock = { path = "crates/vl-mock" }
+vl-ui-egui = { path = "crates/vl-ui-egui" }
+
+# Third-party crates.
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

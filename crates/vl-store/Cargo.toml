@@ -1,0 +1,16 @@
+[package]
+name = "vl-store"
+description = "Data directories, portable mode, on-disk format version and migrations, atomic writes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+
+[lints]
+workspace = true

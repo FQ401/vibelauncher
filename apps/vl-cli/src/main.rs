@@ -1,0 +1,66 @@
+//! `vl-cli`: the launcher without a window, over the same facade as the desktop UI.
+//!
+//! ```text
+//! vl-cli [--mock] [--dir <path>] <command>
+//! ```
+//! `--mock` runs on synthetic data (`vl-mock`); otherwise the real backend (`vl-backend`) serves
+//! the commands. `--dir` selects a portable data directory.
+
+mod commands;
+
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::time::Duration;
+
+use vl_backend::{Backend, BackendConfig};
+use vl_core::Facade;
+use vl_mock::{MockFacade, MockOptions};
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let result =
+        start(&args).and_then(|(facade, rest)| commands::run(facade.as_ref(), rest, &mut out));
+    let _ = out.flush();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "vl-cli: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Reads the global options and starts the facade; returns it with the remaining arguments.
+fn start<'a>(
+    mut args: &'a [&'a str],
+) -> Result<(Box<dyn Facade>, &'a [&'a str]), commands::CliError> {
+    let mut mock = false;
+    let mut config = BackendConfig::default();
+    loop {
+        match args {
+            ["--mock", rest @ ..] => {
+                mock = true;
+                args = rest;
+            }
+            ["--dir", dir, rest @ ..] => {
+                config.data_dir = Some(PathBuf::from(dir));
+                args = rest;
+            }
+            _ => break,
+        }
+    }
+    let facade: Box<dyn Facade> = if mock {
+        Box::new(MockFacade::new(MockOptions {
+            step_delay: Duration::from_millis(30),
+            game_log_lines: 20,
+            exit_after_log: true,
+        }))
+    } else {
+        Box::new(Backend::new(config)?)
+    };
+    Ok((facade, args))
+}

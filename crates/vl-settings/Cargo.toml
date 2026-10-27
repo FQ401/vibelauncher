@@ -1,0 +1,17 @@
+[package]
+name = "vl-settings"
+description = "Global settings and per-instance overrides on disk."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-store.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "vl-mock"
+description = "A facade with synthetic data for UI and CLI development without the native layer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "backend"
+
+[dependencies]
+vl-core.workspace = true
+
+[lints]
+workspace = true

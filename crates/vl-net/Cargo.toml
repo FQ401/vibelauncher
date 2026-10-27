@@ -1,0 +1,16 @@
+[package]
+name = "vl-net"
+description = "HTTP client and downloads: parallelism, retries, hashes, HTTP cache, proxy."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+
+[lints]
+workspace = true
