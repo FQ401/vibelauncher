@@ -1,0 +1,28 @@
+{
+  "id": "fabricish-loader-0.20.1-1.20.4",
+  "inheritsFrom": "1.20.4-synth",
+  "type": "release",
+  "releaseTime": "2026-01-05T00:00:00+00:00",
+  "time": "2026-01-05T00:00:00+00:00",
+  "mainClass": "net.example.loader.launch.KnotClient",
+  "arguments": {
+    "game": [],
+    "jvm": [
+      "-DloaderMarker=1"
+    ]
+  },
+  "libraries": [
+    {
+      "name": "net.example:loader:0.20.1",
+      "url": "https://maven.example.invalid/"
+    },
+    {
+      "name": "org.ow2.asm:asm:9.6",
+      "url": "https://maven.example.invalid/"
+    },
+    {
+      "name": "com.mojang:brigadier:1.3.0",
+      "url": "https://maven.example.invalid/"
+    }
+  ]
+}

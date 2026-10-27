@@ -1,0 +1,54 @@
+[
+  {
+    "os": "mac_os",
+    "arch": "aarch64",
+    "drop": [
+      "org.lwjgl.lwjgl:lwjgl-platform",
+      "net.java.jinput:jinput-platform"
+    ],
+    "libraries": [
+      {
+        "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-arm64",
+        "natives": {
+          "osx": "natives-osx-arm64"
+        },
+        "downloads": {
+          "classifiers": {
+            "natives-osx-arm64": {
+              "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-arm64/lwjgl-platform-2.9.4-arm64-natives-osx-arm64.jar",
+              "sha1": "1111111111111111111111111111111111111111",
+              "size": 1000,
+              "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-arm64/lwjgl-platform-2.9.4-arm64-natives-osx-arm64.jar"
+            }
+          }
+        },
+        "extract": {
+          "exclude": [
+            "META-INF/"
+          ]
+        }
+      },
+      {
+        "name": "net.java.jinput:jinput-platform:2.0.5-arm64",
+        "natives": {
+          "osx": "natives-osx-arm64"
+        },
+        "downloads": {
+          "classifiers": {
+            "natives-osx-arm64": {
+              "path": "net/java/jinput/jinput-platform/2.0.5-arm64/jinput-platform-2.0.5-arm64-natives-osx-arm64.jar",
+              "sha1": "1111111111111111111111111111111111111111",
+              "size": 1000,
+              "url": "https://libraries.example.invalid/net/java/jinput/jinput-platform/2.0.5-arm64/jinput-platform-2.0.5-arm64-natives-osx-arm64.jar"
+            }
+          }
+        },
+        "extract": {
+          "exclude": [
+            "META-INF/"
+          ]
+        }
+      }
+    ]
+  }
+]

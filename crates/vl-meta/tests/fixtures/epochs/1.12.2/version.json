@@ -1,0 +1,194 @@
+{
+  "id": "1.12.2-synth",
+  "type": "release",
+  "releaseTime": "2017-09-18T08:39:46+00:00",
+  "time": "2017-09-18T08:39:46+00:00",
+  "mainClass": "net.minecraft.client.main.Main",
+  "minimumLauncherVersion": 21,
+  "minecraftArguments": "--username ${auth_player_name} --version ${version_name} --gameDir ${game_directory} --assetsDir ${assets_root} --assetIndex ${assets_index_name} --uuid ${auth_uuid} --accessToken ${auth_access_token} --userType ${user_type} --versionType ${version_type}",
+  "assets": "1.12",
+  "assetIndex": {
+    "id": "1.12",
+    "sha1": "1111111111111111111111111111111111111111",
+    "size": 2000,
+    "totalSize": 1000000,
+    "url": "https://indexes.example.invalid/1.12.json"
+  },
+  "javaVersion": {
+    "component": "jre-legacy",
+    "majorVersion": 8
+  },
+  "downloads": {
+    "client": {
+      "sha1": "1111111111111111111111111111111111111111",
+      "size": 5000000,
+      "url": "https://downloads.example.invalid/1.12.2/client.jar"
+    }
+  },
+  "logging": {
+    "client": {
+      "argument": "-Dlog4j.configurationFile=${path}",
+      "type": "log4j2-xml",
+      "file": {
+        "id": "client-1.12.xml",
+        "sha1": "1111111111111111111111111111111111111111",
+        "size": 888,
+        "url": "https://logs.example.invalid/client-1.12.xml"
+      }
+    }
+  },
+  "libraries": [
+    {
+      "name": "net.java.jinput:jinput:2.0.5",
+      "downloads": {
+        "artifact": {
+          "path": "net/java/jinput/jinput/2.0.5/jinput-2.0.5.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/net/java/jinput/jinput/2.0.5/jinput-2.0.5.jar"
+        }
+      }
+    },
+    {
+      "name": "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209",
+      "downloads": {
+        "artifact": {
+          "path": "org/lwjgl/lwjgl/lwjgl/2.9.4-nightly-20150209/lwjgl-2.9.4-nightly-20150209.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/lwjgl/2.9.4-nightly-20150209/lwjgl-2.9.4-nightly-20150209.jar"
+        }
+      }
+    },
+    {
+      "name": "org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209",
+      "downloads": {
+        "artifact": {
+          "path": "org/lwjgl/lwjgl/lwjgl_util/2.9.4-nightly-20150209/lwjgl_util-2.9.4-nightly-20150209.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/lwjgl_util/2.9.4-nightly-20150209/lwjgl_util-2.9.4-nightly-20150209.jar"
+        }
+      }
+    },
+    {
+      "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+      "natives": {
+        "linux": "natives-linux",
+        "windows": "natives-windows",
+        "osx": "natives-osx"
+      },
+      "downloads": {
+        "classifiers": {
+          "natives-linux": {
+            "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-linux.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-linux.jar"
+          },
+          "natives-windows": {
+            "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar"
+          },
+          "natives-osx": {
+            "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-osx.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-osx.jar"
+          }
+        }
+      },
+      "extract": {
+        "exclude": [
+          "META-INF/"
+        ]
+      }
+    },
+    {
+      "name": "net.java.jinput:jinput-platform:2.0.5",
+      "natives": {
+        "linux": "natives-linux",
+        "windows": "natives-windows",
+        "osx": "natives-osx"
+      },
+      "downloads": {
+        "classifiers": {
+          "natives-linux": {
+            "path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-linux.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-linux.jar"
+          },
+          "natives-windows": {
+            "path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar"
+          },
+          "natives-osx": {
+            "path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-osx.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-osx.jar"
+          }
+        }
+      },
+      "extract": {
+        "exclude": [
+          "META-INF/"
+        ]
+      }
+    },
+    {
+      "name": "tv.example:stream-platform:6.0",
+      "natives": {
+        "windows": "natives-windows-${arch}"
+      },
+      "downloads": {
+        "classifiers": {
+          "natives-windows-32": {
+            "path": "tv/example/stream-platform/6.0/stream-platform-6.0-natives-windows-32.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/tv/example/stream-platform/6.0/stream-platform-6.0-natives-windows-32.jar"
+          },
+          "natives-windows-64": {
+            "path": "tv/example/stream-platform/6.0/stream-platform-6.0-natives-windows-64.jar",
+            "sha1": "1111111111111111111111111111111111111111",
+            "size": 1000,
+            "url": "https://libraries.example.invalid/tv/example/stream-platform/6.0/stream-platform-6.0-natives-windows-64.jar"
+          }
+        }
+      },
+      "extract": {
+        "exclude": [
+          "META-INF/"
+        ]
+      }
+    },
+    {
+      "name": "com.google.guava:guava:21.0",
+      "downloads": {
+        "artifact": {
+          "path": "com/google/guava/guava/21.0/guava-21.0.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/com/google/guava/guava/21.0/guava-21.0.jar"
+        }
+      }
+    },
+    {
+      "name": "org.apache.logging.log4j:log4j-core:2.8.1",
+      "downloads": {
+        "artifact": {
+          "path": "org/apache/logging/log4j/log4j-core/2.8.1/log4j-core-2.8.1.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 1000,
+          "url": "https://libraries.example.invalid/org/apache/logging/log4j/log4j-core/2.8.1/log4j-core-2.8.1.jar"
+        }
+      }
+    }
+  ]
+}

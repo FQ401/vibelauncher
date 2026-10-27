@@ -1,0 +1,24 @@
+{
+  "id": "1.7.10-forgeish-10.13.4",
+  "inheritsFrom": "1.7.10-synth",
+  "type": "release",
+  "releaseTime": "2015-06-01T00:00:00+00:00",
+  "time": "2015-06-01T00:00:00+00:00",
+  "mainClass": "net.minecraft.launchwrapper.Launch",
+  "jar": "1.7.10-synth",
+  "minecraftArguments": "--username ${auth_player_name} --version ${version_name} --gameDir ${game_directory} --assetsDir ${assets_root} --assetIndex ${assets_index_name} --uuid ${auth_uuid} --accessToken ${auth_access_token} --userProperties ${user_properties} --userType ${user_type} --tweakClass example.loader.tweak.TweakerClient",
+  "libraries": [
+    {
+      "name": "net.minecraft:launchwrapper:1.12",
+      "url": "https://maven.example.invalid/"
+    },
+    {
+      "name": "example.loader:loader:10.13.4",
+      "url": "https://maven.example.invalid/"
+    },
+    {
+      "name": "com.google.guava:guava:16.0",
+      "url": "https://maven.example.invalid/"
+    }
+  ]
+}
