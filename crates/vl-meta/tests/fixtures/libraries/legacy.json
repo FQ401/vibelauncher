@@ -1,0 +1,47 @@
+{
+  "id": "1.12.2",
+  "type": "release",
+  "releaseTime": "2017-09-18T08:39:46+00:00",
+  "mainClass": "net.minecraft.client.main.Main",
+  "libraries": [
+    { "name": "com.example:old-lib:2.0" },
+    {
+      "name": "com.example:lwjgl-platform:2.9.4",
+      "natives": { "osx": "natives-osx", "linux": "natives-linux", "windows": "natives-windows" },
+      "extract": { "exclude": ["META-INF/"] },
+      "downloads": {
+        "classifiers": {
+          "natives-osx": { "path": "com/example/lwjgl-platform/2.9.4/lwjgl-platform-2.9.4-natives-osx.jar", "sha1": "1111111111111111111111111111111111111111", "size": 40, "url": "https://example.invalid/osx.jar" },
+          "natives-linux": { "path": "com/example/lwjgl-platform/2.9.4/lwjgl-platform-2.9.4-natives-linux.jar", "sha1": "1111111111111111111111111111111111111111", "size": 41, "url": "https://example.invalid/linux.jar" },
+          "natives-windows": { "path": "com/example/lwjgl-platform/2.9.4/lwjgl-platform-2.9.4-natives-windows.jar", "sha1": "1111111111111111111111111111111111111111", "size": 42, "url": "https://example.invalid/windows.jar" }
+        }
+      }
+    },
+    {
+      "name": "com.example:arch-native:1.0",
+      "natives": { "windows": "natives-windows-${arch}", "linux": "natives-linux" },
+      "downloads": {
+        "classifiers": {
+          "natives-windows-32": { "path": "com/example/arch-native/1.0/arch-native-1.0-natives-windows-32.jar", "sha1": "1111111111111111111111111111111111111111", "size": 50, "url": "https://example.invalid/w32.jar" },
+          "natives-windows-64": { "path": "com/example/arch-native/1.0/arch-native-1.0-natives-windows-64.jar", "sha1": "1111111111111111111111111111111111111111", "size": 51, "url": "https://example.invalid/w64.jar" },
+          "natives-linux": { "path": "com/example/arch-native/1.0/arch-native-1.0-natives-linux.jar", "sha1": "1111111111111111111111111111111111111111", "size": 52, "url": "https://example.invalid/l.jar" }
+        }
+      }
+    },
+    {
+      "name": "com.example:no-arm:1.0",
+      "natives": { "osx": "natives-osx-arm64" },
+      "downloads": {
+        "classifiers": {
+          "natives-osx": { "path": "com/example/no-arm/1.0/no-arm-1.0-natives-osx.jar", "sha1": "1111111111111111111111111111111111111111", "size": 53, "url": "https://example.invalid/no-arm.jar" }
+        }
+      }
+    },
+    { "name": "com.example:fabricish:0.1", "url": "https://maven.example.invalid/repo" },
+    {
+      "name": "com.example:installed:1.0",
+      "downloads": { "artifact": { "path": "com/example/installed/1.0/installed-1.0.jar", "sha1": "1111111111111111111111111111111111111111", "size": 60, "url": "" } },
+      "rules": [{ "action": "allow", "os": { "name": "linux" } }]
+    }
+  ]
+}
