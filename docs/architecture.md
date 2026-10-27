@@ -205,8 +205,14 @@ The data directory holds:
 - the format version, checked at start; older formats migrate forward after a snapshot;
 - the global settings file and each instance's overrides (TOML, written atomically; a damaged
   file falls back to defaults with a warning);
-- `instances/` — one directory per instance (config, components, game directory), owned by
-  `vl-instance`;
+- `instances/` — one directory per instance, owned by `vl-instance`: `instance.json` (name, icon,
+  group, notes, creation, last active and last played times, play time, components: the game
+  version, with room for loaders and patches) and `minecraft/` (the game directory). The instance
+  id is the directory name. Configs are written atomically; creation is staged in a hidden
+  directory and renamed into place; rename moves the directory and rolls back if the config
+  cannot be written. A directory with a missing, damaged or newer config is listed with a
+  problem and does not affect the others. Delete moves the instance into `instances/.trash/`
+  (recoverable, nothing is erased); only an explicit purge empties it;
 - shared game files (libraries, assets, version files) used by all instances;
 - managed Java runtimes;
 - the normalized metadata cache: upstream metadata (Mojang, loader metadata services) is fetched
