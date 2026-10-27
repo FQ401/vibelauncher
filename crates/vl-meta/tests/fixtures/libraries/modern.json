@@ -1,0 +1,36 @@
+{
+  "id": "1.21.11",
+  "type": "release",
+  "releaseTime": "2025-12-09T00:00:00+00:00",
+  "mainClass": "net.minecraft.client.main.Main",
+  "libraries": [
+    {
+      "name": "com.example:plain:1.0",
+      "downloads": { "artifact": { "path": "com/example/plain/1.0/plain-1.0.jar", "sha1": "1111111111111111111111111111111111111111", "size": 10, "url": "https://example.invalid/plain-1.0.jar" } }
+    },
+    {
+      "name": "org.example:lwjgl:3.3.3",
+      "downloads": { "artifact": { "path": "org/example/lwjgl/3.3.3/lwjgl-3.3.3.jar", "sha1": "1111111111111111111111111111111111111111", "size": 20, "url": "https://example.invalid/lwjgl-3.3.3.jar" } }
+    },
+    {
+      "name": "org.example:lwjgl:3.3.3:natives-windows",
+      "downloads": { "artifact": { "path": "org/example/lwjgl/3.3.3/lwjgl-3.3.3-natives-windows.jar", "sha1": "1111111111111111111111111111111111111111", "size": 30, "url": "https://example.invalid/lwjgl-3.3.3-natives-windows.jar" } },
+      "rules": [{ "action": "allow", "os": { "name": "windows" } }]
+    },
+    {
+      "name": "org.example:lwjgl:3.3.3:natives-linux",
+      "downloads": { "artifact": { "path": "org/example/lwjgl/3.3.3/lwjgl-3.3.3-natives-linux.jar", "sha1": "1111111111111111111111111111111111111111", "size": 31, "url": "https://example.invalid/lwjgl-3.3.3-natives-linux.jar" } },
+      "rules": [{ "action": "allow", "os": { "name": "linux" } }]
+    },
+    {
+      "name": "org.example:lwjgl:3.3.3:natives-linux-arm64",
+      "downloads": { "artifact": { "path": "org/example/lwjgl/3.3.3/lwjgl-3.3.3-natives-linux-arm64.jar", "sha1": "1111111111111111111111111111111111111111", "size": 32, "url": "https://example.invalid/lwjgl-3.3.3-natives-linux-arm64.jar" } },
+      "rules": [{ "action": "allow", "os": { "name": "linux", "arch": "arm64" } }]
+    },
+    {
+      "name": "org.example:lwjgl:3.3.3:natives-macos-arm64",
+      "downloads": { "artifact": { "path": "org/example/lwjgl/3.3.3/lwjgl-3.3.3-natives-macos-arm64.jar", "sha1": "1111111111111111111111111111111111111111", "size": 33, "url": "https://example.invalid/lwjgl-3.3.3-natives-macos-arm64.jar" } },
+      "rules": [{ "action": "allow", "os": { "name": "osx", "arch": "arm64" } }]
+    }
+  ]
+}
