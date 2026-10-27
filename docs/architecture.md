@@ -25,7 +25,6 @@ crates/          libraries, one directory per package
 apps/            binaries: vl-cli (and the desktop app)
 xtask/           cargo xtask ci | version
 docs/            this document
-design/          design tokens and the user-interface specification
 ```
 
 **Naming.** Every workspace package is named `vl-<name>` and lives in a directory of the same
