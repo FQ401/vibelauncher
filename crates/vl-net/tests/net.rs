@@ -809,3 +809,66 @@ fn a_fake_transport_replaces_the_network() {
         b"https://meta.test/f"
     );
 }
+
+#[test]
+fn post_sends_the_body_and_does_not_follow_redirects() {
+    use std::io::{BufRead, BufReader};
+    use vl_net::{HttpTransport, PostRequest, UreqTransport};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let seen = Arc::new(Mutex::new(Vec::<(String, String, Vec<u8>)>::new()));
+    let log = seen.clone();
+    thread::spawn(move || {
+        for stream in listener.incoming().take(2) {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let (mut length, mut content_type) = (0usize, String::new());
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((k, v)) = line.split_once(':') {
+                    match k.to_ascii_lowercase().as_str() {
+                        "content-length" => length = v.trim().parse().unwrap(),
+                        "content-type" => content_type = v.trim().to_owned(),
+                        _ => {}
+                    }
+                }
+            }
+            let mut body = vec![0u8; length];
+            reader.read_exact(&mut body).unwrap();
+            let redirect = request_line.contains("/moved");
+            log.lock().unwrap().push((request_line, content_type, body));
+            let reply = if redirect {
+                "HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+            };
+            stream.write_all(reply.as_bytes()).unwrap();
+        }
+    });
+    let transport = UreqTransport::new(&config(None)).unwrap();
+    let post = |path: &str| PostRequest {
+        url: format!("http://{addr}{path}"),
+        headers: Vec::new(),
+        content_type: Some("application/json".into()),
+        body: b"{\"a\":1}".to_vec(),
+        body_timeout: Duration::from_secs(5),
+    };
+    let mut response = transport.post(&post("/echo")).unwrap();
+    let mut text = String::new();
+    response.body.read_to_string(&mut text).unwrap();
+    assert_eq!((response.status, text.as_str()), (200, "ok"));
+    let moved = transport.post(&post("/moved")).unwrap();
+    assert_eq!(moved.status, 302);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert!(seen[0].0.starts_with("POST /echo"));
+    assert_eq!(seen[0].1, "application/json");
+    assert_eq!(seen[0].2, b"{\"a\":1}");
+}

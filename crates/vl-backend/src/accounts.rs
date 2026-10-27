@@ -2,14 +2,15 @@
 //!
 //! Microsoft sign-in and refresh run as tasks on their own threads and report through the event
 //! bus; the account list is a small JSON file in the data directory (public data only) and the
-//! tokens live in a [`TokenStore`].
+//! tokens live in a [`TokenStore`]: the OS keyring, or memory only (with a notice) when none is
+//! usable.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use vl_auth::{
-    AccountBook, AuthError, Authenticator, MemoryTokenStore, MsaConfig, Session, TokenStore,
-    UreqHttp,
+    AccountBook, AuthError, Authenticator, MsaConfig, NetHttp, Session, TokenStore,
+    default_token_store,
 };
 use vl_core::account::{Account, AccountCommand, AccountEvent, AccountKind, DeviceCodePrompt};
 use vl_core::task::{TaskEvent, TaskInfo, TaskKind, TaskOutcome};
@@ -38,12 +39,12 @@ struct Shared {
 
 impl Service {
     /// The real service: the network stack, the account file in the data directory and tokens in
-    /// memory (the OS keyring replaces them).
+    /// the OS keyring (memory only, with a notice, when there is none).
     pub(crate) fn new(store: &Store, events: Arc<EventBus>) -> vl_core::Result<Self> {
-        let http = UreqHttp::new(&NetConfig::new(env!("CARGO_PKG_VERSION")))?;
+        let http = NetHttp::from_config(&NetConfig::new(env!("CARGO_PKG_VERSION")))?;
         let auth = Authenticator::new(Arc::new(http), MsaConfig::from_env());
         let book = AccountBook::load(&store.data_dir().join("accounts.json"))?;
-        Self::with_parts(auth, Arc::new(MemoryTokenStore::new()), book, events)
+        Self::with_parts(auth, default_token_store(), book, events)
     }
 
     /// A service on given parts. A Microsoft account without stored tokens must sign in again.
@@ -169,14 +170,16 @@ impl Shared {
     }
 
     fn remove(&self, id: &AccountId) -> vl_core::Result<Response> {
+        if self.book().get(id).is_none() {
+            return Err(Error::not_found(format!("account {id}")));
+        }
+        // Tokens first: a failure leaves the account listed rather than its secrets orphaned.
+        self.tokens.remove(id.as_str())?;
         {
             let mut book = self.book();
-            if book.remove(id).is_none() {
-                return Err(Error::not_found(format!("account {id}")));
-            }
+            book.remove(id);
             book.save()?;
         }
-        self.tokens.remove(id.as_str())?;
         self.list_changed();
         Ok(Response::Done)
     }
@@ -211,7 +214,12 @@ impl Shared {
             book.save()?;
         }
         self.list_changed();
-        Ok(())
+        // The account works for this session, but the user must know the tokens will not
+        // survive a restart.
+        match self.tokens.notice() {
+            Some(notice) => Err(AuthError::KeyringUnavailable(notice)),
+            None => Ok(()),
+        }
     }
 
     /// Runs `work` on its own thread as a sign-in task and answers with the task id.
@@ -250,7 +258,10 @@ impl Shared {
 mod tests {
     use std::time::Duration;
 
-    use vl_auth::{AuthHttp, AuthRequest, AuthResponse, Clock, Secret, StoredTokens};
+    use vl_auth::{
+        AuthHttp, AuthRequest, AuthResponse, Clock, FallbackTokenStore, MemoryTokenStore, Secret,
+        StoredTokens,
+    };
     use vl_core::ErrorKind;
     use vl_core::account::AccountCommand;
     use vl_core::reply_channel;
@@ -317,15 +328,28 @@ mod tests {
     struct Rig {
         service: Service,
         events: Arc<EventBus>,
-        tokens: Arc<MemoryTokenStore>,
+        tokens: Arc<dyn TokenStore>,
     }
 
     fn rig(login_status: u16, token_error: bool, name: &str) -> Rig {
+        rig_with(
+            login_status,
+            token_error,
+            name,
+            Arc::new(MemoryTokenStore::new()),
+        )
+    }
+
+    fn rig_with(
+        login_status: u16,
+        token_error: bool,
+        name: &str,
+        tokens: Arc<dyn TokenStore>,
+    ) -> Rig {
         let dir =
             std::env::temp_dir().join(format!("vl-backend-acc-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let events = Arc::new(EventBus::default());
-        let tokens = Arc::new(MemoryTokenStore::new());
         let auth = Authenticator::with_clock(
             Arc::new(Chain {
                 login_status,
@@ -404,6 +428,47 @@ mod tests {
         assert!(rig.tokens.get(id.as_str()).unwrap().is_none());
         let err = rig.call(AccountCommand::Remove { id }).unwrap_err();
         assert_eq!(err.kind, ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn without_a_keyring_the_sign_in_reports_memory_only_tokens() {
+        let store = Arc::new(FallbackTokenStore::memory_only(
+            &AuthError::KeyringUnavailable("No Secret Service.".into()),
+        ));
+        let rig = rig_with(200, false, "nokeyring", store);
+        let TaskOutcome::Failed(e) = rig.run(AccountCommand::SignInMicrosoft) else {
+            panic!("expected the notice");
+        };
+        assert!(e.message.contains("No Secret Service") && e.message.contains("memory only"));
+        // The account is usable for this session.
+        let list = rig.accounts();
+        assert_eq!(list.len(), 1);
+        assert!(rig.tokens.get(list[0].id.as_str()).unwrap().is_some());
+    }
+
+    #[test]
+    fn several_accounts_with_a_default() {
+        let rig = rig(200, false, "several");
+        rig.run(AccountCommand::SignInMicrosoft);
+        let first = rig.accounts()[0].id.clone();
+        assert!(rig.accounts()[0].is_default);
+        // A second account is added directly through the store path.
+        let other = AccountId::new("fedcba9876543210fedcba9876543210").unwrap();
+        rig.service.shared.book().upsert(Account {
+            id: other.clone(),
+            kind: AccountKind::Microsoft,
+            name: "Other".into(),
+            uuid: other.as_str().into(),
+            is_default: false,
+            needs_sign_in: false,
+        });
+        rig.call(AccountCommand::SetDefault { id: other.clone() })
+            .unwrap();
+        let list = rig.accounts();
+        assert_eq!(list.iter().filter(|a| a.is_default).count(), 1);
+        assert!(list.iter().any(|a| a.id == other && a.is_default));
+        rig.call(AccountCommand::Remove { id: other }).unwrap();
+        assert!(rig.accounts().iter().any(|a| a.id == first && a.is_default));
     }
 
     #[test]

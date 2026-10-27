@@ -226,6 +226,11 @@ Secrets — Microsoft refresh and access tokens, and API keys the user enters (s
 CurseForge API key) — live in the OS keyring, never in the data directory, logs, events or error
 messages. The launcher ships with no third-party API keys.
 
+The keyring is the Windows Credential Manager, the macOS Keychain, or the Secret Service over
+D-Bus on Linux (a pure-Rust client: no GTK, libsecret or libdbus). Each account has one entry under
+the service name `VibeLauncher`. Without a usable keyring, tokens are kept in memory only until the
+launcher closes and the user is told so; nothing secret is written to disk in the clear.
+
 The Microsoft application (client) ID is a build constant (`vl_auth::DEFAULT_CLIENT_ID`); the `VL_MS_CLIENT_ID` environment variable replaces it, so forks and development builds use their own registration.
 
 The settings model (`vl_core::settings`) has eight groups: Java, memory, window, console,

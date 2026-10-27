@@ -1,11 +1,15 @@
 //! The HTTP seam of the sign-in flow.
 //!
-//! Sign-in needs POST requests with form and JSON bodies, which the metadata client of `vl-net`
-//! does not offer; this small trait is what the flow needs, and tests substitute it.
+//! Sign-in sends POST requests with form and JSON bodies; this small trait is what the flow
+//! needs, and tests substitute it. [`NetHttp`] runs it on the `vl-net` transport.
 
 use std::io::Read;
+use std::sync::Arc;
+use std::time::Duration;
 
-use vl_net::{NetConfig, NetError, ProxyConfig, redact_url};
+use vl_net::{
+    HttpRequest, HttpTransport, NetConfig, NetError, PostRequest, UreqTransport, redact_url,
+};
 
 /// The longest response body the sign-in flow accepts.
 const MAX_BODY: u64 = 1024 * 1024;
@@ -58,73 +62,64 @@ pub trait AuthHttp: Send + Sync {
     fn send(&self, request: &AuthRequest) -> Result<AuthResponse, NetError>;
 }
 
-/// The real implementation on `ureq` with rustls, configured like the rest of the launcher's
-/// network access (timeouts, proxy, `User-Agent`).
-pub struct UreqHttp {
-    agent: ureq::Agent,
+/// The real implementation on the shared [`HttpTransport`] of `vl-net` (timeouts, proxy,
+/// `User-Agent` come from its configuration).
+pub struct NetHttp {
+    transport: Arc<dyn HttpTransport>,
+    timeout: Duration,
 }
 
-impl UreqHttp {
-    /// Builds an agent from the shared network configuration.
-    pub fn new(config: &NetConfig) -> Result<Self, NetError> {
-        let mut builder = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .max_redirects(0)
-            .user_agent(config.user_agent())
-            .timeout_connect(Some(config.connect_timeout))
-            .timeout_per_read(Some(config.read_timeout))
-            .timeout_recv_response(Some(config.read_timeout))
-            .timeout_global(Some(config.request_timeout));
-        match &config.proxy {
-            ProxyConfig::System => {}
-            ProxyConfig::None => builder = builder.proxy(None),
-            ProxyConfig::Url(url) => {
-                let proxy = ureq::Proxy::new(url)
-                    .map_err(|_| NetError::InvalidUrl("invalid proxy url".into()))?;
-                builder = builder.proxy(Some(proxy));
-            }
-        }
-        Ok(Self {
-            agent: ureq::Agent::new_with_config(builder.build()),
-        })
+impl NetHttp {
+    /// An implementation over `transport`; `timeout` bounds each response body.
+    pub fn new(transport: Arc<dyn HttpTransport>, timeout: Duration) -> Self {
+        Self { transport, timeout }
+    }
+
+    /// The real stack built from the shared network configuration.
+    pub fn from_config(config: &NetConfig) -> Result<Self, NetError> {
+        Ok(Self::new(
+            Arc::new(UreqTransport::new(config)?),
+            config.request_timeout,
+        ))
     }
 }
 
-impl AuthHttp for UreqHttp {
+impl AuthHttp for NetHttp {
     fn send(&self, request: &AuthRequest) -> Result<AuthResponse, NetError> {
         if !request.url.starts_with("https://") && !request.url.starts_with("http://127.0.0.1") {
             return Err(NetError::InvalidUrl("sign-in requires https".into()));
         }
-        let result = match request.method {
-            Method::Get => {
-                let mut call = self.agent.get(&request.url);
-                for (k, v) in &request.headers {
-                    call = call.header(k, v);
-                }
-                call.call()
-            }
+        let response = match request.method {
+            Method::Get => self.transport.get(&HttpRequest {
+                url: request.url.clone(),
+                headers: request.headers.clone(),
+                body_timeout: self.timeout,
+            })?,
             Method::Post => {
-                let mut call = self.agent.post(&request.url);
-                for (k, v) in &request.headers {
-                    call = call.header(k, v);
-                }
-                match &request.body {
-                    Body::None => call.send_empty(),
-                    Body::Form(fields) => call
-                        .header("Content-Type", "application/x-www-form-urlencoded")
-                        .send(form_encode(fields).as_bytes()),
-                    Body::Json(text) => call
-                        .header("Content-Type", "application/json")
-                        .send(text.as_bytes()),
-                }
+                let (content_type, body) = match &request.body {
+                    Body::None => (None, Vec::new()),
+                    Body::Form(fields) => (
+                        Some("application/x-www-form-urlencoded".to_owned()),
+                        form_encode(fields).into_bytes(),
+                    ),
+                    Body::Json(text) => (
+                        Some("application/json".to_owned()),
+                        text.clone().into_bytes(),
+                    ),
+                };
+                self.transport.post(&PostRequest {
+                    url: request.url.clone(),
+                    headers: request.headers.clone(),
+                    content_type,
+                    body,
+                    body_timeout: self.timeout,
+                })?
             }
         };
-        let response = result.map_err(|e| map_error(&e, &request.url))?;
-        let status = response.status().as_u16();
+        let status = response.status;
         let mut body = Vec::new();
         response
-            .into_body()
-            .into_reader()
+            .body
             .take(MAX_BODY + 1)
             .read_to_end(&mut body)
             .map_err(|e| NetError::Connect(format!("{} while reading the response", e.kind())))?;
@@ -135,18 +130,6 @@ impl AuthHttp for UreqHttp {
             });
         }
         Ok(AuthResponse { status, body })
-    }
-}
-
-fn map_error(error: &ureq::Error, url: &str) -> NetError {
-    let url = redact_url(url);
-    match error {
-        ureq::Error::Timeout(t) => NetError::Timeout(format!("{t} for {url}")),
-        ureq::Error::BadUri(_) | ureq::Error::InvalidProxyUrl => {
-            NetError::InvalidUrl("bad url".into())
-        }
-        ureq::Error::Io(e) => NetError::Connect(format!("{} ({url})", e.kind())),
-        _ => NetError::Connect(format!("request to {url} failed")),
     }
 }
 

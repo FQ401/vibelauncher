@@ -14,10 +14,19 @@ vl-core.workspace = true
 vl-net.workspace = true
 vl-store.workspace = true
 getrandom.workspace = true
+keyring-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-ureq.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(all(unix, not(target_vendor = "apple")))'.dependencies]
+zbus-secret-service-keyring-store.workspace = true

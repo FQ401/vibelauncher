@@ -83,6 +83,8 @@ pub enum AuthError {
     Protocol(String),
     /// Storing tokens or the account list failed.
     Store(String),
+    /// The system keyring cannot be used; the text explains what to check.
+    KeyringUnavailable(String),
 }
 
 impl AuthError {
@@ -105,6 +107,7 @@ impl AuthError {
             Self::NoProfile => "no_profile",
             Self::Protocol(_) => "protocol",
             Self::Store(_) => "store",
+            Self::KeyringUnavailable(_) => "keyring_unavailable",
         }
     }
 }
@@ -130,6 +133,7 @@ impl fmt::Display for AuthError {
             ),
             Self::Protocol(m) => write!(f, "unexpected response: {m}"),
             Self::Store(m) => write!(f, "cannot store account data: {m}"),
+            Self::KeyringUnavailable(m) => f.write_str(m),
         }
     }
 }
@@ -151,7 +155,7 @@ impl From<AuthError> for Error {
             AuthError::Net(_) => ErrorKind::Network,
             AuthError::Cancelled => ErrorKind::Cancelled,
             AuthError::Protocol(_) => ErrorKind::Integrity,
-            AuthError::Store(_) => ErrorKind::Io,
+            AuthError::Store(_) | AuthError::KeyringUnavailable(_) => ErrorKind::Io,
             _ => ErrorKind::Auth,
         };
         Error::new(kind, e.to_string())
