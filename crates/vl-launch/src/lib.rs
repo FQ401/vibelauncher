@@ -8,7 +8,11 @@
 //!   window settings, JVM and game arguments with their `${variables}` substituted, classpath and
 //!   natives directory. The player's session is an explicit parameter ([`LaunchSession`]).
 //! - The game process ([`process`]): start without a shell in the instance's game directory,
-//!   stream its output line by line, stop it, report the exit.
+//!   stream its output, stop it (with everything it started), report the exit. The output is
+//!   parsed into levels ([`gamelog`]: log4j XML events and plain lines), written whole to a log
+//!   file with rotation ([`logfile`]), kept as a bounded history, and delivered in batches. The
+//!   exit carries the code, the session time, the crash report and JVM error log written during
+//!   the run ([`crash`]) and the last lines.
 //! - Checks before the start ([`memory`]): the requested heap against the memory that is free.
 //!
 //! [`prepare()`] ties installation, Java choice, the memory check and the command line together;
@@ -16,9 +20,12 @@
 //! the caller passes the session, the effective settings and the known Java runtimes.
 
 pub mod command;
+pub mod crash;
+pub mod gamelog;
 pub mod install;
 pub mod java;
 pub mod layout;
+pub mod logfile;
 pub mod memory;
 pub mod process;
 pub mod replace;

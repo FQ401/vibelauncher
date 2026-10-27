@@ -17,6 +17,7 @@ path = "src/main.rs"
 vl-core.workspace = true
 vl-backend.workspace = true
 vl-mock.workspace = true
+ctrlc.workspace = true
 
 [lints]
 workspace = true

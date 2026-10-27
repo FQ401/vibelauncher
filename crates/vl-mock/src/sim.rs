@@ -243,6 +243,11 @@ fn end_game(inner: &Inner, instance: &InstanceId, code: Option<i32>, stopped_by_
             code,
             crashed: false,
             stopped_by_user,
+            session_ms: 0,
+            crash_report: None,
+            hs_err: None,
+            log_file: None,
+            tail: Vec::new(),
         },
     }));
 }

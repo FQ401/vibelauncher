@@ -1,17 +1,30 @@
 //! The game process: start, stream the output, stop, report the exit.
+//!
+//! The output of both streams is read by one thread each, which only hands lines over: a game
+//! never waits for the launcher's front ends. One collector thread parses the lines
+//! ([`gamelog`](crate::gamelog)), writes the full log to a file ([`logfile`](crate::logfile)),
+//! keeps the last lines in a bounded history, and delivers the lines to the caller in batches
+//! at a fixed pace. When the game writes faster than a front end can show, the surplus is counted
+//! instead of delivered; it is in the file and in the history.
 
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use vl_core::launch::GameExit;
+use vl_core::log::LogEntry;
 use vl_core::{Error, ErrorKind, Result};
 
 use crate::command::CommandLine;
+use crate::crash::Baseline;
+use crate::gamelog::{LineParser, Parsed};
+use crate::logfile::{DEFAULT_KEEP, GameLogFile};
 
 /// The longest line delivered at once; a longer one arrives in pieces.
 const MAX_LINE: u64 = 64 * 1024;
@@ -19,19 +32,95 @@ const MAX_LINE: u64 = 64 * 1024;
 const DRAIN: Duration = Duration::from_secs(2);
 /// How often the exit of the process is checked.
 const POLL: Duration = Duration::from_millis(50);
+/// Lines waiting between the readers and the collector; a full queue slows the readers.
+const QUEUE: usize = 4096;
+/// The most memory the history may use, whatever the line limit says.
+const HISTORY_BYTES: usize = 16 * 1024 * 1024;
+/// How many of the last lines the exit report carries.
+pub const TAIL_LINES: usize = 200;
 
-/// One line of the game's output.
+/// How the output of a game is handled.
+#[derive(Debug, Clone)]
+pub struct SpawnOptions {
+    /// The directory for the full log file of this run; `None` writes no file.
+    pub log_dir: Option<PathBuf>,
+    /// How many launch logs to keep in `log_dir`, the new one included.
+    pub keep_logs: usize,
+    /// How many of the last lines to keep in memory (the console history limit).
+    pub history_lines: usize,
+    /// How often collected lines are delivered.
+    pub batch_interval: Duration,
+    /// The most lines delivered per interval; more are counted as skipped.
+    pub max_batch_lines: usize,
+}
+
+impl SpawnOptions {
+    /// Defaults: no file, a batch every 100 ms of at most 500 lines (about ten redraws a second).
+    pub fn new(history_lines: usize) -> Self {
+        Self {
+            log_dir: None,
+            keep_logs: DEFAULT_KEEP,
+            history_lines,
+            batch_interval: Duration::from_millis(100),
+            max_batch_lines: 500,
+        }
+    }
+}
+
+/// Output lines collected over one interval.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GameLine {
-    /// The text without the line ending, secrets hidden.
-    pub text: String,
-    /// Whether it came from the error stream.
-    pub stderr: bool,
+pub struct GameBatch {
+    /// The lines in output order.
+    pub lines: Vec<LogEntry>,
+    /// Lines of the interval that were not delivered; they are in the file and the history.
+    pub skipped: u64,
+}
+
+/// The last lines of the output, bounded by count and by size.
+#[derive(Debug)]
+struct History {
+    lines: VecDeque<String>,
+    bytes: usize,
+    max_lines: usize,
+}
+
+impl History {
+    fn new(max_lines: usize) -> Self {
+        Self {
+            lines: VecDeque::new(),
+            bytes: 0,
+            max_lines: max_lines.max(1),
+        }
+    }
+
+    fn push(&mut self, text: &str) {
+        self.bytes += text.len();
+        self.lines.push_back(text.to_owned());
+        while self.lines.len() > self.max_lines
+            || (self.bytes > HISTORY_BYTES && self.lines.len() > 1)
+        {
+            if let Some(old) = self.lines.pop_front() {
+                self.bytes -= old.len();
+            }
+        }
+    }
+
+    fn last(&self, n: usize) -> Vec<String> {
+        let skip = self.lines.len().saturating_sub(n);
+        self.lines.iter().skip(skip).cloned().collect()
+    }
 }
 
 struct Shared {
     child: Mutex<Child>,
     stopped: AtomicBool,
+    history: Mutex<History>,
+    /// When the process was seen ended; the collector then gives the readers [`DRAIN`] to finish.
+    ended: Mutex<Option<Instant>>,
+}
+
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A started game process.
@@ -39,6 +128,7 @@ struct Shared {
 pub struct RunningGame {
     pid: u32,
     shared: Arc<Shared>,
+    log_file: Option<PathBuf>,
 }
 
 impl RunningGame {
@@ -47,16 +137,23 @@ impl RunningGame {
         self.pid
     }
 
-    /// Kills the process. The exit is then reported with `stopped_by_user`.
+    /// The file the full output of this run goes to, when there is one.
+    pub fn log_file(&self) -> Option<&Path> {
+        self.log_file.as_deref()
+    }
+
+    /// The last output lines (at most the history limit), oldest first: for a console that opens
+    /// after the game started.
+    pub fn history(&self) -> Vec<String> {
+        locked(&self.shared.history).last(usize::MAX)
+    }
+
+    /// Kills the process and everything it started. The exit is then reported with
+    /// `stopped_by_user`.
     pub fn stop(&self) {
         self.shared.stopped.store(true, Ordering::SeqCst);
-        let mut child = self
-            .shared
-            .child
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut child = locked(&self.shared.child);
         // The descendants first: once the parent is gone the tree cannot be walked any more.
-        #[cfg(windows)]
         kill_tree(self.pid);
         // The process may have ended already; that is the outcome wanted.
         let _ = child.kill();
@@ -78,11 +175,26 @@ fn kill_tree(pid: u32) {
         .status();
 }
 
+/// The game leads its own process group (see [`spawn`]); the whole group gets SIGKILL.
+#[cfg(unix)]
+fn kill_tree(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pid}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(not(any(windows, unix)))]
+fn kill_tree(_pid: u32) {}
+
 /// Starts `command` without a shell, in its working directory, with no input.
 ///
-/// `on_line` receives the output of both streams, line by line, from reader threads. `on_exit`
-/// runs once, on another thread, after the process ended and its output was delivered. A
-/// non-zero exit that the user did not ask for counts as a crash.
+/// `on_batch` receives the parsed output of both streams in batches, from the collector thread.
+/// `on_exit` runs once, on another thread, after the process ended and its output was delivered.
+/// The exit is a crash when the process ended with a non-zero code or left a new crash report or
+/// JVM error log, unless the user stopped it.
 ///
 /// # Errors
 ///
@@ -90,9 +202,11 @@ fn kill_tree(pid: u32) {
 /// never the arguments.
 pub fn spawn(
     command: &CommandLine,
-    on_line: impl Fn(GameLine) + Send + Sync + 'static,
+    options: &SpawnOptions,
+    on_batch: impl FnMut(GameBatch) + Send + 'static,
     on_exit: impl FnOnce(GameExit) + Send + 'static,
 ) -> Result<RunningGame> {
+    let baseline = Baseline::capture(&command.cwd);
     let mut process = Command::new(&command.program);
     process
         .args(&command.args)
@@ -107,83 +221,138 @@ pub fn spawn(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         process.creation_flags(CREATE_NO_WINDOW);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // A group of its own: a stop reaches the descendants too.
+        process.process_group(0);
+    }
     let mut child = process.spawn().map_err(|e| {
         Error::new(
             ErrorKind::Game,
             format!("cannot start {}: {e}", command.program.display()),
         )
     })?;
+    let started = Instant::now();
     let pid = child.id();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let shared = Arc::new(Shared {
         child: Mutex::new(child),
         stopped: AtomicBool::new(false),
+        history: Mutex::new(History::new(options.history_lines)),
+        ended: Mutex::new(None),
     });
+    let file = options
+        .log_dir
+        .as_ref()
+        .and_then(|dir| GameLogFile::create(dir, options.keep_logs).ok());
+    let log_file = file.as_ref().map(|f| f.path().to_path_buf());
 
-    let on_line = Arc::new(on_line);
     let secrets: Arc<Vec<String>> = Arc::new(command.secrets().to_vec());
-    let (done_tx, done_rx) = mpsc::channel::<()>();
-    let mut readers = 0;
+    let (tx, rx) = mpsc::sync_channel::<RawLine>(QUEUE);
     if let Some(out) = stdout {
-        readers += usize::from(read_lines(out, false, &on_line, &secrets, &done_tx));
+        read_lines(out, false, &secrets, &tx);
     }
     if let Some(err) = stderr {
-        readers += usize::from(read_lines(err, true, &on_line, &secrets, &done_tx));
+        read_lines(err, true, &secrets, &tx);
     }
-    drop(done_tx);
+    drop(tx);
+
+    let collector = Collector {
+        rx,
+        parsers: [LineParser::new(), LineParser::new()],
+        file,
+        shared: Arc::clone(&shared),
+        interval: options.batch_interval,
+        max_batch: options.max_batch_lines.max(1),
+        on_batch,
+    };
+    let collecting = thread::Builder::new()
+        .name("vl-game-log".to_owned())
+        .spawn(move || collector.run());
+    let collecting = match collecting {
+        Ok(handle) => handle,
+        Err(e) => {
+            abort(&shared, pid);
+            return Err(Error::new(
+                ErrorKind::Game,
+                format!("cannot watch the game output: {e}"),
+            ));
+        }
+    };
 
     let waiter = Arc::clone(&shared);
+    let game_dir = command.cwd.clone();
+    let exit_log = log_file.clone();
     let spawned = thread::Builder::new()
         .name("vl-game-wait".to_owned())
         .spawn(move || {
             let status = loop {
-                let polled = {
-                    let mut child = waiter.child.lock().unwrap_or_else(PoisonError::into_inner);
-                    child.try_wait()
-                };
+                let polled = locked(&waiter.child).try_wait();
                 match polled {
                     Ok(Some(status)) => break Some(status),
                     Ok(None) => thread::sleep(POLL),
                     Err(_) => break None,
                 }
             };
-            for _ in 0..readers {
-                if done_rx.recv_timeout(DRAIN).is_err() {
-                    break;
-                }
-            }
+            *locked(&waiter.ended) = Some(Instant::now());
+            // The collector ends once the readers did, or after the drain time.
+            let _ = collecting.join();
             let stopped_by_user = waiter.stopped.load(Ordering::SeqCst);
             let code = status.and_then(|s| s.code());
+            let found = baseline.detect(&game_dir, pid);
+            let tail = locked(&waiter.history).last(TAIL_LINES);
+            let crashed = !stopped_by_user
+                && (code != Some(0) || found.crash_report.is_some() || found.hs_err.is_some());
             on_exit(GameExit {
                 code,
-                crashed: !stopped_by_user && code != Some(0),
+                crashed,
                 stopped_by_user,
+                session_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                crash_report: found.crash_report,
+                hs_err: found.hs_err,
+                log_file: exit_log,
+                tail,
             });
         });
     if let Err(e) = spawned {
-        let mut child = shared.child.lock().unwrap_or_else(PoisonError::into_inner);
-        let _ = child.kill();
+        abort(&shared, pid);
         return Err(Error::new(
             ErrorKind::Game,
             format!("cannot watch the game process: {e}"),
         ));
     }
-    Ok(RunningGame { pid, shared })
+    Ok(RunningGame {
+        pid,
+        shared,
+        log_file,
+    })
 }
 
-/// Starts a thread that reads `stream` line by line; `false` when the thread cannot start.
+/// Ends a process that cannot be watched.
+fn abort(shared: &Shared, pid: u32) {
+    kill_tree(pid);
+    let _ = locked(&shared.child).kill();
+}
+
+/// One line as read from a stream.
+struct RawLine {
+    stderr: bool,
+    text: String,
+}
+
+/// Starts a thread that reads `stream` line by line into `queue`. If the thread cannot start the
+/// stream is dropped, which only loses that stream's output.
 fn read_lines(
     stream: impl Read + Send + 'static,
     stderr: bool,
-    on_line: &Arc<impl Fn(GameLine) + Send + Sync + 'static>,
     secrets: &Arc<Vec<String>>,
-    done: &mpsc::Sender<()>,
-) -> bool {
-    let on_line = Arc::clone(on_line);
+    queue: &SyncSender<RawLine>,
+) {
     let secrets = Arc::clone(secrets);
-    let done = done.clone();
-    thread::Builder::new()
+    let queue = queue.clone();
+    let _ = thread::Builder::new()
         .name("vl-game-out".to_owned())
         .spawn(move || {
             let mut reader = BufReader::new(stream);
@@ -201,16 +370,120 @@ fn read_lines(
                 for secret in secrets.iter().filter(|s| !s.is_empty()) {
                     text = text.replace(secret.as_str(), "***");
                 }
-                on_line(GameLine { text, stderr });
+                if queue.send(RawLine { stderr, text }).is_err() {
+                    break;
+                }
             }
-            let _ = done.send(());
-        })
-        .is_ok()
+        });
+}
+
+/// Parses, stores and batches the lines of both streams.
+struct Collector<F> {
+    rx: Receiver<RawLine>,
+    /// Stdout and stderr.
+    parsers: [LineParser; 2],
+    file: Option<GameLogFile>,
+    shared: Arc<Shared>,
+    interval: Duration,
+    max_batch: usize,
+    on_batch: F,
+}
+
+#[derive(Default)]
+struct Pending {
+    lines: Vec<LogEntry>,
+    skipped: u64,
+}
+
+impl<F: FnMut(GameBatch)> Collector<F> {
+    fn run(mut self) {
+        let mut pending = Pending::default();
+        let mut parsed = Vec::new();
+        let mut deadline = Instant::now() + self.interval;
+        loop {
+            let wait = deadline.saturating_duration_since(Instant::now()).min(POLL);
+            match self.rx.recv_timeout(wait) {
+                Ok(raw) => self.accept(&raw, &mut parsed, &mut pending),
+                Err(RecvTimeoutError::Timeout) => {
+                    let ended = *locked(&self.shared.ended);
+                    if ended.is_some_and(|at| at.elapsed() > DRAIN) {
+                        break;
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+            if Instant::now() >= deadline {
+                self.deliver(&mut pending);
+                deadline = Instant::now() + self.interval;
+            }
+        }
+        while let Ok(raw) = self.rx.try_recv() {
+            self.accept(&raw, &mut parsed, &mut pending);
+        }
+        for parser in &mut self.parsers {
+            parser.flush(&mut parsed);
+        }
+        self.store(&mut parsed, &mut pending);
+        self.deliver(&mut pending);
+    }
+
+    fn accept(&mut self, raw: &RawLine, parsed: &mut Vec<Parsed>, pending: &mut Pending) {
+        self.parsers[usize::from(raw.stderr)].push(&raw.text, parsed);
+        self.store(parsed, pending);
+    }
+
+    /// Writes `parsed` to the file and the history and queues it for delivery.
+    fn store(&mut self, parsed: &mut Vec<Parsed>, pending: &mut Pending) {
+        if parsed.is_empty() {
+            return;
+        }
+        let time_ms = now_ms();
+        {
+            let mut history = locked(&self.shared.history);
+            for line in parsed.iter() {
+                history.push(&line.text);
+            }
+        }
+        for line in parsed.drain(..) {
+            if let Some(file) = &mut self.file {
+                file.write_line(&line.text);
+            }
+            if pending.lines.len() < self.max_batch {
+                pending.lines.push(LogEntry {
+                    time_ms,
+                    level: line.level,
+                    text: line.text,
+                });
+            } else {
+                pending.skipped += 1;
+            }
+        }
+    }
+
+    fn deliver(&mut self, pending: &mut Pending) {
+        if let Some(file) = &mut self.file {
+            file.flush();
+        }
+        if pending.lines.is_empty() && pending.skipped == 0 {
+            return;
+        }
+        let batch = GameBatch {
+            lines: std::mem::take(&mut pending.lines),
+            skipped: std::mem::take(&mut pending.skipped),
+        };
+        (self.on_batch)(batch);
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::time::Duration;
 
     use super::*;
 
@@ -228,13 +501,14 @@ mod tests {
         )
     }
 
-    fn run(command: &CommandLine) -> (Vec<GameLine>, GameExit) {
+    fn run(command: &CommandLine) -> (Vec<LogEntry>, GameExit) {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&lines);
         let (tx, rx) = mpsc::channel();
         spawn(
             command,
-            move |l| sink.lock().unwrap().push(l),
+            &SpawnOptions::new(1000),
+            move |b| sink.lock().unwrap().extend(b.lines),
             move |e| {
                 let _ = tx.send(e);
             },
@@ -253,9 +527,10 @@ mod tests {
             vec!["token-1234".to_owned()],
         );
         let (lines, exit) = run(&command);
-        assert!(lines.iter().any(|l| l.text.trim() == "hello" && !l.stderr));
-        assert!(lines.iter().any(|l| l.text.trim() == "***" && l.stderr));
+        assert!(lines.iter().any(|l| l.text.trim() == "hello"));
+        assert!(lines.iter().any(|l| l.text.trim() == "***"));
         assert!(!lines.iter().any(|l| l.text.contains("token-1234")));
+        assert!(!exit.tail.iter().any(|l| l.contains("token-1234")));
         assert_eq!(exit.code, Some(3));
         assert!(exit.crashed);
         assert!(!exit.stopped_by_user);
@@ -266,6 +541,7 @@ mod tests {
         let (_, exit) = run(&shell("exit 0", "exit 0", Vec::new()));
         assert_eq!(exit.code, Some(0));
         assert!(!exit.crashed);
+        assert!(exit.crash_report.is_none() && exit.hs_err.is_none());
     }
 
     #[test]
@@ -274,6 +550,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let game = spawn(
             &command,
+            &SpawnOptions::new(10),
             |_| {},
             move |e| {
                 let _ = tx.send(e);
@@ -296,10 +573,28 @@ mod tests {
             std::env::temp_dir(),
             Vec::new(),
         );
-        let err = spawn(&command, |_| {}, |_| {})
+        let err = spawn(&command, &SpawnOptions::new(10), |_| {}, |_| {})
             .map(|_| ())
             .expect_err("fails");
         assert_eq!(err.kind, ErrorKind::Game);
         assert!(!err.message.contains("--secret"));
+    }
+
+    #[test]
+    fn history_is_bounded_by_lines_and_bytes() {
+        let mut history = History::new(3);
+        for n in 0..10 {
+            history.push(&format!("line {n}"));
+        }
+        assert_eq!(history.last(10), ["line 7", "line 8", "line 9"]);
+        assert_eq!(history.last(2), ["line 8", "line 9"]);
+
+        let mut big = History::new(usize::MAX);
+        let chunk = "x".repeat(1024 * 1024);
+        for _ in 0..40 {
+            big.push(&chunk);
+        }
+        assert!(big.bytes <= HISTORY_BYTES);
+        assert_eq!(big.lines.len(), 16);
     }
 }
