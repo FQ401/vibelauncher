@@ -242,6 +242,11 @@ The data directory holds:
   cannot be written. A directory with a missing, damaged or newer config is listed with a
   problem and does not affect the others. Delete moves the instance into `instances/.trash/`
   (recoverable, nothing is erased); only an explicit purge empties it;
+- loader profiles in the metadata cache: `vl_core::component` models an instance as the game plus
+  at most one loader (`ComponentSet`); `vl_meta::loader` normalizes every loader source into one
+  `LoaderProfile` (main class, libraries with hashes, arguments, the game it inherits from),
+  merges it with the vanilla version JSON, and wraps it for the cache (`CachedProfile`, with the
+  `ETag`; a stale entry is used when upstream is unreachable). Loader sources only add parsers;
 - shared game files (libraries, assets, version files) used by all instances;
 - managed Java runtimes;
 - the normalized metadata cache: upstream metadata (Mojang, loader metadata services) is fetched
