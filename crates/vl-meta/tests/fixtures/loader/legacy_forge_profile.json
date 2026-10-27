@@ -1,0 +1,22 @@
+{
+  "id": "1.12.2-forge-14.23.5.2860",
+  "inheritsFrom": "1.12.2",
+  "type": "release",
+  "releaseTime": "2019-01-01T00:00:00+00:00",
+  "mainClass": "net.minecraft.launchwrapper.Launch",
+  "minecraftArguments": "--username ${auth_player_name} --version ${version_name} --tweakClass example.FMLTweaker",
+  "libraries": [
+    {
+      "name": "com.example:launchwrapper:1.12",
+      "downloads": {
+        "artifact": {
+          "path": "com/example/launchwrapper/1.12/launchwrapper-1.12.jar",
+          "url": "https://maven.example.invalid/com/example/launchwrapper/1.12/launchwrapper-1.12.jar",
+          "sha1": "4444444444444444444444444444444444444444",
+          "size": 4000
+        }
+      }
+    },
+    { "name": "com.example:old-lib:3.0" }
+  ]
+}

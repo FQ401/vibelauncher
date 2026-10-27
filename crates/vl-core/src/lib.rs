@@ -9,6 +9,7 @@
 //! one domain stays in one file.
 
 pub mod account;
+pub mod component;
 pub mod error;
 pub mod facade;
 pub mod ids;

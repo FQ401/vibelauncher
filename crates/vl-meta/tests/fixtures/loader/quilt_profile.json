@@ -1,0 +1,22 @@
+{
+  "id": "quilt-loader-0.31.0-beta.4-1.21.11",
+  "inheritsFrom": "1.21.11",
+  "type": "release",
+  "releaseTime": "2025-12-11T00:00:00+00:00",
+  "mainClass": "org.quiltmc.loader.impl.launch.knot.KnotClient",
+  "arguments": { "game": ["--quilt-flag"], "jvm": ["-Dquilt.example=1"] },
+  "libraries": [
+    {
+      "name": "org.quiltmc:quilt-loader:0.31.0-beta.4",
+      "url": "https://maven.example.invalid/",
+      "sha1": "3333333333333333333333333333333333333333",
+      "size": 3000
+    },
+    {
+      "name": "org.ow2.asm:asm:9.9",
+      "url": "https://maven.example.invalid/",
+      "sha1": "2222222222222222222222222222222222222222",
+      "size": 2000
+    }
+  ]
+}

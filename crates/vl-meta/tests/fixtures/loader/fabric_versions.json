@@ -1,0 +1,5 @@
+[
+  { "separator": ".", "build": 3, "maven": "net.fabricmc:fabric-loader:0.21.0-beta.1", "version": "0.21.0-beta.1", "stable": false },
+  { "separator": ".", "build": 2, "maven": "net.fabricmc:fabric-loader:0.20.1", "version": "0.20.1", "stable": true },
+  { "separator": ".", "build": 1, "maven": "net.fabricmc:fabric-loader:0.20.0", "version": "0.20.0", "stable": true }
+]
