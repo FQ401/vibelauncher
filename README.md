@@ -14,4 +14,6 @@ See [PRIVACY.md](PRIVACY.md).
 
 ## Development
 
-`cargo xtask ci` runs the format check, clippy (warnings denied) and tests. `cargo xtask version set X.Y.Z` sets the version in `[workspace.package]`.
+The workspace layout, layers and the core facade are described in [docs/architecture.md](docs/architecture.md). `cargo run -p vl-cli -- --mock instances list` runs the command line on synthetic data.
+
+`cargo xtask ci` runs the layer check, the format check, clippy (warnings denied), tests and a WebAssembly build of the core layer. `cargo xtask version set X.Y.Z` sets the version in `[workspace.package]`.
