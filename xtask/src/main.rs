@@ -1,5 +1,6 @@
 //! Project tasks, run as `cargo xtask <task>`:
 //! - `ci` — every check a PR must pass: layers, format, clippy, tests, wasm build of the core layer and the shared UI;
+//! - `ci lint` / `ci test` — the same checks split in two halves so CI can run them in parallel;
 //! - `version` — prints the launcher version (`[workspace.package] version`, the only place it lives);
 //! - `version set X.Y.Z[-pre]` — sets it.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // a command-line tool reports to the terminal
@@ -9,13 +10,15 @@ mod layers;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const USAGE: &str = "usage: cargo xtask ci | cargo xtask version [set X.Y.Z[-pre]]";
+const USAGE: &str = "usage: cargo xtask ci [lint|test] | cargo xtask version [set X.Y.Z[-pre]]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
-        ["ci"] => ci(),
+        ["ci"] => ci(true, true),
+        ["ci", "lint"] => ci(true, false),
+        ["ci", "test"] => ci(false, true),
         ["version"] => read_version().map(|v| println!("{v}")),
         ["version", "set", v] => set_version(v),
         _ => Err(USAGE.to_owned()),
@@ -36,10 +39,15 @@ fn root() -> PathBuf {
 }
 
 /// Runs the checks in order and stops at the first failure.
-fn ci() -> Result<(), String> {
+fn ci(lint: bool, test: bool) -> Result<(), String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    if test && !lint {
+        run("tests", &cargo, &["test", "--workspace"])?;
+        println!("xtask ci: all checks passed");
+        return Ok(());
+    }
     let core = check_layers(&cargo)?;
-    let steps: [(&str, &str, &[&str]); 3] = [
+    let steps: [(&str, &str, &[&str]); 2] = [
         ("format", &cargo, &["fmt", "--all", "--check"]),
         (
             "clippy",
@@ -53,10 +61,12 @@ fn ci() -> Result<(), String> {
                 "warnings",
             ],
         ),
-        ("tests", &cargo, &["test", "--workspace"]),
     ];
     for (name, program, args) in steps {
         run(name, program, args)?;
+    }
+    if test {
+        run("tests", &cargo, &["test", "--workspace"])?;
     }
     // The core layer is pure and the shared UI has no native dependencies: both must build for
     // the browser.
