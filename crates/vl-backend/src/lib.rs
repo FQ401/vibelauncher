@@ -25,6 +25,10 @@ use vl_core::{
     BackendInfo, Command, Error, EventBus, EventStream, Facade, Replier, Reply, Response,
     reply_channel,
 };
+use vl_tasks::TaskEngine;
+
+/// How many tasks run at the same time; more wait queued.
+const MAX_PARALLEL_TASKS: usize = 4;
 
 /// How the backend starts.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -48,6 +52,7 @@ pub struct Backend {
     instances: vl_instance::Instances,
     events: Arc<EventBus>,
     java: java::JavaService,
+    tasks: TaskEngine,
 }
 
 impl Backend {
@@ -57,18 +62,25 @@ impl Backend {
         let store = Store::open(&config.store_options())?;
         let instances = vl_instance::Instances::open(&store.data_dir().join("instances"))?;
         let events = Arc::new(EventBus::default());
+        let tasks = TaskEngine::new(Arc::clone(&events), MAX_PARALLEL_TASKS);
         Ok(Self {
             java: java::JavaService::new(&config, Arc::clone(&events)),
             config,
             store,
             instances,
             events,
+            tasks,
         })
     }
 
     /// The opened data directory.
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// The engine every domain module runs its long operations on.
+    pub fn tasks(&self) -> &TaskEngine {
+        &self.tasks
     }
 
     /// The configuration the backend started with.

@@ -4,10 +4,11 @@ use std::time::Duration;
 
 use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
 use vl_core::log::LogSource;
-use vl_core::task::{TaskEvent, TaskOutcome};
+use vl_core::task::TaskOutcome;
 use vl_core::{Command, Event, Facade, InstanceId, Response};
 
 use super::{CliError, Out, USAGE, call, unexpected};
+use crate::progress::ProgressPrinter;
 
 /// How long `vl-cli` waits for an event before it waits again.
 const POLL: Duration = Duration::from_millis(500);
@@ -30,23 +31,18 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         Response::Task(task) => task,
         other => return Err(unexpected(&other)),
     };
+    let mut progress = ProgressPrinter::new(task, "launch");
     let game = LogSource::Game(instance.clone());
     loop {
         let Some(event) = events.next_timeout(POLL) else {
             continue;
         };
         match event {
-            Event::Task(TaskEvent::Progress { id, progress }) if id == task => {
-                let stage = progress.stage.unwrap_or_default();
-                match progress.total {
-                    Some(total) => writeln!(out, "[launch] {stage} {}/{total}", progress.done)?,
-                    None => writeln!(out, "[launch] {stage} {}", progress.done)?,
-                }
-            }
-            Event::Task(TaskEvent::Finished { id, outcome }) if id == task => match outcome {
-                TaskOutcome::Succeeded => writeln!(out, "[launch] prepared")?,
-                TaskOutcome::Cancelled => writeln!(out, "[launch] cancelled")?,
-                TaskOutcome::Failed(e) => return Err(e.into()),
+            Event::Task(event) => match progress.handle(&event, out)? {
+                Some(TaskOutcome::Succeeded) => writeln!(out, "[launch] prepared")?,
+                Some(TaskOutcome::Cancelled) => writeln!(out, "[launch] cancelled")?,
+                Some(TaskOutcome::Failed(e)) => return Err(e.into()),
+                None => {}
             },
             Event::Log(line) if line.source == game => writeln!(out, "{}", line.text)?,
             Event::Launch(LaunchEvent::Exited { instance: i, exit }) if i == instance => {
