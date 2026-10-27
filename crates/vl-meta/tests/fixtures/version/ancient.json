@@ -1,0 +1,18 @@
+{
+  "id": "b1.7.3",
+  "type": "old_beta",
+  "releaseTime": "2011-07-08T00:00:00+00:00",
+  "mainClass": "net.minecraft.client.Minecraft",
+  "minecraftArguments": "${auth_player_name} ${auth_session} --gameDir ${game_directory}",
+  "assets": "pre-1.6",
+  "downloads": {
+    "client": {
+      "sha1": "cccccccccccccccccccccccccccccccccccccccc",
+      "size": 42,
+      "url": "https://example.invalid/b1.7.3/client.jar"
+    }
+  },
+  "libraries": [
+    { "name": "org.lwjgl:lwjgl:2.9.0", "natives": { "linux": "natives-linux" } }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "1.12.2-forge-14.23.5.2860",
+  "inheritsFrom": "1.12.2",
+  "type": "release",
+  "releaseTime": "2019-01-01T00:00:00+00:00",
+  "mainClass": "net.minecraft.launchwrapper.Launch",
+  "minecraftArguments": "--username ${auth_player_name} --tweakClass FMLTweaker",
+  "libraries": [
+    { "name": "net.minecraftforge:forge:1.12.2-14.23.5.2860", "url": "https://maven.example.invalid/" }
+  ]
+}

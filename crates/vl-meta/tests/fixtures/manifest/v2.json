@@ -1,0 +1,80 @@
+{
+  "latest": {
+    "release": "26.3",
+    "snapshot": "26.4-snapshot-6"
+  },
+  "versions": [
+    {
+      "id": "26.4-snapshot-6",
+      "type": "snapshot",
+      "url": "https://example.invalid/v1/packages/1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a/26.4-snapshot-6.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "complianceLevel": 1
+    },
+    {
+      "id": "26.3",
+      "type": "release",
+      "url": "https://example.invalid/v1/packages/0123456789abcdef0123456789abcdef01234567/26.3.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "0123456789abcdef0123456789abcdef01234567",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.21.11-rc1",
+      "type": "snapshot",
+      "url": "https://example.invalid/v1/packages/2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b/1.21.11-rc1.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.21.11",
+      "type": "release",
+      "url": "https://example.invalid/v1/packages/3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c/1.21.11.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.12.2",
+      "type": "release",
+      "url": "https://example.invalid/v1/packages/4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d/1.12.2.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2017-09-18T08:39:46+00:00",
+      "sha1": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+      "complianceLevel": 0
+    },
+    {
+      "id": "b1.7.3",
+      "type": "old_beta",
+      "url": "https://example.invalid/v1/packages/5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e/b1.7.3.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2011-07-08T00:00:00+00:00",
+      "sha1": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+      "complianceLevel": 0
+    },
+    {
+      "id": "a1.2.6",
+      "type": "old_alpha",
+      "url": "https://example.invalid/v1/packages/6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f/a1.2.6.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2010-12-03T00:00:00+00:00",
+      "sha1": "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f",
+      "complianceLevel": 0
+    },
+    {
+      "id": "rd-132211",
+      "type": "old_alpha",
+      "url": "https://example.invalid/v1/packages/7070707070707070707070707070707070707070/rd-132211.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2009-05-13T20:11:00+00:00",
+      "sha1": "7070707070707070707070707070707070707070",
+      "complianceLevel": 0
+    }
+  ]
+}

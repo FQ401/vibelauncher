@@ -1,0 +1,29 @@
+{
+  "id": "1.12.2",
+  "type": "release",
+  "releaseTime": "2017-09-18T08:39:46+00:00",
+  "mainClass": "net.minecraft.client.main.Main",
+  "minecraftArguments": "--username ${auth_player_name} --version ${version_name} --gameDir ${game_directory} --assetsDir ${assets_root} --accessToken ${auth_access_token}",
+  "assets": "1.12",
+  "assetIndex": {
+    "id": "1.12",
+    "sha1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "size": 100,
+    "url": "https://example.invalid/indexes/1.12.json"
+  },
+  "downloads": {
+    "client": {
+      "sha1": "cccccccccccccccccccccccccccccccccccccccc",
+      "size": 555,
+      "url": "https://example.invalid/1.12.2/client.jar"
+    }
+  },
+  "libraries": [
+    { "name": "com.example:old-lib:2.0" },
+    {
+      "name": "com.example:lwjgl-platform:2.9.4",
+      "natives": { "osx": "natives-osx", "linux": "natives-linux", "windows": "natives-windows" },
+      "rules": [{ "action": "allow" }]
+    }
+  ]
+}

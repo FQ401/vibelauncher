@@ -1,0 +1,88 @@
+{
+  "id": "1.21.11",
+  "type": "release",
+  "time": "2025-12-09T12:00:00+00:00",
+  "releaseTime": "2025-12-09T12:00:00+00:00",
+  "mainClass": "net.minecraft.client.main.Main",
+  "minimumLauncherVersion": 21,
+  "complianceLevel": 1,
+  "futureField": { "anything": [1, 2, 3] },
+  "assets": "99",
+  "assetIndex": {
+    "id": "99",
+    "sha1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size": 4321,
+    "totalSize": 987654,
+    "url": "https://example.invalid/indexes/99.json"
+  },
+  "downloads": {
+    "client": {
+      "sha1": "cccccccccccccccccccccccccccccccccccccccc",
+      "size": 1234,
+      "url": "https://example.invalid/client.jar"
+    },
+    "client_mappings": {
+      "sha1": "dddddddddddddddddddddddddddddddddddddddd",
+      "size": 99,
+      "url": "https://example.invalid/client.txt"
+    }
+  },
+  "javaVersion": { "component": "java-runtime-delta", "majorVersion": 21 },
+  "logging": {
+    "client": {
+      "argument": "-Dlog4j.configurationFile=${path}",
+      "file": {
+        "id": "client-1.12.xml",
+        "sha1": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "size": 888,
+        "url": "https://example.invalid/log/client-1.12.xml"
+      },
+      "type": "log4j2-xml"
+    }
+  },
+  "libraries": [
+    {
+      "name": "com.example:plain:1.0",
+      "downloads": {
+        "artifact": {
+          "path": "com/example/plain/1.0/plain-1.0.jar",
+          "sha1": "1111111111111111111111111111111111111111",
+          "size": 10,
+          "url": "https://example.invalid/plain-1.0.jar"
+        }
+      }
+    },
+    {
+      "name": "org.ow2.asm:asm:9.8",
+      "rules": [
+        { "action": "allow" },
+        { "action": "disallow", "os": { "name": "osx" } }
+      ]
+    },
+    {
+      "name": "com.example:natives-lib:1.0",
+      "natives": { "linux": "natives-linux", "windows": "natives-windows" },
+      "extract": { "exclude": ["META-INF/"] }
+    }
+  ],
+  "arguments": {
+    "game": [
+      "--username", "${auth_player_name}",
+      "--version", "${version_name}",
+      {
+        "rules": [{ "action": "allow", "features": { "is_demo_user": true } }],
+        "value": "--demo"
+      }
+    ],
+    "jvm": [
+      "-Xss1M",
+      {
+        "rules": [{ "action": "allow", "os": { "name": "osx" } }],
+        "value": ["-XstartOnFirstThread"]
+      },
+      "-Djava.library.path=${natives_directory}",
+      "-cp",
+      "${classpath}"
+    ]
+  }
+}

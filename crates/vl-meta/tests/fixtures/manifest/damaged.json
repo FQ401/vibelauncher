@@ -1,0 +1,74 @@
+{
+  "latest": {},
+  "versions": [
+    {
+      "id": "1.20.1",
+      "type": "release",
+      "url": "https://example.invalid/v1/packages/abababababababababababababababababababab/1.20.1.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "abababababababababababababababababababab",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.20.2",
+      "type": "release",
+      "url": "https://example.invalid/v1/packages/zzababababababababababababababababababab/1.20.2.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "zzababababababababababababababababababab",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.20.3",
+      "type": "release",
+      "url": "http://example.invalid/x.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "abababababababababababababababababababab",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.20.4",
+      "type": "experiment",
+      "url": "https://example.invalid/v1/packages/abababababababababababababababababababab/1.20.4.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "abababababababababababababababababababab",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.20.1",
+      "type": "release",
+      "url": "https://example.invalid/v1/packages/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/1.20.1.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.20.5",
+      "type": "release",
+      "sha1": "abababababababababababababababababababab"
+    },
+    5,
+    {
+      "id": "",
+      "type": "release",
+      "url": "https://example.invalid/v1/packages/abababababababababababababababababababab/.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "abababababababababababababababababababab",
+      "complianceLevel": 1
+    },
+    {
+      "id": "1.19.4",
+      "type": "release",
+      "url": "https://example.invalid/v1/packages/89ABCDEF0123456789ABCDEF0123456789ABCDEF/1.19.4.json",
+      "time": "2025-06-01T12:00:00+00:00",
+      "releaseTime": "2025-01-01T00:00:00+00:00",
+      "sha1": "89ABCDEF0123456789ABCDEF0123456789ABCDEF",
+      "complianceLevel": 1
+    }
+  ]
+}
