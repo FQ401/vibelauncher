@@ -28,15 +28,18 @@ vl-ui-egui = { path = "crates/vl-ui-egui" }
 # Third-party crates.
 apple-native-keyring-store = { version = "1.0.2", default-features = false, features = ["keychain"] }
 getrandom = "0.3.4"
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 keyring-core = "1.0.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 toml = "1.1.8"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 windows-native-keyring-store = "1.1.0"
 zbus-secret-service-keyring-store = { version = "1.0.1", default-features = false, features = ["rt-async-io-crypto-rust"] }
 ureq = { version = "3.5.0", default-features = false, features = ["rustls", "socks-proxy"] }
+zip = { version = "9.1.2", default-features = false, features = ["deflate-flate2"] }
 egui = { version = "0.37.0", default-features = false, features = ["default_fonts"] }
 eframe = "0.37.0"
 fluent-bundle = "0.16.0"
