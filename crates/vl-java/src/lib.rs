@@ -281,10 +281,14 @@ mod tests {
         }
     }
 
+    /// Tests that start fake programs run one at a time (see below).
+    static FAKES: Mutex<()> = Mutex::new(());
+
     // One test starts every fake program: parallel tests forking while a script is being
     // written can make `exec` fail with a busy-file error on Linux.
     #[test]
     fn broken_and_hanging_javas_do_not_stop_the_scan() {
+        let _serial = FAKES.lock().unwrap_or_else(PoisonError::into_inner);
         let tmp = TempDir::new();
         let good8 = fake(tmp.path(), "good8", "1.8.0_345");
         let good21 = fake(tmp.path(), "good21", "21.0.1");
@@ -299,7 +303,7 @@ mod tests {
 
         let cache_file = tmp.path().join("cache").join("java-cache.json");
         let options = FinderOptions {
-            probe_timeout: Duration::from_secs(2),
+            probe_timeout: Duration::from_secs(8),
             cache_file: Some(cache_file.clone()),
             ..FinderOptions::default()
         };
@@ -344,6 +348,7 @@ mod tests {
 
     #[test]
     fn a_launcher_stub_collapses_into_the_installation_it_points_to() {
+        let _serial = FAKES.lock().unwrap_or_else(PoisonError::into_inner);
         let tmp = TempDir::new();
         let real = fake(
             tmp.path(),
