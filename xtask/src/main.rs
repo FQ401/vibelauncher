@@ -1,5 +1,5 @@
 //! Project tasks, run as `cargo xtask <task>`:
-//! - `ci` — every check a PR must pass: layers, format, clippy, tests, wasm build of the core layer;
+//! - `ci` — every check a PR must pass: layers, format, clippy, tests, wasm build of the core layer and the shared UI;
 //! - `version` — prints the launcher version (`[workspace.package] version`, the only place it lives);
 //! - `version set X.Y.Z[-pre]` — sets it.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // a command-line tool reports to the terminal
@@ -58,10 +58,11 @@ fn ci() -> Result<(), String> {
     for (name, program, args) in steps {
         run(name, program, args)?;
     }
-    // The core layer is pure: it must build for the browser.
+    // The core layer is pure and the shared UI has no native dependencies: both must build for
+    // the browser.
     let mut wasm = vec!["check", "--target", "wasm32-unknown-unknown"];
-    for package in &core {
-        wasm.extend(["-p", package.as_str()]);
+    for package in core.iter().map(String::as_str).chain(["vl-ui-egui"]) {
+        wasm.extend(["-p", package]);
     }
     run("wasm", &cargo, &wasm)?;
     println!("xtask ci: all checks passed");

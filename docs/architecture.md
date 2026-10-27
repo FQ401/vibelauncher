@@ -55,7 +55,7 @@ Rules checked by `cargo xtask ci` (`xtask/src/layers.rs`):
 - each dependency on a workspace package is allowed by the table above (dev-dependencies of a
   `ui` package may also use a `backend` package, so UI tests run on the mock);
 - `apps/` holds only `app` packages, and `app` packages live only in `apps/`;
-- the `core` layer builds for `wasm32-unknown-unknown`.
+- the `core` layer and `vl-ui-egui` build for `wasm32-unknown-unknown`.
 
 Cargo itself rejects dependency cycles, including cycles inside a layer.
 
@@ -258,6 +258,13 @@ On disk (`vl-settings`, TOML, written with `vl_store::write_atomic`):
 drains its event stream into view state and draws; user actions become commands. The app binary
 chooses the backend: `vl-backend` normally, `vl-mock` for interface work.
 
+The `vibelauncher` app (`apps/vibelauncher`, package `vl-app`) is an eframe window with the wgpu renderer around
+`vl_ui_egui::Launcher`; it runs on `vl-mock` for now (`--light` starts the light theme, `--section
+<name>` opens a section). `vl-ui-egui` depends on `egui` only, not on a windowing crate. Its
+layout: a left rail of five sections (Home, Instances, Catalog, Account, Settings), a top bar, a
+tasks panel (Ctrl+J) and the page of the current section; colors, spacing and type scale come from
+the design tokens in `theme.rs`.
+
 **`vl-cli`.** Parses arguments, starts a backend (`--mock` selects `vl-mock`, `--dir` selects a
 portable data directory), sends commands and blocks on replies. Long commands (`launch`) subscribe
 first, then print task progress and game log lines until the game exits. Each command group lives
@@ -287,5 +294,5 @@ Microsoft sign-in shows a device code and adds a synthetic account; tasks can be
 ## Checks
 
 `cargo xtask ci` runs, in order: the layer check, `cargo fmt --check`, `cargo clippy` with
-warnings denied, `cargo test`, and a `wasm32-unknown-unknown` build of the `core` layer. CI runs
-it on Linux and Windows for every pull request and on macOS weekly.
+warnings denied, `cargo test`, and a `wasm32-unknown-unknown` build of the `core` layer and
+`vl-ui-egui`. CI runs it on Linux and Windows for every pull request and on macOS weekly.
