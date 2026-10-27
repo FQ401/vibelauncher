@@ -9,6 +9,7 @@
 //! as well as for the desktop.
 
 mod app;
+mod i18n;
 mod icons;
 mod model;
 mod nav;

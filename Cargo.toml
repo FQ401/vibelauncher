@@ -39,6 +39,10 @@ zbus-secret-service-keyring-store = { version = "1.0.1", default-features = fals
 ureq = { version = "3.5.0", default-features = false, features = ["rustls", "socks-proxy"] }
 egui = { version = "0.37.0", default-features = false, features = ["default_fonts"] }
 eframe = "0.37.0"
+fluent-bundle = "0.16.0"
+intl-memoizer = "0.5.3"
+unic-langid = "0.9.6"
+sys-locale = "0.3.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -4,36 +4,46 @@ use egui::{ProgressBar, RichText, ScrollArea, Ui};
 use vl_core::task::{TaskKind, TaskSnapshot};
 
 use super::Ctx;
+use crate::i18n::I18n;
 use crate::strings;
 use crate::widgets::empty_state;
 
-fn kind_label(kind: TaskKind) -> &'static str {
-    match kind {
-        TaskKind::Launch => "Запуск игры",
-        TaskKind::InstallVersion => "Установка версии",
-        TaskKind::Download => "Загрузка файлов",
-        TaskKind::RefreshVersions => "Обновление списка версий",
-        TaskKind::SignIn => "Вход в аккаунт",
-        TaskKind::JavaScan => "Поиск Java",
-        TaskKind::JavaDownload => "Загрузка Java",
-        _ => "Задача",
-    }
-}
-
-fn title(task: &TaskSnapshot) -> String {
+fn title(i18n: &I18n, task: &TaskSnapshot) -> String {
+    let key = match task.info.kind {
+        TaskKind::Launch => "task-launch",
+        TaskKind::InstallVersion => "task-install-version",
+        TaskKind::Download => "task-download",
+        TaskKind::RefreshVersions => "task-refresh-versions",
+        TaskKind::SignIn => "task-sign-in",
+        TaskKind::JavaScan => "task-java-scan",
+        TaskKind::JavaDownload => "task-java-download",
+        _ => "task-other",
+    };
+    let name = i18n.t(key);
     match &task.info.subject {
-        Some(subject) => format!("{}: {subject}", kind_label(task.info.kind)),
-        None => kind_label(task.info.kind).to_owned(),
+        Some(subject) => i18n.t_args(
+            "task-with-subject",
+            &[
+                ("task", name.as_str().into()),
+                ("subject", subject.as_str().into()),
+            ],
+        ),
+        None => name,
     }
 }
 
 /// Draws the panel content.
 pub fn tasks_panel(ui: &mut Ui, cx: &mut Ctx<'_>) {
     let p = cx.palette;
-    ui.label(RichText::new(strings::NAV_TASKS).heading().color(p.text));
+    let i18n = cx.i18n;
+    ui.label(
+        RichText::new(i18n.t(strings::NAV_TASKS))
+            .heading()
+            .color(p.text),
+    );
     ui.add_space(8.0);
     if cx.model.tasks.is_empty() {
-        empty_state(ui, &p, strings::NO_TASKS, "");
+        empty_state(ui, &p, &i18n.t(strings::NO_TASKS), "");
         return;
     }
     let mut cancel = None;
@@ -41,7 +51,7 @@ pub fn tasks_panel(ui: &mut Ui, cx: &mut Ctx<'_>) {
         for task in &cx.model.tasks {
             ui.group(|ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new(title(task)).color(p.text));
+                ui.label(RichText::new(title(i18n, task)).color(p.text));
                 let progress = task.progress.as_ref();
                 let mut bar = match progress.and_then(|pr| pr.fraction()) {
                     Some(f) => ProgressBar::new(f).show_percentage(),
@@ -52,7 +62,7 @@ pub fn tasks_panel(ui: &mut Ui, cx: &mut Ctx<'_>) {
                 if let Some(stage) = progress.and_then(|pr| pr.stage.as_deref()) {
                     ui.label(RichText::new(stage).small().color(p.text_muted));
                 }
-                if task.info.cancellable && ui.button(strings::CANCEL).clicked() {
+                if task.info.cancellable && ui.button(i18n.t(strings::CANCEL)).clicked() {
                     cancel = Some(task.info.id);
                 }
             });

@@ -18,6 +18,7 @@ vl-core.workspace = true
 vl-mock.workspace = true
 vl-ui-egui.workspace = true
 eframe.workspace = true
+sys-locale.workspace = true
 
 [lints]
 workspace = true

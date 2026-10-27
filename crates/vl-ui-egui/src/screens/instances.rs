@@ -1,4 +1,4 @@
-//! The "Сборки" section: every instance in a table.
+//! The instances section: every instance in a table.
 
 use egui::{Grid, RichText, ScrollArea, Ui};
 use vl_core::instance::{InstanceState, InstanceSummary};
@@ -10,8 +10,9 @@ use crate::widgets::empty_state;
 /// Draws the instance table.
 pub fn instances(ui: &mut Ui, cx: &mut Ctx<'_>) {
     let p = cx.palette;
+    let i18n = cx.i18n;
     if cx.model.instances.is_empty() {
-        empty_state(ui, &p, strings::NO_INSTANCES, "");
+        empty_state(ui, &p, &i18n.t(strings::NO_INSTANCES), "");
         return;
     }
     let rows: Vec<InstanceSummary> = cx.model.instances.clone();
@@ -29,12 +30,12 @@ pub fn instances(ui: &mut Ui, cx: &mut Ctx<'_>) {
                 .min_col_width(80.0)
                 .show(ui, |ui| {
                     for head in [
-                        strings::COL_NAME,
-                        strings::COL_VERSION,
-                        strings::COL_LOADER,
-                        strings::COL_PLAYED,
-                        "",
-                        "",
+                        i18n.t(strings::COL_NAME),
+                        i18n.t(strings::COL_VERSION),
+                        i18n.t(strings::COL_LOADER),
+                        i18n.t(strings::COL_PLAYED),
+                        String::new(),
+                        String::new(),
                     ] {
                         ui.label(RichText::new(head).small().color(p.text_muted));
                     }
@@ -46,33 +47,36 @@ pub fn instances(ui: &mut Ui, cx: &mut Ctx<'_>) {
                         }
                         ui.label(&row.game_version);
                         ui.label(loader_label(&row.loader));
-                        ui.label(strings::hours_minutes(row.play_time_secs));
+                        ui.label(super::duration(i18n, row.play_time_secs));
                         match (&row.problem, &row.state) {
                             (Some(problem), _) => {
                                 ui.colored_label(
                                     p.danger,
-                                    format!("{}: {problem}", strings::PROBLEM),
+                                    i18n.t_args(
+                                        "state-problem",
+                                        &[("problem", problem.as_str().into())],
+                                    ),
                                 );
                             }
                             (None, InstanceState::Stopped) => {
                                 ui.label("");
                             }
                             (None, InstanceState::Preparing { .. }) => {
-                                ui.label(strings::PREPARING);
+                                ui.label(i18n.t(strings::PREPARING));
                             }
                             (None, InstanceState::Running { .. }) => {
-                                ui.colored_label(p.success, strings::PLAYING);
+                                ui.colored_label(p.success, i18n.t(strings::PLAYING));
                             }
                         }
                         ui.horizontal(|ui| match (&row.problem, &row.state) {
                             (Some(_), _) => {}
                             (None, InstanceState::Stopped) => {
-                                if ui.button(strings::PLAY).clicked() {
+                                if ui.button(i18n.t(strings::PLAY)).clicked() {
                                     launch = Some(row.id.clone());
                                 }
                             }
                             (None, _) => {
-                                if ui.button(strings::STOP).clicked() {
+                                if ui.button(i18n.t(strings::STOP)).clicked() {
                                     stop = Some(row.id.clone());
                                 }
                             }

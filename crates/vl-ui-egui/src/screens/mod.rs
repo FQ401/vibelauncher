@@ -12,12 +12,13 @@ pub use tasks::tasks_panel;
 
 use vl_core::instance::{InstanceSummary, Loader};
 
+use crate::i18n::I18n;
 use crate::model::Model;
 use crate::theme::Palette;
 
 /// Something a screen asks the shell to do.
 pub enum Action {
-    /// Open the "Сборки" section.
+    /// Open the instances section.
     OpenInstances,
 }
 
@@ -25,6 +26,7 @@ pub enum Action {
 pub struct Ctx<'a> {
     pub model: &'a mut Model,
     pub palette: Palette,
+    pub i18n: &'a I18n,
 }
 
 /// "Fabric 0.20.1", "Vanilla".
@@ -46,4 +48,20 @@ pub fn version_line(instance: &InstanceSummary) -> String {
         instance.game_version,
         loader_label(&instance.loader)
     )
+}
+
+/// "45 min" or "12 h 5 min", localized.
+pub fn duration(i18n: &I18n, secs: u64) -> String {
+    let minutes = secs / 60;
+    if minutes < 60 {
+        i18n.t_args("time-minutes", &[("minutes", minutes.into())])
+    } else {
+        i18n.t_args(
+            "time-hours-minutes",
+            &[
+                ("hours", (minutes / 60).into()),
+                ("minutes", (minutes % 60).into()),
+            ],
+        )
+    }
 }

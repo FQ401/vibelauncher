@@ -34,8 +34,8 @@ impl Section {
         }
     }
 
-    /// The name shown in the interface.
-    pub fn label(self) -> &'static str {
+    /// The message id of the section's name.
+    pub fn label_id(self) -> &'static str {
         match self {
             Section::Home => strings::NAV_HOME,
             Section::Instances => strings::NAV_INSTANCES,

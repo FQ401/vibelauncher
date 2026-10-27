@@ -9,6 +9,7 @@ use egui::{
 use vl_core::Facade;
 use vl_core::instance::InstanceState;
 
+use crate::i18n::I18n;
 use crate::icons;
 use crate::model::Model;
 use crate::nav::Section;
@@ -23,6 +24,7 @@ const TASKS_WIDTH: f32 = 360.0;
 /// The launcher interface. Create it once and call [`Launcher::ui`] every frame.
 pub struct Launcher {
     model: Model,
+    i18n: I18n,
     section: Section,
     theme: ThemeMode,
     tasks_open: bool,
@@ -35,10 +37,17 @@ impl Launcher {
         theme::apply(ctx, theme);
         Self {
             model: Model::new(facade),
+            i18n: I18n::default(),
             section: Section::default(),
             theme,
             tasks_open: false,
         }
+    }
+
+    /// Shows the interface in `lang` using `ftl` (Fluent source); English fills any gaps.
+    /// Returns whether `lang` is a valid language tag.
+    pub fn set_language(&mut self, lang: &str, ftl: &str) -> bool {
+        self.i18n.set_language(lang, ftl)
     }
 
     /// Opens a section.
@@ -78,6 +87,7 @@ impl Launcher {
                     let mut cx = Ctx {
                         model: &mut self.model,
                         palette,
+                        i18n: &self.i18n,
                     };
                     screens::tasks_panel(ui, &mut cx);
                 });
@@ -89,6 +99,7 @@ impl Launcher {
                 let mut cx = Ctx {
                     model: &mut self.model,
                     palette,
+                    i18n: &self.i18n,
                 };
                 action = match self.section {
                     Section::Home => screens::home(ui, &mut cx),
@@ -97,15 +108,15 @@ impl Launcher {
                         None
                     }
                     Section::Catalog => {
-                        screens::stub(ui, &palette, strings::STUB_CATALOG);
+                        screens::stub(ui, &palette, &self.i18n, strings::STUB_CATALOG);
                         None
                     }
                     Section::Account => {
-                        screens::stub(ui, &palette, strings::STUB_ACCOUNT);
+                        screens::stub(ui, &palette, &self.i18n, strings::STUB_ACCOUNT);
                         None
                     }
                     Section::Settings => {
-                        screens::stub(ui, &palette, strings::STUB_SETTINGS);
+                        screens::stub(ui, &palette, &self.i18n, strings::STUB_SETTINGS);
                         None
                     }
                 };
@@ -139,6 +150,8 @@ impl Launcher {
     }
 
     fn rail(&mut self, ui: &mut Ui, p: &Palette) {
+        let i18n = &self.i18n;
+        let mut theme_change = None;
         Panel::left("rail")
             .exact_size(RAIL_WIDTH)
             .resizable(false)
@@ -164,7 +177,7 @@ impl Launcher {
                         if rail_button(
                             ui,
                             p,
-                            section.label(),
+                            &i18n.t(section.label_id()),
                             self.section == section,
                             |painter, rect, color| {
                                 icons::paint_section(painter, rect, section, color);
@@ -184,7 +197,7 @@ impl Launcher {
                     if rail_button(
                         ui,
                         p,
-                        strings::NAV_TASKS,
+                        &i18n.t(strings::NAV_TASKS),
                         self.tasks_open,
                         |painter, rect, color| {
                             icons::paint_ring(painter, rect.center(), fraction, color, p.border);
@@ -201,21 +214,24 @@ impl Launcher {
                     }
                     let dark = self.theme == ThemeMode::Dark;
                     let label = if dark {
-                        strings::THEME_LIGHT
+                        i18n.t(strings::THEME_LIGHT)
                     } else {
-                        strings::THEME_DARK
+                        i18n.t(strings::THEME_DARK)
                     };
-                    if rail_button(ui, p, label, false, |painter, rect, color| {
+                    if rail_button(ui, p, &label, false, |painter, rect, color| {
                         icons::paint_theme(painter, rect.center(), dark, color, p.surface);
                     }) {
-                        let next = self.theme.toggled();
-                        self.set_theme(&ui.ctx().clone(), next);
+                        theme_change = Some(self.theme.toggled());
                     }
                 });
             });
+        if let Some(theme) = theme_change {
+            self.set_theme(&ui.ctx().clone(), theme);
+        }
     }
 
     fn top_bar(&self, ui: &mut Ui, p: &Palette) {
+        let i18n = &self.i18n;
         Panel::top("top_bar")
             .exact_size(56.0)
             .resizable(false)
@@ -226,13 +242,22 @@ impl Launcher {
             )
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new(self.section.label()).heading().color(p.text));
+                    ui.label(
+                        RichText::new(i18n.t(self.section.label_id()))
+                            .heading()
+                            .color(p.text),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if self.model.backend.is_none() {
-                            chip(ui, strings::BACKEND_LOST, p.danger, p.surface_sunken);
+                            chip(
+                                ui,
+                                &i18n.t(strings::BACKEND_LOST),
+                                p.danger,
+                                p.surface_sunken,
+                            );
                         }
                         if self.model.backend.as_ref().is_some_and(|b| b.mock) {
-                            chip(ui, strings::MOCK_DATA, p.accent_subtle, p.accent);
+                            chip(ui, &i18n.t(strings::MOCK_DATA), p.accent_subtle, p.accent);
                         }
                         let playing = self
                             .model
@@ -240,7 +265,7 @@ impl Launcher {
                             .iter()
                             .any(|i| matches!(i.state, InstanceState::Running { .. }));
                         if playing {
-                            chip(ui, strings::PLAYING, p.success, p.surface_sunken);
+                            chip(ui, &i18n.t(strings::PLAYING), p.success, p.surface_sunken);
                         }
                     });
                 });

@@ -18,8 +18,9 @@ const CARDS: usize = 4;
 /// Draws the home page; returns a navigation request, if any.
 pub fn home(ui: &mut Ui, cx: &mut Ctx<'_>) -> Option<Action> {
     let p = cx.palette;
+    let i18n = cx.i18n;
     let Some(featured) = cx.model.featured().cloned() else {
-        empty_state(ui, &p, strings::NO_INSTANCES, "");
+        empty_state(ui, &p, &i18n.t(strings::NO_INSTANCES), "");
         return None;
     };
     let mut action = None;
@@ -56,9 +57,12 @@ pub fn home(ui: &mut Ui, cx: &mut Ctx<'_>) -> Option<Action> {
         action = hero_buttons(ui, cx, &featured);
     });
     hero.add_space(8.0);
-    hero.label(RichText::new(format!(
-        "Время игры: {}",
-        strings::hours_minutes(featured.play_time_secs)
+    hero.label(RichText::new(i18n.t_args(
+        "home-play-time",
+        &[(
+            "time",
+            super::duration(i18n, featured.play_time_secs).into(),
+        )],
     )));
     hero.label(
         RichText::new(&featured.name)
@@ -76,13 +80,13 @@ pub fn home(ui: &mut Ui, cx: &mut Ctx<'_>) -> Option<Action> {
             ON_GRADIENT,
         );
         if matches!(featured.state, InstanceState::Running { .. }) {
-            chip(ui, strings::PLAYING, p.success, Color32::BLACK);
+            chip(ui, &i18n.t(strings::PLAYING), p.success, Color32::BLACK);
         }
     });
 
     ui.add_space(16.0);
     ui.label(
-        RichText::new(strings::OTHER_INSTANCES)
+        RichText::new(i18n.t(strings::OTHER_INSTANCES))
             .strong()
             .color(p.text),
     );
@@ -92,38 +96,45 @@ pub fn home(ui: &mut Ui, cx: &mut Ctx<'_>) -> Option<Action> {
 
 fn hero_buttons(ui: &mut Ui, cx: &mut Ctx<'_>, featured: &InstanceSummary) -> Option<Action> {
     let p = cx.palette;
+    let i18n = cx.i18n;
     let mut action = None;
     if let Some(problem) = &featured.problem {
-        ui.label(RichText::new(format!("{}: {problem}", strings::PROBLEM)));
+        ui.label(RichText::new(i18n.t_args(
+            "state-problem",
+            &[("problem", problem.as_str().into())],
+        )));
         return None;
     }
     match &featured.state {
         InstanceState::Stopped => {
-            if primary_button(ui, &p, strings::PLAY).clicked() {
+            if primary_button(ui, &p, &i18n.t(strings::PLAY)).clicked() {
                 cx.model.launch(&featured.id);
             }
         }
         InstanceState::Preparing { .. } => {
             let label = match cx.model.launch_fraction(featured) {
-                Some(f) => format!("{} {:.0}%", strings::PREPARING, f * 100.0),
-                None => format!("{}…", strings::PREPARING),
+                Some(f) => i18n.t_args(
+                    "state-preparing-percent",
+                    &[("percent", format!("{:.0}", f * 100.0).into())],
+                ),
+                None => format!("{}…", i18n.t(strings::PREPARING)),
             };
             ui.add_enabled(false, egui::Button::new(label).min_size(vec2(180.0, 44.0)));
-            if glass_button(ui, strings::CANCEL).clicked() {
+            if glass_button(ui, &i18n.t(strings::CANCEL)).clicked() {
                 cx.model.stop(&featured.id);
             }
         }
         InstanceState::Running { .. } => {
             ui.add_enabled(
                 false,
-                egui::Button::new(strings::PLAYING).min_size(vec2(140.0, 44.0)),
+                egui::Button::new(i18n.t(strings::PLAYING)).min_size(vec2(140.0, 44.0)),
             );
-            if glass_button(ui, strings::STOP).clicked() {
+            if glass_button(ui, &i18n.t(strings::STOP)).clicked() {
                 cx.model.stop(&featured.id);
             }
         }
     }
-    if glass_button(ui, strings::CONFIGURE).clicked() {
+    if glass_button(ui, &i18n.t(strings::CONFIGURE)).clicked() {
         cx.model.selected = Some(featured.id.clone());
         action = Some(Action::OpenInstances);
     }
