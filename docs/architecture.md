@@ -43,7 +43,7 @@ layer = "native"
 
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
-| `core` | `vl-core`, `vl-meta` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
+| `core` | `vl-core`, `vl-meta`, `vl-crash` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
 | `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
@@ -65,7 +65,7 @@ ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
 native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-launch
                                          → core, native
-core      vl-core · vl-meta              → core
+core      vl-core · vl-meta · vl-crash   → core
 ```
 
 ## Crates
@@ -74,6 +74,7 @@ core      vl-core · vl-meta              → core
 |---|---|---|
 | `vl-core` | core | Domain types and the facade contract: ids, errors, platform, instances, versions, accounts, Java runtimes, settings model and override rules, tasks and progress, log lines; `Command`, `Response`, `Event`, the `Facade` trait, replies and the event bus. One module per domain. |
 | `vl-meta` | core | Game metadata: parsing and normalizing upstream documents (version manifest, version JSON, rules, arguments, libraries and natives, asset indexes) from bytes into the launcher's own types. Platform rules take a `Platform` argument, so every OS is testable on any host. |
+| `vl-crash` | core | Crash diagnosis: text of `latest.log`, a crash report or `hs_err` plus a class-to-mod index in, a `Diagnosis` out (confidence level, signature, suspect mods, localization keys, evidence lines). Signatures are data (`signatures.toml`); a mod is named with certainty only when a signature matched. |
 | `vl-store` | native | Data, cache and log directories by OS convention or one portable directory; the on-disk format version and migrations; the lock against a second launcher process; atomic writes. |
 | `vl-net` | native | HTTP and downloads: parallelism limit, retries, timeouts, size caps, hash checks, HTTP cache (`ETag`, `Last-Modified`), offline reads, proxies, the launcher's `User-Agent`. |
 | `vl-tasks` | native | The task engine: stages with weights, nested subtasks, overall progress, cooperative cancellation, timeouts, a concurrency limit; publishes task events. |

@@ -4120,6 +4120,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vl-crash"
+version = "0.0.0"
+dependencies = [
+ "regex",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "vl-instance"
 version = "0.0.0"
 dependencies = [
