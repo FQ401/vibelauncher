@@ -26,7 +26,10 @@ fn installs_everything_a_version_needs() {
 
     let layout = installer.layout();
     assert!(layout.version_json("1.0").is_file());
-    assert_eq!(std::fs::read(layout.client_jar("1.0")).unwrap(), b"client jar");
+    assert_eq!(
+        std::fs::read(layout.client_jar("1.0")).unwrap(),
+        b"client jar"
+    );
     assert!(
         layout
             .libraries_dir()
@@ -36,17 +39,30 @@ fn installs_everything_a_version_needs() {
     assert!(layout.log_configs_dir().join("client-1.12.xml").is_file());
     assert!(layout.asset_index_file("1.0").is_file());
     for hash in [sha1_hex(OBJECT_A), sha1_hex(OBJECT_B)] {
-        let object = layout.assets_dir().join("objects").join(&hash[..2]).join(&hash);
+        let object = layout
+            .assets_dir()
+            .join("objects")
+            .join(&hash[..2])
+            .join(&hash);
         assert!(object.is_file(), "object {hash}");
     }
 
     // Natives: unpacked, the excluded prefix is not.
-    assert_eq!(std::fs::read(installed.natives_dir.join("lwjgl.dll")).unwrap(), b"dll");
-    assert_eq!(std::fs::read(installed.natives_dir.join("sub/dir.dll")).unwrap(), b"nested");
+    assert_eq!(
+        std::fs::read(installed.natives_dir.join("lwjgl.dll")).unwrap(),
+        b"dll"
+    );
+    assert_eq!(
+        std::fs::read(installed.natives_dir.join("sub/dir.dll")).unwrap(),
+        b"nested"
+    );
     assert!(!installed.natives_dir.join("META-INF").exists());
 
     // The native archive is not on the class path; the library is.
-    assert_eq!(installed.libraries.classpath, ["com/example/lib/1.0/lib-1.0.jar"]);
+    assert_eq!(
+        installed.libraries.classpath,
+        ["com/example/lib/1.0/lib-1.0.jar"]
+    );
     assert_eq!(installed.asset_layout, AssetLayout::Objects);
     assert_eq!(installed.assets_index_id, "1.0");
     assert!(installed.logging.is_some());
@@ -60,7 +76,11 @@ fn installs_everything_a_version_needs() {
         .expect("byte progress");
     assert_eq!(Some(last_bytes.done), last_bytes.total);
     let stages: Vec<_> = seen.iter().filter_map(|p| p.stage.as_deref()).collect();
-    assert!(stages.contains(&"metadata") && stages.contains(&"downloading") && stages.contains(&"natives"));
+    assert!(
+        stages.contains(&"metadata")
+            && stages.contains(&"downloading")
+            && stages.contains(&"natives")
+    );
 }
 
 #[test]
@@ -77,7 +97,9 @@ fn an_installed_version_needs_no_network() {
     let mut config = net_config();
     config.offline = true;
     let offline = installer_with(&empty, dir.path(), config);
-    let again = offline.install("1.0", None, &Job::new()).expect("offline install");
+    let again = offline
+        .install("1.0", None, &Job::new())
+        .expect("offline install");
     assert_eq!(empty.request_count(), 0);
     assert_eq!(again.version.main_class, "net.example.Main");
 }
@@ -88,8 +110,13 @@ fn a_damaged_file_is_fetched_again_on_a_full_check() {
     add_version(&server, "1.0", "1.0", json!({}), json!({}));
     let dir = TempDir::new();
     let installer = installer(&server, dir.path());
-    installer.install("1.0", None, &Job::new()).expect("install");
-    let lib = installer.layout().libraries_dir().join("com/example/lib/1.0/lib-1.0.jar");
+    installer
+        .install("1.0", None, &Job::new())
+        .expect("install");
+    let lib = installer
+        .layout()
+        .libraries_dir()
+        .join("com/example/lib/1.0/lib-1.0.jar");
     // Same size, different content: a quick check keeps it.
     std::fs::write(&lib, b"LIBRARY JAR").unwrap();
     installer.install("1.0", None, &Job::new()).expect("quick");
@@ -143,7 +170,9 @@ fn corrupted_downloads_are_refused() {
     );
     let dir = TempDir::new();
     let installer = installer(&server, dir.path());
-    let err = installer.install("1.0", None, &Job::new()).expect_err("integrity");
+    let err = installer
+        .install("1.0", None, &Job::new())
+        .expect_err("integrity");
     assert_eq!(err.kind, ErrorKind::Integrity);
     assert!(
         !installer
@@ -172,19 +201,36 @@ fn an_unknown_version_is_not_found() {
 #[test]
 fn the_virtual_layout_is_restored_below_the_assets_directory() {
     let server = Arc::new(FakeServer::default());
-    add_version(&server, "1.0", "legacy", json!({"virtual": true}), json!({}));
+    add_version(
+        &server,
+        "1.0",
+        "legacy",
+        json!({"virtual": true}),
+        json!({}),
+    );
     let dir = TempDir::new();
     let installer = installer(&server, dir.path());
-    let installed = installer.install("1.0", None, &Job::new()).expect("install");
+    let installed = installer
+        .install("1.0", None, &Job::new())
+        .expect("install");
     assert_eq!(installed.asset_layout, AssetLayout::Virtual);
-    let restored = installer.layout().assets_dir().join("virtual/legacy/minecraft/sounds/a.ogg");
+    let restored = installer
+        .layout()
+        .assets_dir()
+        .join("virtual/legacy/minecraft/sounds/a.ogg");
     assert_eq!(std::fs::read(restored).unwrap(), OBJECT_A);
 }
 
 #[test]
 fn the_resources_layout_is_restored_into_the_game_directory() {
     let server = Arc::new(FakeServer::default());
-    add_version(&server, "1.0", "pre-1.6", json!({"map_to_resources": true}), json!({}));
+    add_version(
+        &server,
+        "1.0",
+        "pre-1.6",
+        json!({"map_to_resources": true}),
+        json!({}),
+    );
     let dir = TempDir::new();
     let game = TempDir::new();
     let installer = installer(&server, dir.path());
@@ -220,9 +266,19 @@ fn a_version_inheriting_another_uses_its_jar_and_libraries() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, serde_json::to_vec(&child).unwrap()).unwrap();
 
-    let installed = installer.install("1.0-loader", None, &Job::new()).expect("install");
+    let installed = installer
+        .install("1.0-loader", None, &Job::new())
+        .expect("install");
     assert_eq!(installed.version.main_class, "net.example.LoaderMain");
     assert_eq!(installed.client_jar, installer.layout().client_jar("1.0"));
-    assert_eq!(installed.libraries.classpath[0], "com/example/loader/1.0/loader-1.0.jar");
-    assert!(installed.libraries.classpath.contains(&"com/example/lib/1.0/lib-1.0.jar".to_owned()));
+    assert_eq!(
+        installed.libraries.classpath[0],
+        "com/example/loader/1.0/loader-1.0.jar"
+    );
+    assert!(
+        installed
+            .libraries
+            .classpath
+            .contains(&"com/example/lib/1.0/lib-1.0.jar".to_owned())
+    );
 }

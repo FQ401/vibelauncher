@@ -78,6 +78,7 @@ pub fn spawn(
     let mut process = Command::new(&command.program);
     process
         .args(&command.args)
+        .envs(&command.env)
         .current_dir(&command.cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -253,9 +254,13 @@ mod tests {
     fn stop_kills_the_process_and_marks_the_exit() {
         let command = shell("sleep 30", "ping -n 30 127.0.0.1 >nul", Vec::new());
         let (tx, rx) = mpsc::channel();
-        let game = spawn(&command, |_| {}, move |e| {
-            let _ = tx.send(e);
-        })
+        let game = spawn(
+            &command,
+            |_| {},
+            move |e| {
+                let _ = tx.send(e);
+            },
+        )
         .expect("spawn");
         assert!(game.pid() > 0);
         thread::sleep(Duration::from_millis(200));
@@ -273,7 +278,9 @@ mod tests {
             std::env::temp_dir(),
             Vec::new(),
         );
-        let err = spawn(&command, |_| {}, |_| {}).map(|_| ()).expect_err("fails");
+        let err = spawn(&command, |_| {}, |_| {})
+            .map(|_| ())
+            .expect_err("fails");
         assert_eq!(err.kind, ErrorKind::Game);
         assert!(!err.message.contains("--secret"));
     }

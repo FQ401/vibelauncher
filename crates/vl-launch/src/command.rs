@@ -6,6 +6,7 @@
 //! game arguments. `${variables}` are substituted from the session, the installed version and
 //! the settings. The program is started with an argument array, never through a shell.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use vl_core::settings::{MemorySettings, WindowSettings};
@@ -38,6 +39,8 @@ pub struct CommandInput<'a> {
     pub window: WindowSettings,
     /// The user's extra JVM arguments.
     pub extra_jvm_args: &'a [String],
+    /// Environment variables to set for the game, on top of the launcher's own.
+    pub env: &'a BTreeMap<String, String>,
     /// `${launcher_name}`.
     pub launcher_name: &'a str,
     /// `${launcher_version}`.
@@ -53,6 +56,8 @@ pub struct CommandLine {
     pub args: Vec<String>,
     /// The working directory.
     pub cwd: PathBuf,
+    /// Environment variables added to the launcher's own.
+    pub env: BTreeMap<String, String>,
     secrets: Vec<String>,
 }
 
@@ -63,6 +68,7 @@ impl CommandLine {
             program,
             args,
             cwd,
+            env: BTreeMap::new(),
             secrets,
         }
     }
@@ -135,7 +141,10 @@ fn variables(input: &CommandInput<'_>, classpath: &str) -> Variables {
         .with("auth_player_name", &session.player_name)
         .with("auth_uuid", session.uuid_compact())
         .with("auth_access_token", token)
-        .with("auth_session", format!("token:{token}:{}", session.uuid_compact()))
+        .with(
+            "auth_session",
+            format!("token:{token}:{}", session.uuid_compact()),
+        )
         .with("user_type", &session.user_type)
         .with("user_properties", "{}")
         .with("profile_name", &session.player_name)
@@ -148,7 +157,10 @@ fn variables(input: &CommandInput<'_>, classpath: &str) -> Variables {
         .with("natives_directory", text(&installed.natives_dir))
         .with("library_directory", text(&input.layout.libraries_dir()))
         .with("classpath", classpath)
-        .with("classpath_separator", classpath_separator(platform.os).to_string())
+        .with(
+            "classpath_separator",
+            classpath_separator(platform.os).to_string(),
+        )
         .with("primary_jar", text(&installed.client_jar))
         .with("launcher_name", input.launcher_name)
         .with("launcher_version", input.launcher_version)
@@ -185,7 +197,9 @@ pub fn build(input: &CommandInput<'_>) -> Result<CommandLine> {
     if input.session.player_name.trim().is_empty() {
         return Err(Error::invalid_input("the player name is empty"));
     }
-    let MemorySettings { min_mib, max_mib } = input.memory;
+    let MemorySettings {
+        min_mib, max_mib, ..
+    } = input.memory;
     if max_mib < 64 {
         return Err(Error::new(
             ErrorKind::InvalidInput,
@@ -239,6 +253,7 @@ pub fn build(input: &CommandInput<'_>) -> Result<CommandLine> {
         program: input.java.to_path_buf(),
         args,
         cwd: input.game_dir.to_path_buf(),
+        env: input.env.clone(),
         secrets,
     })
 }

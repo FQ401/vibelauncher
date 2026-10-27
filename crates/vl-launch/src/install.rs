@@ -189,7 +189,10 @@ impl Installer {
             None if !client_jar.is_file() => {
                 return Err(Error::new(
                     ErrorKind::NotFound,
-                    format!("version {id} has no client download and {} is missing", version.client_jar),
+                    format!(
+                        "version {id} has no client download and {} is missing",
+                        version.client_jar
+                    ),
                 ));
             }
             None => {}
@@ -222,19 +225,22 @@ impl Installer {
                     .size(index_ref.size)
                     .max_bytes(MAX_ASSET_INDEX_BYTES as u64);
                 let spec = with_sha1(spec, &index_ref.sha1);
-                self.client
-                    .download(&spec, &control)
-                    .map_err(Error::from)?;
+                self.client.download(&spec, &control).map_err(Error::from)?;
                 let bytes = read_capped(&dest, MAX_ASSET_INDEX_BYTES as u64)?;
                 let index = AssetIndex::parse(&bytes)?;
                 let mut plan = index.plan(&assets_index_id)?;
                 let assets_dir = self.layout.assets_dir();
                 let full = self.options.verify == Verify::Full;
-                plan.retain_missing(|o| full || !has_size(&assets_dir.join(o.store_path()), o.size));
+                plan.retain_missing(|o| {
+                    full || !has_size(&assets_dir.join(o.store_path()), o.size)
+                });
                 for object in &plan.downloads {
                     let spec = with_sha1(
-                        Download::new(object.url(), join_relative(&assets_dir, &object.store_path()))
-                            .size(object.size),
+                        Download::new(
+                            object.url(),
+                            join_relative(&assets_dir, &object.store_path()),
+                        )
+                        .size(object.size),
                         &object.hash,
                     );
                     fetches.push(Fetch {
@@ -251,7 +257,12 @@ impl Installer {
         self.download_batch(&fetches, job)?;
 
         job.check()?;
-        job.report("natives", 0, Some(plan.natives.len() as u64), ProgressUnit::Items);
+        job.report(
+            "natives",
+            0,
+            Some(plan.natives.len() as u64),
+            ProgressUnit::Items,
+        );
         let natives_dir = self.layout.natives_dir(&version.client_jar);
         natives::extract_all(&plan.natives, &libraries_dir, &natives_dir, job)?;
 
@@ -283,7 +294,10 @@ impl Installer {
         let Some(url) = &file.url else {
             return Err(Error::new(
                 ErrorKind::NotFound,
-                format!("library file {} is missing and has no download address", file.path),
+                format!(
+                    "library file {} is missing and has no download address",
+                    file.path
+                ),
             ));
         };
         let mut spec = Download::new(url, dest);
@@ -320,7 +334,9 @@ impl Installer {
         let results = self.client.download_all(&specs, &control);
         let mut first = None;
         for error in results.into_iter().filter_map(std::result::Result::err) {
-            if first.is_none() || (matches!(first, Some(NetError::Cancelled)) && error != NetError::Cancelled) {
+            if first.is_none()
+                || (matches!(first, Some(NetError::Cancelled)) && error != NetError::Cancelled)
+            {
                 first = Some(error);
             }
         }
@@ -446,7 +462,12 @@ fn file_name(url: &str, id: &str) -> Result<String> {
 }
 
 /// Copies the objects of a `virtual` or `map_to_resources` layout to where the game reads them.
-fn restore_assets(plan: &AssetPlan, assets_dir: &Path, game_dir: Option<&Path>, job: &Job) -> Result<()> {
+fn restore_assets(
+    plan: &AssetPlan,
+    assets_dir: &Path,
+    game_dir: Option<&Path>,
+    job: &Job,
+) -> Result<()> {
     let total = plan.restores.len() as u64;
     for (done, restore) in plan.restores.iter().enumerate() {
         if done % 64 == 0 {

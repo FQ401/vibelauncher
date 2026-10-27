@@ -83,6 +83,12 @@ pub enum VersionCommand {
     List(VersionFilter),
     /// Fetches the list from upstream → `Response::Task`.
     Refresh,
+    /// Installs a version's files (metadata, client, libraries, natives, assets) without
+    /// starting the game → `Response::Task`.
+    Install {
+        /// The version id, as in the version manifest.
+        id: String,
+    },
 }
 
 /// Changes to the version list.

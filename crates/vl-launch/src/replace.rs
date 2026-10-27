@@ -81,7 +81,9 @@ pub fn adjust(libraries: &[LibraryEntry], platform: Platform) -> Adjusted {
         .flat_map(|m| {
             [
                 entry(format!("org.lwjgl:{m}:{LWJGL3_VERSION}")),
-                entry(format!("org.lwjgl:{m}:{LWJGL3_VERSION}:natives-macos-arm64")),
+                entry(format!(
+                    "org.lwjgl:{m}:{LWJGL3_VERSION}:natives-macos-arm64"
+                )),
             ]
         })
         .flatten()
@@ -92,9 +94,9 @@ pub fn adjust(libraries: &[LibraryEntry], platform: Platform) -> Adjusted {
         drop: vec!["org.lwjgl".to_owned()],
         libraries: added,
     });
-    adjusted
-        .notes
-        .push(format!("LWJGL is replaced by {LWJGL3_VERSION} for Apple silicon"));
+    adjusted.notes.push(format!(
+        "LWJGL is replaced by {LWJGL3_VERSION} for Apple silicon"
+    ));
     adjusted
 }
 
@@ -116,9 +118,18 @@ mod tests {
     fn other_platforms_are_untouched() {
         let libs = [lib("org.lwjgl:lwjgl:3.2.2")];
         for platform in [
-            Platform { os: Os::Windows, arch: Arch::X86_64 },
-            Platform { os: Os::MacOs, arch: Arch::X86_64 },
-            Platform { os: Os::Linux, arch: Arch::Aarch64 },
+            Platform {
+                os: Os::Windows,
+                arch: Arch::X86_64,
+            },
+            Platform {
+                os: Os::MacOs,
+                arch: Arch::X86_64,
+            },
+            Platform {
+                os: Os::Linux,
+                arch: Arch::Aarch64,
+            },
         ] {
             let a = adjust(&libs, platform);
             assert_eq!(a.platform, platform);

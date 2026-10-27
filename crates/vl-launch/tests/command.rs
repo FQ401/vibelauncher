@@ -27,26 +27,47 @@ fn session() -> LaunchSession {
     }
 }
 
-fn setup(index_id: &str, flags: serde_json::Value, extra: serde_json::Value) -> (TempDir, Installer, Installed) {
+fn setup(
+    index_id: &str,
+    flags: serde_json::Value,
+    extra: serde_json::Value,
+) -> (TempDir, Installer, Installed) {
     let server = Arc::new(FakeServer::default());
     add_version(&server, "1.0", index_id, flags, extra);
     let dir = TempDir::new();
     let installer = installer(&server, dir.path());
     let game = dir.path().join("game");
-    let installed = installer.install("1.0", Some(&game), &Job::new()).expect("install");
+    let installed = installer
+        .install("1.0", Some(&game), &Job::new())
+        .expect("install");
     (dir, installer, installed)
 }
 
-fn build(installer: &Installer, installed: &Installed, game: &std::path::Path, extra: &[String]) -> command::CommandLine {
+fn build(
+    installer: &Installer,
+    installed: &Installed,
+    game: &std::path::Path,
+    extra: &[String],
+) -> command::CommandLine {
     command::build(&CommandInput {
         installed,
         layout: installer.layout(),
         java: &PathBuf::from("java"),
         game_dir: game,
         session: &session(),
-        memory: MemorySettings { min_mib: 512, max_mib: 2048 },
-        window: WindowSettings { width: 1000, height: 600, maximized: false },
+        memory: MemorySettings {
+            min_mib: 512,
+            max_mib: 2048,
+            ..MemorySettings::default()
+        },
+        window: WindowSettings {
+            width: 1000,
+            height: 600,
+            maximized: false,
+            ..WindowSettings::default()
+        },
         extra_jvm_args: extra,
+        env: &std::collections::BTreeMap::new(),
         launcher_name: "VibeLauncher",
         launcher_version: "1.2.3",
     })
@@ -54,7 +75,7 @@ fn build(installer: &Installer, installed: &Installed, game: &std::path::Path, e
 }
 
 fn value_after<'a>(args: &'a [String], flag: &str) -> &'a str {
-    let i = args.iter().position(|a| a == flag).unwrap_or_else(|| panic!("{flag} missing"));
+    let i = args.iter().position(|a| a == flag).expect(flag);
     &args[i + 1]
 }
 
@@ -76,21 +97,34 @@ fn the_modern_format_gets_memory_classpath_natives_and_game_arguments() {
     assert!(args.contains(&format!("-Djava.library.path={natives}")));
     let classpath = value_after(args, "-cp");
     let parts: Vec<&str> = classpath.split(';').collect();
-    assert!(parts[0].replace('\\', "/").ends_with("libraries/com/example/lib/1.0/lib-1.0.jar"));
+    assert!(
+        parts[0]
+            .replace('\\', "/")
+            .ends_with("libraries/com/example/lib/1.0/lib-1.0.jar")
+    );
     assert_eq!(PathBuf::from(parts[1]), installed.client_jar);
     assert_eq!(parts.len(), 2);
 
     // Logging, then the main class, then the game arguments.
-    let log_arg = args.iter().position(|a| a.starts_with("-Dlog4j.configurationFile=")).unwrap();
+    let log_arg = args
+        .iter()
+        .position(|a| a.starts_with("-Dlog4j.configurationFile="))
+        .unwrap();
     let main = args.iter().position(|a| a == "net.example.Main").unwrap();
     assert!(log_arg < main);
     let game_args = &args[main + 1..];
     assert_eq!(value_after(game_args, "--username"), "Steve");
     assert_eq!(value_after(game_args, "--version"), "1.0");
     assert_eq!(PathBuf::from(value_after(game_args, "--gameDir")), game);
-    assert_eq!(PathBuf::from(value_after(game_args, "--assetsDir")), installer.layout().assets_dir());
+    assert_eq!(
+        PathBuf::from(value_after(game_args, "--assetsDir")),
+        installer.layout().assets_dir()
+    );
     assert_eq!(value_after(game_args, "--assetIndex"), "1.0");
-    assert_eq!(value_after(game_args, "--uuid"), "11111111222233334444555555555555");
+    assert_eq!(
+        value_after(game_args, "--uuid"),
+        "11111111222233334444555555555555"
+    );
     assert_eq!(value_after(game_args, "--accessToken"), TOKEN);
     assert_eq!(value_after(game_args, "--userType"), "msa");
     assert_eq!(value_after(game_args, "--versionType"), "release");
@@ -98,7 +132,10 @@ fn the_modern_format_gets_memory_classpath_natives_and_game_arguments() {
     assert_eq!(value_after(game_args, "--height"), "600");
     assert!(!game_args.contains(&"--demo".to_owned()));
     assert_eq!(line.cwd, game);
-    assert!(args.iter().all(|a| !a.contains("${")), "unresolved variable in {args:?}");
+    assert!(
+        args.iter().all(|a| !a.contains("${")),
+        "unresolved variable in {args:?}"
+    );
 }
 
 #[test]
@@ -136,7 +173,14 @@ fn the_legacy_format_with_the_virtual_layout() {
         format!("token:{TOKEN}:11111111222233334444555555555555")
     );
     let assets = PathBuf::from(value_after(game_args, "--assetsDir"));
-    assert_eq!(assets, installer.layout().assets_dir().join("virtual").join("legacy"));
+    assert_eq!(
+        assets,
+        installer
+            .layout()
+            .assets_dir()
+            .join("virtual")
+            .join("legacy")
+    );
     assert_eq!(value_after(game_args, "--userProperties"), "{}");
     assert!(args.iter().all(|a| !a.contains("${")));
 }
@@ -152,7 +196,11 @@ fn the_pre_1_6_format_points_assets_at_the_game_directory() {
     let (dir, installer, installed) = setup("pre-1.6", json!({"map_to_resources": true}), extra);
     let game = dir.path().join("game");
     let line = build(&installer, &installed, &game, &[]);
-    let main = line.args.iter().position(|a| a == "net.example.Main").unwrap();
+    let main = line
+        .args
+        .iter()
+        .position(|a| a == "net.example.Main")
+        .unwrap();
     assert_eq!(line.args[main + 1], "Steve");
     assert!(line.args[main + 2].starts_with("token:"));
     assert_eq!(line.args.len(), main + 3);
@@ -169,16 +217,24 @@ fn memory_is_validated_and_min_is_capped_by_max() {
         java: &PathBuf::from("java"),
         game_dir: &game,
         session: &session(),
-        memory: MemorySettings { min_mib: 4096, max_mib: 1024 },
+        memory: MemorySettings {
+            min_mib: 4096,
+            max_mib: 1024,
+            ..MemorySettings::default()
+        },
         window: WindowSettings::default(),
         extra_jvm_args: &[],
+        env: &std::collections::BTreeMap::new(),
         launcher_name: "L",
         launcher_version: "1",
     };
     let line = command::build(&input).expect("command");
     assert_eq!(&line.args[..2], ["-Xms1024M", "-Xmx1024M"]);
     input.memory.max_mib = 8;
-    assert_eq!(command::build(&input).expect_err("small").kind, ErrorKind::InvalidInput);
+    assert_eq!(
+        command::build(&input).expect_err("small").kind,
+        ErrorKind::InvalidInput
+    );
 }
 
 fn runtime(major: u32, arch: Arch) -> JavaRuntime {
@@ -199,9 +255,15 @@ fn prepare_installs_chooses_java_and_warns() {
     let dir = TempDir::new();
     let installer = installer(&server, dir.path());
     let game = dir.path().join("instances/one/minecraft");
-    let mut settings = Settings::default();
     // More than any machine has free.
-    settings.memory = MemorySettings { min_mib: 512, max_mib: u32::MAX };
+    let settings = Settings {
+        memory: MemorySettings {
+            min_mib: 512,
+            max_mib: u32::MAX,
+            ..MemorySettings::default()
+        },
+        ..Settings::default()
+    };
     let session = session();
     let runtimes = [runtime(21, Arch::X86_64), runtime(8, Arch::X86_64)];
     let input = PrepareInput {
@@ -221,11 +283,19 @@ fn prepare_installs_chooses_java_and_warns() {
     assert_eq!(prepared.command.program, PathBuf::from("/jvm/21/bin/java"));
     assert!(game.is_dir());
     assert!(prepared.warnings.iter().any(|w| w.contains("Java 17")));
-    assert!(prepared.warnings.iter().any(|w| w.contains("out of memory")));
+    assert!(
+        prepared
+            .warnings
+            .iter()
+            .any(|w| w.contains("out of memory"))
+    );
 
     // Only Java 8: a clear Java error, nothing started.
     let only_old = [runtime(8, Arch::X86_64)];
-    let input = PrepareInput { runtimes: &only_old, ..input };
+    let input = PrepareInput {
+        runtimes: &only_old,
+        ..input
+    };
     let err = prepare(&installer, &input, &Job::new()).expect_err("no java");
     assert_eq!(err.kind, ErrorKind::Java);
 }

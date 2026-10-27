@@ -14,9 +14,7 @@ use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 use vl_core::platform::{Arch, Os, Platform};
 use vl_launch::{Installer, InstallerOptions, Layout};
-use vl_net::{
-    Client, HttpRequest, HttpResponse, HttpTransport, NetConfig, NetError, RetryPolicy,
-};
+use vl_net::{Client, HttpRequest, HttpResponse, HttpTransport, NetConfig, NetError, RetryPolicy};
 
 pub const WINDOWS: Platform = Platform {
     os: Os::Windows,
@@ -150,7 +148,13 @@ pub const OBJECT_B: &[u8] = b"language file";
 /// Registers a version `id` with one library, one old-style native archive, a client jar, a
 /// logging file and an asset index (`index_id`, with `flags` merged into the index document), and
 /// the manifest that lists it. `extra` is merged into the version JSON.
-pub fn add_version(server: &FakeServer, id: &str, index_id: &str, flags: Value, extra: Value) -> Published {
+pub fn add_version(
+    server: &FakeServer,
+    id: &str,
+    index_id: &str,
+    flags: Value,
+    extra: Value,
+) -> Published {
     let lib = b"library jar".to_vec();
     let lib_path = "com/example/lib/1.0/lib-1.0.jar";
     server.add(&format!("{BASE}/libraries/{lib_path}"), lib.clone());
@@ -171,7 +175,10 @@ pub fn add_version(server: &FakeServer, id: &str, index_id: &str, flags: Value, 
 
     let mut objects = serde_json::Map::new();
     let mut hashes = Vec::new();
-    for (name, data) in [("minecraft/sounds/a.ogg", OBJECT_A), ("lang/en.lang", OBJECT_B)] {
+    for (name, data) in [
+        ("minecraft/sounds/a.ogg", OBJECT_A),
+        ("lang/en.lang", OBJECT_B),
+    ] {
         let hash = sha1_hex(data);
         server.add(
             &format!(
@@ -188,7 +195,10 @@ pub fn add_version(server: &FakeServer, id: &str, index_id: &str, flags: Value, 
         dst.extend(src.clone());
     }
     let index_bytes = serde_json::to_vec(&index).unwrap();
-    server.add(&format!("{BASE}/indexes/{index_id}.json"), index_bytes.clone());
+    server.add(
+        &format!("{BASE}/indexes/{index_id}.json"),
+        index_bytes.clone(),
+    );
 
     let mut version = json!({
         "id": id,
@@ -282,7 +292,10 @@ pub fn add_version(server: &FakeServer, id: &str, index_id: &str, flags: Value, 
             "complianceLevel": 1,
         }],
     });
-    server.add(&format!("{BASE}/manifest.json"), serde_json::to_vec(&manifest).unwrap());
+    server.add(
+        &format!("{BASE}/manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    );
     Published {
         json: version,
         object_hashes: hashes,

@@ -18,6 +18,7 @@ commands:
   instances list                      list instances
   instances create <name> <version>   create a vanilla instance
   versions list [--snapshots] [--old] list game versions
+  versions install <version>          download a version's files without starting it
   accounts list                       list accounts
   accounts login                      sign in with Microsoft (device code)
   accounts remove <account>           remove an account (id or name)

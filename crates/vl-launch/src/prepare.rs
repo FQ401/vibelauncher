@@ -58,12 +58,8 @@ pub struct Prepared {
 pub fn prepare(installer: &Installer, input: &PrepareInput<'_>, job: &Job) -> Result<Prepared> {
     let installed = installer.install(input.version, Some(input.game_dir), job)?;
     job.check()?;
-    fs::create_dir_all(input.game_dir).map_err(|e| {
-        Error::new(
-            ErrorKind::Io,
-            format!("{}: {e}", input.game_dir.display()),
-        )
-    })?;
+    fs::create_dir_all(input.game_dir)
+        .map_err(|e| Error::new(ErrorKind::Io, format!("{}: {e}", input.game_dir.display())))?;
     let required = installed.version.java_version_or_default().major_version;
     let arch = installed.platform.arch;
     let java = match input.fixed_java {
@@ -86,9 +82,10 @@ pub fn prepare(installer: &Installer, input: &PrepareInput<'_>, job: &Job) -> Re
         java: &java.runtime.path,
         game_dir: input.game_dir,
         session: input.session,
-        memory: input.settings.memory,
-        window: input.settings.window,
+        memory: input.settings.memory.clone(),
+        window: input.settings.window.clone(),
         extra_jvm_args: &input.settings.java.extra_args,
+        env: &input.settings.env.vars,
         launcher_name: input.launcher_name,
         launcher_version: input.launcher_version,
     })?;
