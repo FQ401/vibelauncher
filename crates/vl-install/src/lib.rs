@@ -11,10 +11,13 @@
 //! put back as they were. Every installed file gets an [`Origin`] record in
 //! `<instance>/.vibelauncher/resources.json` (see [`origin`]).
 //!
+//! [`mrpack`] installs a Modrinth modpack (`.mrpack`) into a fresh game directory.
+//!
 //! Plans and execution are blocking and are meant to run inside a task.
 
 mod apply;
 mod hashing;
+pub mod mrpack;
 pub mod origin;
 mod plan;
 mod scan;
@@ -26,3 +29,6 @@ pub use plan::{PlanInput, Target, plan, resource_kind};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod mrpack_tests;

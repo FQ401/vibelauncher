@@ -239,3 +239,42 @@ mod tests {
         assert_eq!(MinStability::parse("x"), None);
     }
 }
+
+/// Where a modpack comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+#[non_exhaustive]
+pub enum PackSource {
+    /// An `.mrpack` file on disk.
+    File {
+        /// Path of the file.
+        path: String,
+    },
+    /// A modpack project of a platform.
+    Catalog {
+        /// The platform.
+        #[serde(default)]
+        provider: Provider,
+        /// Project id or slug.
+        project: String,
+        /// A version id to install instead of choosing one.
+        #[serde(default)]
+        version: Option<String>,
+    },
+}
+
+/// Installing a modpack as a new instance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackInstallRequest {
+    /// The pack.
+    pub source: PackSource,
+    /// The name of the new instance; the pack's name when `None`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The group to show the instance in.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// The least stable channel allowed when choosing a catalog version.
+    #[serde(default)]
+    pub min_stability: MinStability,
+}

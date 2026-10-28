@@ -21,6 +21,8 @@ pub enum TaskKind {
     Download,
     /// Installing a catalog project and its dependencies into an instance.
     InstallResource,
+    /// Installing a modpack as a new instance.
+    InstallPack,
     /// Refreshing the version list.
     RefreshVersions,
     /// Signing in to an account.

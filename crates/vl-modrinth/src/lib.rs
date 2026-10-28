@@ -9,6 +9,7 @@
 //! are dropped.
 
 mod endpoints;
+pub mod mrpack;
 pub mod parse;
 
 pub use endpoints::{DEFAULT_BASE, Endpoints, MAX_HASHES_PER_REQUEST};

@@ -24,6 +24,11 @@ vl-resources.workspace = true
 vl-loaders.workspace = true
 vl-platforms.workspace = true
 vl-install.workspace = true
+vl-modrinth.workspace = true
+
+[dev-dependencies]
+zip.workspace = true
+flate2.workspace = true
 
 [lints]
 workspace = true
