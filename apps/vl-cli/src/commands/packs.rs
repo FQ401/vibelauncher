@@ -259,7 +259,7 @@ fn print_info(info: &PackUpdateInfo, out: Out<'_>) -> Result<(), CliError> {
         )?,
         None if info.from_file => writeln!(
             out,
-            "installed from a file; update it with `packs update <instance> --file <pack.mrpack>`"
+            "installed from a file; update it with `packs update <instance> --file <pack file>`"
         )?,
         None => writeln!(out, "up to date")?,
     }

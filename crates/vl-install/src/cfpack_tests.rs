@@ -22,38 +22,38 @@ use crate::cfpack::{BlockReason, CfPack, fetch, install, is_curseforge_pack, rec
 use crate::mrpack::{InstallInput, PackKind};
 use crate::mrpack_tests::{Dir, hex};
 
-const API: &str = "https://cf.test";
+pub(crate) const API: &str = "https://cf.test";
 /// A synthetic key; real keys never appear in tests.
-const KEY: &str = "$2a$10$synthetic-test-key-0000000000";
+pub(crate) const KEY: &str = "$2a$10$synthetic-test-key-0000000000";
 
 /// Serves fixed answers by URL (GET) and by URL plus body (POST); counts every request.
 #[derive(Default)]
-struct Server {
+pub(crate) struct Server {
     get: Mutex<HashMap<String, Vec<u8>>>,
     post: Mutex<HashMap<String, Vec<u8>>>,
     seen: Mutex<Vec<String>>,
 }
 
 impl Server {
-    fn get(&self, url: &str, body: &[u8]) {
+    pub(crate) fn get(&self, url: &str, body: &[u8]) {
         self.get
             .lock()
             .unwrap()
             .insert(url.to_owned(), body.to_vec());
     }
 
-    fn json(&self, url: &str, body: &Value) {
+    pub(crate) fn json(&self, url: &str, body: &Value) {
         self.get(url, &serde_json::to_vec(body).unwrap());
     }
 
-    fn post(&self, url: &str, body: &Value) {
+    pub(crate) fn post(&self, url: &str, body: &Value) {
         self.post
             .lock()
             .unwrap()
             .insert(url.to_owned(), serde_json::to_vec(body).unwrap());
     }
 
-    fn seen(&self) -> Vec<String> {
+    pub(crate) fn seen(&self) -> Vec<String> {
         self.seen.lock().unwrap().clone()
     }
 
@@ -88,7 +88,7 @@ impl HttpTransport for Server {
     }
 }
 
-struct Key(Option<&'static str>);
+pub(crate) struct Key(pub(crate) Option<&'static str>);
 
 impl ApiKeySource for Key {
     fn api_key(&self) -> vl_core::Result<Option<ApiKey>> {
@@ -96,15 +96,15 @@ impl ApiKeySource for Key {
     }
 }
 
-struct World {
-    server: Arc<Server>,
-    client: Client,
-    source: CurseForgeSource,
-    dir: Dir,
+pub(crate) struct World {
+    pub(crate) server: Arc<Server>,
+    pub(crate) client: Client,
+    pub(crate) source: CurseForgeSource,
+    pub(crate) dir: Dir,
 }
 
 impl World {
-    fn new(key: Option<&'static str>) -> Self {
+    pub(crate) fn new(key: Option<&'static str>) -> Self {
         let server = Arc::new(Server::default());
         let client = Client::with_transport(NetConfig::new("0.0.0"), server.clone());
         let source = CurseForgeSource::new(
@@ -123,11 +123,11 @@ impl World {
         }
     }
 
-    fn game(&self) -> PathBuf {
+    pub(crate) fn game(&self) -> PathBuf {
         self.dir.path().join("game")
     }
 
-    fn input<'a>(
+    pub(crate) fn input<'a>(
         &'a self,
         game: &'a Path,
         staging: &'a Path,
@@ -142,12 +142,12 @@ impl World {
     }
 }
 
-fn sha1(data: &[u8]) -> String {
+pub(crate) fn sha1(data: &[u8]) -> String {
     hex(&Sha1::digest(data))
 }
 
 /// A `POST /v1/mods/files` entry.
-fn file(id: u64, mod_id: u64, name: &str, data: &[u8], url: Option<&str>) -> Value {
+pub(crate) fn file(id: u64, mod_id: u64, name: &str, data: &[u8], url: Option<&str>) -> Value {
     json!({
         "id": id, "modId": mod_id, "displayName": format!("{name} file"), "fileName": name,
         "fileLength": data.len(), "downloadUrl": url,
@@ -156,7 +156,7 @@ fn file(id: u64, mod_id: u64, name: &str, data: &[u8], url: Option<&str>) -> Val
 }
 
 /// A `POST /v1/mods` entry.
-fn project(id: u64, slug: &str, class: u64) -> Value {
+pub(crate) fn project(id: u64, slug: &str, class: u64) -> Value {
     json!({
         "id": id, "name": format!("Project {slug}"), "slug": slug, "classId": class,
         "links": {"websiteUrl": format!("https://www.curseforge.com/minecraft/x/{slug}")}
@@ -164,7 +164,7 @@ fn project(id: u64, slug: &str, class: u64) -> Value {
 }
 
 /// A pack zip with the manifest and `(name, bytes, unix mode)` entries; mode 1 is a symlink.
-fn archive(path: &Path, manifest: &Value, entries: &[(&str, &[u8], u32)]) {
+pub(crate) fn archive(path: &Path, manifest: &Value, entries: &[(&str, &[u8], u32)]) {
     let mut w = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
     let plain = zip::write::SimpleFileOptions::default();
     w.start_file("manifest.json", plain).unwrap();
@@ -181,7 +181,7 @@ fn archive(path: &Path, manifest: &Value, entries: &[(&str, &[u8], u32)]) {
     w.finish().unwrap();
 }
 
-fn manifest(files: &[(u64, u64, bool)], loader: &str) -> Value {
+pub(crate) fn manifest(files: &[(u64, u64, bool)], loader: &str) -> Value {
     let files: Vec<Value> = files
         .iter()
         .map(|(p, f, r)| json!({"projectID": p, "fileID": f, "required": r}))

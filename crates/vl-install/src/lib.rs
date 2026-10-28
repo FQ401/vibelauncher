@@ -24,12 +24,14 @@
 //! download links, everything else is carried in `overrides/`.
 //!
 //! [`mrpack_update`] updates an installed modpack to another version, keeping what the user
-//! deleted, disabled, changed or added.
+//! deleted, disabled, changed or added; [`cfpack_update`] gives it the files of a CurseForge
+//! pack in the same shape.
 //!
 //! Plans and execution are blocking and are meant to run inside a task.
 
 mod apply;
 pub mod cfpack;
+pub mod cfpack_update;
 mod hashing;
 pub mod mrpack;
 pub mod mrpack_export;
@@ -54,6 +56,9 @@ mod mrpack_tests;
 
 #[cfg(test)]
 mod cfpack_tests;
+
+#[cfg(test)]
+mod cfpack_update_tests;
 
 #[cfg(test)]
 mod mrpack_update_tests;
