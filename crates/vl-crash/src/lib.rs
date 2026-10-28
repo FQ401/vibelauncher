@@ -69,6 +69,18 @@ impl Level {
     }
 }
 
+/// What kind of problem the logs point at; decides whether searching the mods can help.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cause {
+    /// A mod (or a mod combination) is the likely cause: bisection can find it.
+    ModLikely,
+    /// The setup is at fault: wrong Java, not enough memory, a graphics driver crash, damaged
+    /// game files. Removing mods does not help.
+    Environment,
+    /// Nothing points anywhere.
+    Unknown,
+}
+
 /// A line of the logs that supports the diagnosis.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceLine {
@@ -85,6 +97,11 @@ pub struct Diagnosis {
     pub level: Level,
     /// The id of the matched signature (level 1 only).
     pub signature: Option<String>,
+    /// The kind of problem.
+    pub cause: Cause,
+    /// Whether the mod loader itself named the problem (its incompatibility or loading error
+    /// message); then no search for the culprit is needed.
+    pub loader_reported: bool,
     /// Mod ids involved: named by the signature, or found in the stack.
     pub culprit_mods: Vec<String>,
     /// Localization key of the explanation.
@@ -94,6 +111,19 @@ pub struct Diagnosis {
     /// Values for the message placeholders (`dependency`, `java_major`, ...).
     pub args: BTreeMap<String, String>,
     pub evidence_lines: Vec<EvidenceLine>,
+}
+
+/// Every localization key [`diagnose`] can return, signature keys and stack keys alike.
+pub fn localization_keys() -> Vec<String> {
+    let mut keys: Vec<String> = Signatures::builtin()
+        .keys()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    keys.extend(stack::KEYS.iter().map(|k| (*k).to_owned()));
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
 /// Diagnoses a failed launch with the built-in signature set.
@@ -134,6 +164,8 @@ fn hit_to_diagnosis(hit: signatures::Hit) -> Diagnosis {
     Diagnosis {
         level: Level::Signature,
         signature: Some(hit.id),
+        cause: hit.cause,
+        loader_reported: hit.loader_reported,
         culprit_mods: hit.mods,
         message_key: hit.message_key,
         action_key: hit.action_key,

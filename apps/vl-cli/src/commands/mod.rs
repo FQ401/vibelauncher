@@ -3,6 +3,7 @@
 mod accounts;
 mod bisect;
 mod catalog;
+mod diagnose;
 mod info;
 mod instances;
 mod java;
@@ -26,6 +27,7 @@ commands:
                                       create an instance (newest stable loader by default)
   instances set-loader <instance> <fabric|quilt|neoforge|forge|none> [--loader-version <v>]
                                       change or remove an instance's loader
+  instances diagnose <instance>       analyse the newest logs of an instance (no launch)
   instances mods list <instance> [--kind <k>]
   instances mods enable|disable|remove <instance> <file> [--kind <k>]
   instances mods add <instance> <path> [--kind <k>]

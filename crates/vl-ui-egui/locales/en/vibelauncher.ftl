@@ -49,3 +49,37 @@ task-java-scan = Looking for Java
 task-java-download = Downloading Java
 task-other = Task
 task-with-subject = { $task }: { $subject }
+
+## Crash diagnosis (messages and suggested actions)
+crash-wrong-java = The game needs Java { $java_major }.
+crash-corrupt-files = Game files are damaged or incomplete.
+crash-native-memory = The system could not give the game the memory it asked for.
+crash-out-of-memory = The game ran out of memory.
+crash-graphics-driver = The graphics driver crashed the game ({ $frame }).
+crash-jvm-crash = The Java virtual machine crashed ({ $frame }).
+crash-wrong-game-version = { $mod } does not support this Minecraft version (needs { $expected }, found { $found }).
+crash-wrong-loader-version = { $mod } does not support this mod loader version (needs { $expected }, found { $found }).
+crash-wrong-dependency-version = { $mod } needs { $dependency } { $expected }, but { $found } is installed.
+crash-missing-dependency = { $mod } needs { $dependency }, which is not installed.
+crash-duplicate-mod = The same mod is installed more than once ({ $mod }).
+crash-entrypoint-failure = The mod loader reports that { $mod } failed to start.
+crash-loader-error = The mod loader reports a problem with the installed mods.
+crash-mixin-conflict = A mod failed to apply its changes to the game; mods may conflict.
+crash-suspect-single = The crash possibly involves one mod.
+crash-suspect-several = The crash involves several mods; the cause is not clear.
+crash-undetermined = The cause of the crash could not be determined.
+
+crash-action-select-java = Choose a suitable Java
+crash-action-verify-files = Check and repair the game files
+crash-action-lower-memory = Lower the memory limit
+crash-action-raise-memory = Raise the memory limit
+crash-action-update-driver = Update the graphics driver
+crash-action-export-report = Export the crash report
+crash-action-change-game-version = Change the game version
+crash-action-change-loader-version = Change the mod loader version
+crash-action-update-dependency = Update { $dependency }
+crash-action-install-dependency = Install { $dependency }
+crash-action-remove-duplicate = Remove the duplicate mod
+crash-action-review-loader-message = Read the mod loader message
+crash-action-disable-mod = Disable the mod
+crash-action-find-culprit = Find the mod that causes the crash

@@ -5,6 +5,10 @@
 #   captures.
 # - Capture `mod` names a mod id (it ends up in `culprit_mods`); any other named capture becomes a
 #   message argument (first hit wins).
+# - `cause`: `mod_likely` (bisection can help), `environment` (Java, memory, driver, damaged game
+#   files: removing mods does not help) or `unknown` (the default).
+# - `loader_reported = true`: the mod loader itself named the problem, so no culprit search is
+#   needed.
 # - `sources` restricts where the signature is looked for: `latest_log`, `crash_report`, `hs_err`.
 #
 # The patterns are written from the behaviour of the loaders' messages. The ideas follow the
@@ -13,6 +17,7 @@
 
 [[signature]]
 id = "wrong_java"
+cause = "environment"
 message_key = "crash-wrong-java"
 action_key = "crash-action-select-java"
 triggers = [
@@ -25,7 +30,20 @@ collect = [
 ]
 
 [[signature]]
+id = "corrupt_files"
+cause = "environment"
+message_key = "crash-corrupt-files"
+action_key = "crash-action-verify-files"
+triggers = [
+  'Invalid or corrupt jarfile',
+  'Error: Could not find or load main class',
+  'java\.util\.zip\.ZipException: (?:zip END header not found|error in opening zip file|invalid (?:distance|code|stored block|block type|entry|literal)[^\n]*)',
+  'java\.io\.EOFException: Unexpected end of ZLIB input stream',
+]
+
+[[signature]]
 id = "native_memory"
+cause = "environment"
 message_key = "crash-native-memory"
 action_key = "crash-action-lower-memory"
 triggers = [
@@ -36,12 +54,24 @@ triggers = [
 
 [[signature]]
 id = "out_of_memory"
+cause = "environment"
 message_key = "crash-out-of-memory"
 action_key = "crash-action-raise-memory"
 triggers = ['OutOfMemoryError(?:: (?P<kind>[^\n]*))?']
 
 [[signature]]
+id = "graphics_driver"
+cause = "environment"
+message_key = "crash-graphics-driver"
+action_key = "crash-action-update-driver"
+sources = ["hs_err"]
+triggers = [
+  '(?i)^#\s+C\s+\[(?P<frame>(?:nvoglv|nvwgf|nvd3d|nvlddmkm|atio|atig|aticfx|amdxx|amdvlk|amdocl|ig[0-9a-z]*icd|igd[0-9a-z]*|libnvidia|libGLX_|libGL\.|libEGL|iris_dri|radeonsi_dri|swrast_dri|vulkan-1|libvulkan)[^\]+]*)',
+]
+
+[[signature]]
 id = "jvm_crash"
+cause = "unknown"
 message_key = "crash-jvm-crash"
 action_key = "crash-action-export-report"
 sources = ["hs_err"]
@@ -55,6 +85,8 @@ collect = ['^#\s+[CVjJA]\s+\[(?P<frame>[^\]+]+)']
 
 [[signature]]
 id = "wrong_game_version"
+cause = "mod_likely"
+loader_reported = true
 message_key = "crash-wrong-game-version"
 action_key = "crash-action-change-game-version"
 triggers = [
@@ -65,6 +97,8 @@ triggers = [
 
 [[signature]]
 id = "wrong_loader_version"
+cause = "mod_likely"
+loader_reported = true
 message_key = "crash-wrong-loader-version"
 action_key = "crash-action-change-loader-version"
 triggers = [
@@ -73,17 +107,38 @@ triggers = [
 ]
 
 [[signature]]
+id = "wrong_dependency_version"
+cause = "mod_likely"
+loader_reported = true
+message_key = "crash-wrong-dependency-version"
+action_key = "crash-action-update-dependency"
+triggers = [
+  # Fabric and Quilt: Mod 'Name' (id) 1.0 requires version 0.5 or later of 'Dep' (dep), but only the wrong version is present: 0.4!
+  '\((?P<mod>[A-Za-z0-9_.-]+)\)[^\n]*requires (?:version )?(?P<expected>[^\n]*?) of (?:[^\n(]*\()?(?P<dependency>[A-Za-z0-9_.-]+)\)?,? but only the wrong version is present: (?P<found>[^\n!]+)',
+  # Quilt: Mod id 1.0 requires version 0.5 or later of dep, but the installed version is 0.4
+  '(?i)\bmod \x27?(?P<mod>[a-z0-9_.-]+)\x27? (?:[0-9][^\n ]* )?requires (?:version )?(?P<expected>[^\n]*?) of (?:mod )?\x27?(?P<dependency>[a-z0-9_.-]+)\x27?,? but (?:the )?(?:installed|present|found) version is (?P<found>[^\n!]+)',
+  # Forge and NeoForge: Mod ID: 'dep', Requested by: 'mod', Expected range: '[2,)', Actual version: '1.0'
+  'Mod ID: \x27(?P<dependency>[^\x27]+)\x27, Requested by: \x27(?P<mod>[^\x27]+)\x27, Expected range: \x27(?P<expected>[^\x27]*)\x27, Actual version: \x27(?P<found>[^\x27\[][^\x27]*)\x27',
+]
+
+[[signature]]
 id = "missing_dependency"
+cause = "mod_likely"
+loader_reported = true
 message_key = "crash-missing-dependency"
 action_key = "crash-action-install-dependency"
 triggers = [
   '\((?P<mod>[A-Za-z0-9_.-]+)\)[^\n]*requires [^\n]*? of (?:[^\n(]*\()?(?P<dependency>[A-Za-z0-9_.-]+)\)?[^\n]*which is missing',
   'Mod ID: \x27(?P<dependency>[^\x27]+)\x27, Requested by: \x27(?P<mod>[^\x27]+)\x27, Expected range: \x27[^\x27]*\x27, Actual version: \x27\[MISSING\]\x27',
+  # Quilt: Mod id 1.0 requires any version of dep, which is missing
+  '(?i)\bmod \x27?(?P<mod>[a-z0-9_.-]+)\x27? (?:[0-9][^\n ]* )?requires [^\n]*? of (?:mod )?\x27?(?P<dependency>[a-z0-9_.-]+)\x27?,? which is (?:missing|not installed)',
   'Could not find required mod: (?P<mod>[A-Za-z0-9_.-]+) requires \{(?P<dependency>[A-Za-z0-9_.-]+)',
 ]
 
 [[signature]]
 id = "duplicate_mod"
+cause = "mod_likely"
+loader_reported = true
 message_key = "crash-duplicate-mod"
 action_key = "crash-action-remove-duplicate"
 triggers = [
@@ -96,7 +151,41 @@ collect = [
 ]
 
 [[signature]]
+id = "entrypoint_failure"
+cause = "mod_likely"
+loader_reported = true
+message_key = "crash-entrypoint-failure"
+action_key = "crash-action-disable-mod"
+triggers = [
+  # Fabric and Quilt name the mod that provides the failing entrypoint.
+  'Could not execute entrypoint stage \x27[^\x27]*\x27 due to errors, provided by \x27(?P<mod>[^\x27]+)\x27',
+]
+
+[[signature]]
+id = "loader_error"
+cause = "mod_likely"
+loader_reported = true
+message_key = "crash-loader-error"
+action_key = "crash-action-review-loader-message"
+triggers = [
+  # Fabric and Quilt: the "Incompatible mods found!" window and its exception.
+  'Incompatible mods found!',
+  'Some of your mods are incompatible with the game or each other',
+  'ModResolutionException',
+  # Forge and NeoForge: the mod loading error screen.
+  'fml\.(?:ModLoadingException|LoadingFailedException)',
+  'Loading errors encountered',
+  'Missing or unsupported mandatory dependencies',
+  'Failure message: ',
+]
+collect = [
+  'Failure message: (?P<detail>[^\n]*)',
+  'Mod File: (?P<file>[^\n]+)',
+]
+
+[[signature]]
 id = "mixin_conflict"
+cause = "mod_likely"
 message_key = "crash-mixin-conflict"
 action_key = "crash-action-disable-mod"
 triggers = [

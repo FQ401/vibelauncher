@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::crash::CrashDiagnosis;
 use crate::ids::{AccountId, InstanceId};
 use crate::instance::InstanceState;
 
@@ -61,6 +62,13 @@ pub enum LaunchCommand {
         /// The instance.
         instance: InstanceId,
     },
+    /// Reads the instance's newest logs (`latest.log`, the newest crash report and JVM error
+    /// log, the launcher's copy of the last run's output) and diagnoses them, without launching
+    /// → `Response::Diagnosis`.
+    Diagnose {
+        /// The instance.
+        instance: InstanceId,
+    },
 }
 
 /// Game process lifecycle.
@@ -81,5 +89,12 @@ pub enum LaunchEvent {
         instance: InstanceId,
         /// How it ended.
         exit: GameExit,
+    },
+    /// The logs of a crashed run were analysed; follows `Exited` of the same run.
+    Diagnosed {
+        /// The instance.
+        instance: InstanceId,
+        /// The diagnosis.
+        diagnosis: CrashDiagnosis,
     },
 }

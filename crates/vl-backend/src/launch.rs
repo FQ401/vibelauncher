@@ -116,13 +116,17 @@ impl Service {
 }
 
 pub(crate) fn handle(backend: &Backend, command: LaunchCommand, replier: Replier) {
-    replier.send(match command {
+    let result = match command {
         LaunchCommand::Launch(request) => launch(backend, request),
         LaunchCommand::Stop { instance } => stop(&backend.launch, &instance),
+        LaunchCommand::Diagnose { instance } => {
+            return crate::crash::handle(backend, instance, replier);
+        }
         other => Err(Error::unsupported(format!(
             "vl-backend does not handle launch {other:?}"
         ))),
-    });
+    };
+    replier.send(result);
 }
 
 fn stop(service: &Service, instance: &InstanceId) -> vl_core::Result<Response> {
@@ -287,6 +291,8 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
     let exit_service = service.clone();
     let instances = plan.instances.clone();
     let exit_id = id.clone();
+    let exit_game_dir = plan.game_dir.clone();
+    let exit_log_dir = plan.log_dir.clone();
     let mut options = SpawnOptions::new(plan.settings.console.max_lines as usize);
     options.log_dir = Some(plan.log_dir.clone());
     let game = process::spawn(
@@ -308,12 +314,25 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
                     format!("cannot record the play time: {}", e.message),
                 );
             }
+            let crashed = exit.crashed && !exit.stopped_by_user;
+            let mut sources =
+                crate::crash::Sources::newest(exit_game_dir.clone(), exit_log_dir.clone());
+            sources.crash_report = exit.crash_report.clone();
+            sources.hs_err = exit.hs_err.clone();
+            sources.run_log = exit.log_file.clone();
             exit_service
                 .events
                 .publish(&Event::Launch(LaunchEvent::Exited {
                     instance: exit_id.clone(),
                     exit,
                 }));
+            if crashed {
+                crate::crash::spawn_after_exit(
+                    Arc::clone(&exit_service.events),
+                    exit_id.clone(),
+                    sources,
+                );
+            }
             exit_service.state(&exit_id, InstanceState::Stopped);
         },
     )?;
