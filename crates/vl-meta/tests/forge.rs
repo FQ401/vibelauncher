@@ -142,7 +142,7 @@ fn spec0() -> Value {
             },
             {
                 "jar": "org.example:patcher:1.0",
-                "classpath": ["org.example:patcher:1.0"],
+                "classpath": ["org.example:dep:1.0"],
                 "args": ["--clean", "{MC_SLIM}", "--output", "{PATCHED}", "--apply", "{BINPATCH}"]
             }
         ],
@@ -182,6 +182,15 @@ fn plans_a_spec_0_profile_for_the_client() {
     );
     assert_eq!(steps[1].args[5], "/d/forge/data/client.lzma");
     assert_eq!(
+        steps[1].classpath,
+        [
+            "/d/libraries/org/example/patcher/1.0/patcher-1.0.jar",
+            "/d/libraries/org/example/dep/1.0/dep-1.0.jar"
+        ],
+        "the jar a profile leaves out of the class path comes first"
+    );
+    assert_eq!(steps[0].classpath.len(), 1);
+    assert_eq!(
         p.installer_files(Side::Client).unwrap(),
         [
             "data/client.lzma",
@@ -216,6 +225,7 @@ fn reads_the_launch_profile_and_its_local_libraries() {
         json!([
             library("net.minecraftforge:fmlloader:1.20.1-47.3.0", "net/minecraftforge/fmlloader/1.20.1-47.3.0/fmlloader-1.20.1-47.3.0.jar", "https://repo.example.test/fml.jar"),
             library("net.minecraftforge:forge:1.20.1-47.3.0:client", "net/minecraftforge/forge/1.20.1-47.3.0/forge-1.20.1-47.3.0-client.jar", ""),
+            {"name": "org.example:plain:1.0"},
             {"name": "org.example:plain:1.0"}
         ]),
     );
@@ -227,6 +237,11 @@ fn reads_the_launch_profile_and_its_local_libraries() {
         p.arguments.jvm[0].values,
         ["-DignoreList=bootstrap,client-extra,forge-,1.20.1.jar"]
     );
+    assert_eq!(
+        p.libraries.len(),
+        3,
+        "an identical repeated entry is dropped"
+    );
     let local = local_libraries(&p.libraries).unwrap();
     assert_eq!(local.len(), 1);
     assert_eq!(
@@ -234,6 +249,17 @@ fn reads_the_launch_profile_and_its_local_libraries() {
         "net/minecraftforge/forge/1.20.1-47.3.0/forge-1.20.1-47.3.0-client.jar"
     );
     assert_eq!(local[0].url, None);
+
+    // Repeated entries that differ are still damaged.
+    let repeated = version_json(
+        "org.example.Main",
+        json!([]),
+        json!([{"name": "org.example:plain:1.0"}, {"name": "org.example:plain:2.0"}]),
+    );
+    assert_eq!(
+        profile("1.20.1", "47.3.0", &repeated).unwrap_err().kind,
+        ErrorKind::Integrity
+    );
 
     // A profile for another game version is damaged.
     assert_eq!(

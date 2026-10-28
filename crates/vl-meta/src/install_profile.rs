@@ -13,7 +13,8 @@
 //!
 //! [`InstallProfile::parse`] checks the document (hostile input: sizes and counts are capped,
 //! coordinates and in-jar paths must be safe). [`InstallProfile::plan`] resolves the processors
-//! of one side into ready argument lists: `{NAME}` is a data value or one of the built-in
+//! of one side into ready argument lists (the class path always holds the processor's jar):
+//! `{NAME}` is a data value or one of the built-in
 //! values of [`PlanContext`], `[coordinate]` is a path below the library directory. Running them
 //! is the native layer's job. Spec 0 (Forge 1.13–1.16) has the same shape; its processors have no
 //! `sides` and run for both.
@@ -24,7 +25,7 @@
 //! rewritten to that. Libraries of the launch profile without a download address
 //! ([`local_libraries`]) come from the installer's `maven/` directory or from the processors.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -33,7 +34,7 @@ use vl_core::error::{Error, ErrorKind, Result};
 
 use crate::loader::{LoaderProfile, check_coordinate, maven_path};
 use crate::manifest::is_sha1;
-use crate::version::LibraryEntry;
+use crate::version::{LibraryEntry, MAX_VERSION_BYTES};
 
 /// The largest `install_profile.json` accepted.
 pub const MAX_INSTALL_PROFILE_BYTES: usize = 8 * 1024 * 1024;
@@ -194,7 +195,7 @@ pub struct PlanContext {
 pub struct ProcessorStep {
     /// The jar whose manifest names the main class.
     pub jar: String,
-    /// The class path, the jar included.
+    /// The class path, the jar included (first, when the profile leaves it out).
     pub classpath: Vec<String>,
     /// The resolved arguments.
     pub args: Vec<String>,
@@ -344,13 +345,19 @@ impl InstallProfile {
                         Ok((file, hash))
                     })
                     .collect::<Result<Vec<_>>>()?;
+                let jar = library_file(ctx, &p.jar)?;
+                // Forge profiles leave the jar out of its class path; the installer adds it.
+                let mut classpath: Vec<String> = p
+                    .classpath
+                    .iter()
+                    .map(|c| library_file(ctx, c))
+                    .collect::<Result<_>>()?;
+                if !classpath.contains(&jar) {
+                    classpath.insert(0, jar.clone());
+                }
                 Ok(ProcessorStep {
-                    jar: library_file(ctx, &p.jar)?,
-                    classpath: p
-                        .classpath
-                        .iter()
-                        .map(|c| library_file(ctx, c))
-                        .collect::<Result<_>>()?,
+                    jar,
+                    classpath,
                     args,
                     outputs,
                 })
@@ -428,7 +435,9 @@ pub fn launch_profile(
     loader_version: &str,
     version_json: &[u8],
 ) -> Result<LoaderProfile> {
-    let mut profile = LoaderProfile::normalize(kind, game, loader_version, version_json)?;
+    let deduplicated = without_repeated_libraries(version_json)?;
+    let bytes = deduplicated.as_deref().unwrap_or(version_json);
+    let mut profile = LoaderProfile::normalize(kind, game, loader_version, bytes)?;
     let vanilla_jar = format!("{}.jar", profile.inherits_from);
     for arg in &mut profile.arguments.jvm {
         for value in &mut arg.values {
@@ -438,6 +447,38 @@ pub fn launch_profile(
         }
     }
     Ok(profile)
+}
+
+/// Some installers list a library twice with identical entries; the copy is dropped. Returns
+/// the rewritten document, or `None` when nothing repeats. Entries that differ are kept (and
+/// rejected later as duplicates).
+fn without_repeated_libraries(version_json: &[u8]) -> Result<Option<Vec<u8>>> {
+    if version_json.len() > MAX_VERSION_BYTES {
+        return Err(damaged("version JSON is too large"));
+    }
+    let Ok(mut doc) = serde_json::from_slice::<Value>(version_json) else {
+        // The normal parser reports the error.
+        return Ok(None);
+    };
+    let Some(libraries) = doc.get_mut("libraries").and_then(Value::as_array_mut) else {
+        return Ok(None);
+    };
+    let before = libraries.len();
+    let mut seen = HashSet::with_capacity(before);
+    let mut kept: Vec<Value> = Vec::with_capacity(before);
+    for lib in libraries.drain(..) {
+        if seen.insert(lib.to_string()) {
+            kept.push(lib);
+        }
+    }
+    let changed = kept.len() != before;
+    *libraries = kept;
+    if !changed {
+        return Ok(None);
+    }
+    serde_json::to_vec(&doc)
+        .map(Some)
+        .map_err(|e| damaged(format!("version JSON: {e}")))
 }
 
 /// The libraries of a launch profile that name a file but no download address: the installer
