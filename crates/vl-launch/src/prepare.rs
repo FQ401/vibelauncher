@@ -10,13 +10,10 @@ use vl_meta::loader::LoaderProfile;
 
 use crate::command::{self, CommandInput, CommandLine};
 use crate::install::{Installed, Installer};
-use crate::java::{self, JavaChoice};
+use crate::java::{self, JavaChoice, MAX_HEAP_32_BIT_MIB};
 use crate::job::Job;
 use crate::memory;
 use crate::session::LaunchSession;
-
-/// The largest heap a 32-bit JVM starts with reliably.
-const MAX_HEAP_32_BIT_MIB: u32 = 1024;
 
 /// What a launch needs from the caller.
 #[derive(Debug, Clone)]
@@ -71,7 +68,13 @@ pub fn prepare(installer: &Installer, input: &PrepareInput<'_>, job: &Job) -> Re
     let arch = installed.platform.arch;
     let java = match input.fixed_java {
         Some(runtime) => java::check_fixed(runtime, required, arch)?,
-        None => java::choose(input.runtimes, required, max_java_major(&installed), arch)?,
+        None => java::choose(
+            input.runtimes,
+            required,
+            max_java_major(&installed),
+            arch,
+            input.settings.memory.max_mib,
+        )?,
     };
     let mut warnings = installed.warnings.clone();
     if java.runtime.arch != arch {

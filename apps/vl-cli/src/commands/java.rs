@@ -30,8 +30,30 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
                 .map_err(|_| CliError::from("java install: the major version must be a number"))?;
             install(facade, major, out)
         }
+        ["pick", major] | ["pick", major, _] => {
+            let major: u32 = major
+                .parse()
+                .map_err(|_| CliError::from("java pick: the major version must be a number"))?;
+            let heap: u32 = match args {
+                [_, _, heap] => heap
+                    .parse()
+                    .map_err(|_| CliError::from("java pick: the heap must be a number of MiB"))?,
+                _ => 4096,
+            };
+            pick(facade, major, heap, out)
+        }
         _ => Err(USAGE.into()),
     }
+}
+
+/// Shows which installed Java a launch would choose for a game that needs `major`.
+fn pick(facade: &dyn Facade, major: u32, heap: u32, out: Out<'_>) -> Result<(), CliError> {
+    let javas = list(facade)?;
+    match vl_backend::describe_java_pick(&javas, major, heap) {
+        Ok(reason) => writeln!(out, "{reason}")?,
+        Err(e) => writeln!(out, "none ({e}): a managed Java would be downloaded")?,
+    }
+    Ok(())
 }
 
 fn list(facade: &dyn Facade) -> Result<Vec<JavaRuntime>, CliError> {
