@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::ids::InstanceId;
-use crate::install::{InstallRequest, PackInstallRequest, UpdateCheckRequest, UpdateRequest};
+use crate::install::{
+    InstallRequest, PackInstallRequest, PackUpdateRequest, UpdateCheckRequest, UpdateRequest,
+};
 
 /// The most results one search page may ask for.
 pub const MAX_SEARCH_LIMIT: u32 = 100;
@@ -491,6 +493,17 @@ pub enum CatalogCommand {
     /// Updates files as a task → `Response::Task`. All files are replaced or none; enabled and
     /// disabled files stay so.
     Update(UpdateRequest),
+    /// Looks for a newer version of the modpack an instance was installed from
+    /// → `Response::PackUpdate`.
+    CheckPackUpdate(PackUpdateRequest),
+    /// Works out what updating the modpack would change, comparing the old and the new pack
+    /// with the folder as it is → `Response::PackChanges`. The new pack is downloaded.
+    PlanPackUpdate(PackUpdateRequest),
+    /// Updates the modpack as a task → `Response::Task`. Files the user deleted, disabled or
+    /// changed are kept (unless the request resets), changed configs get the new version beside
+    /// them, and every touched file is backed up under `.vibelauncher/backup/`; on failure or
+    /// cancel the instance is put back as it was.
+    UpdatePack(PackUpdateRequest),
     /// Finds the origin of files added by hand (by hash) and records it → `Response::Identified`.
     IdentifyMods {
         /// The instance.

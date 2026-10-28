@@ -25,10 +25,10 @@ use crate::mrpack::{InstallInput, Pack, PackRecord, fetch, install};
 use crate::mrpack_origins::resolve;
 use crate::origin::OriginStore;
 
-struct Dir(PathBuf);
+pub(crate) struct Dir(PathBuf);
 
 impl Dir {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         static N: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "vl-mrpack-{}-{}",
@@ -40,7 +40,7 @@ impl Dir {
         Self(dir)
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -51,7 +51,7 @@ impl Drop for Dir {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -68,7 +68,7 @@ impl HttpTransport for Files {
     }
 }
 
-fn client(files: &[(&str, &[u8])]) -> Client {
+pub(crate) fn client(files: &[(&str, &[u8])]) -> Client {
     let map = files
         .iter()
         .map(|(u, b)| ((*u).to_owned(), b.to_vec()))
@@ -77,7 +77,7 @@ fn client(files: &[(&str, &[u8])]) -> Client {
 }
 
 /// An index entry for `data` at `path`, downloadable from `urls`.
-fn entry(path: &str, data: &[u8], urls: &[&str], client_env: &str) -> String {
+pub(crate) fn entry(path: &str, data: &[u8], urls: &[&str], client_env: &str) -> String {
     let urls: Vec<String> = urls.iter().map(|u| format!("\"{u}\"")).collect();
     format!(
         r#"{{"path":"{path}","hashes":{{"sha1":"{}","sha512":"{}"}},"env":{{"client":"{client_env}","server":"required"}},"downloads":[{}],"fileSize":{}}}"#,
@@ -96,7 +96,7 @@ fn index(files: &[String]) -> String {
 }
 
 /// An archive with the index and the given `(name, bytes, unix mode)` entries.
-fn archive(path: &Path, index: &str, entries: &[(&str, &[u8], u32)]) {
+pub(crate) fn archive(path: &Path, index: &str, entries: &[(&str, &[u8], u32)]) {
     let mut w = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
     let plain = zip::write::SimpleFileOptions::default();
     w.start_file("modrinth.index.json", plain).unwrap();
@@ -113,7 +113,7 @@ fn archive(path: &Path, index: &str, entries: &[(&str, &[u8], u32)]) {
     w.finish().unwrap();
 }
 
-const CDN: &str = "https://cdn.modrinth.com/data/";
+pub(crate) const CDN: &str = "https://cdn.modrinth.com/data/";
 
 struct Setup {
     dir: Dir,
@@ -309,12 +309,12 @@ fn a_cancelled_install_reports_cancelled() {
 }
 
 /// A catalog with one modpack project whose versions carry `.mrpack` files.
-struct Packs {
-    versions: Vec<ProjectVersion>,
-    kind: ProjectType,
+pub(crate) struct Packs {
+    pub(crate) versions: Vec<ProjectVersion>,
+    pub(crate) kind: ProjectType,
 }
 
-fn pack_version(id: &str, channel: ReleaseChannel, bytes: &[u8]) -> ProjectVersion {
+pub(crate) fn pack_version(id: &str, channel: ReleaseChannel, bytes: &[u8]) -> ProjectVersion {
     ProjectVersion {
         id: id.into(),
         project_id: "P1".into(),

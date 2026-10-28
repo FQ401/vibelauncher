@@ -19,7 +19,7 @@ pub use channel::{EventBus, EventStream, Replier, Reply, reply_channel};
 use crate::account::{Account, AccountCommand, AccountEvent};
 use crate::catalog::{CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage};
 use crate::ids::TaskId;
-use crate::install::{IdentifyReport, InstallPlan, UpdateReport};
+use crate::install::{IdentifyReport, InstallPlan, PackChanges, PackUpdateInfo, UpdateReport};
 use crate::instance::{InstanceCommand, InstanceEvent, InstanceSummary};
 use crate::java::{JavaCommand, JavaEvent, JavaRuntime};
 use crate::launch::{LaunchCommand, LaunchEvent};
@@ -121,6 +121,10 @@ pub enum Response {
     UpdateReport(UpdateReport),
     /// The result of identifying files.
     Identified(IdentifyReport),
+    /// The result of checking a modpack for a newer version.
+    PackUpdate(PackUpdateInfo),
+    /// What updating a modpack would change.
+    PackChanges(PackChanges),
 }
 
 /// Something that happened in the launcher.

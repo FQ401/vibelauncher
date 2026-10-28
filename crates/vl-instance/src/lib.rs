@@ -194,6 +194,26 @@ impl Instances {
         Ok(summary(id, &cfg))
     }
 
+    /// Changes the game version and replaces the loader (`None` makes the instance vanilla)
+    /// in one write.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`InstanceConfig::set_game_version`], [`InstanceConfig::set_loader`] and of
+    /// loading and writing the config; nothing is written on error.
+    pub fn set_version(
+        &self,
+        id: &InstanceId,
+        game_version: &str,
+        loader: Option<&vl_core::instance::LoaderRequest>,
+    ) -> vl_core::Result<InstanceSummary> {
+        let mut cfg = self.load(id)?;
+        cfg.set_game_version(game_version)?;
+        cfg.set_loader(loader)?;
+        write_config(&self.dir(id)?.join(CONFIG_FILE), &cfg)?;
+        Ok(summary(id, &cfg))
+    }
+
     /// Moves an instance into `.trash/`; nothing is erased. Returns where it went.
     pub fn delete(&self, id: &InstanceId) -> vl_core::Result<PathBuf> {
         let dir = self.dir(id)?;

@@ -43,7 +43,7 @@ pub const MAX_OVERRIDE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Largest `.mrpack` fetched from a catalog.
 pub const MAX_PACK_BYTES: u64 = 1024 * 1024 * 1024;
 
-fn io(path: &Path, e: &std::io::Error) -> Error {
+pub(crate) fn io(path: &Path, e: &std::io::Error) -> Error {
     Error::new(ErrorKind::Io, format!("{}: {e}", path.display()))
 }
 
@@ -154,6 +154,89 @@ impl Pack {
     pub fn override_count(&self) -> usize {
         self.overrides.len()
     }
+
+    /// Archive entry of each override path as installed: `client-overrides/` wins over
+    /// `overrides/`, a later copy over an earlier one.
+    fn final_overrides(&self) -> std::collections::BTreeMap<&str, usize> {
+        self.overrides
+            .iter()
+            .map(|o| (o.rel.as_str(), o.index))
+            .collect()
+    }
+
+    /// The SHA-1 of every override file as an install writes it, by path.
+    ///
+    /// # Errors
+    ///
+    /// `Io` or `Integrity` when the archive cannot be read, `Integrity` past the byte budget.
+    pub fn override_hashes(&self) -> Result<Vec<OverrideRecord>> {
+        let file = File::open(&self.path).map_err(|e| io(&self.path, &e))?;
+        let mut archive =
+            ZipArchive::new(file).map_err(|e| bad(format!("not a zip archive: {e}")))?;
+        let mut budget = MAX_OVERRIDE_BYTES;
+        let mut out = Vec::new();
+        for (rel, index) in self.final_overrides() {
+            let entry = archive
+                .by_index(index)
+                .map_err(|e| bad(format!("{rel}: {e}")))?;
+            let (sha1, size) = crate::hashing::sha1_of(entry.take(budget + 1))
+                .map_err(|e| bad(format!("{rel}: {e}")))?;
+            if size > budget {
+                return Err(bad(format!(
+                    "the overrides are larger than {MAX_OVERRIDE_BYTES} bytes"
+                )));
+            }
+            budget -= size;
+            out.push(OverrideRecord {
+                path: rel.to_owned(),
+                sha1,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Extracts the named override files, each to its own destination.
+    ///
+    /// # Errors
+    ///
+    /// `NotFound` for a path the pack does not carry, `Cancelled`, `Io`, `Integrity`.
+    pub(crate) fn extract_overrides_to(
+        &self,
+        wanted: &[(String, PathBuf)],
+        control: &Control,
+    ) -> Result<()> {
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        let map = self.final_overrides();
+        let file = File::open(&self.path).map_err(|e| io(&self.path, &e))?;
+        let mut archive =
+            ZipArchive::new(file).map_err(|e| bad(format!("not a zip archive: {e}")))?;
+        let mut budget = MAX_OVERRIDE_BYTES;
+        for (rel, dest) in wanted {
+            check_cancel(control)?;
+            let index = *map
+                .get(rel.as_str())
+                .ok_or_else(|| Error::not_found(format!("{rel} is not in the pack")))?;
+            let mut source = archive
+                .by_index(index)
+                .map_err(|e| bad(format!("{rel}: {e}")))?;
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| io(parent, &e))?;
+            }
+            let mut out = File::create(dest).map_err(|e| io(dest, &e))?;
+            let written = std::io::copy(&mut (&mut source).take(budget + 1), &mut out)
+                .map_err(|e| io(dest, &e))?;
+            if written > budget {
+                return Err(bad(format!(
+                    "the overrides are larger than {MAX_OVERRIDE_BYTES} bytes"
+                )));
+            }
+            budget -= written;
+            out.flush().map_err(|e| io(dest, &e))?;
+        }
+        Ok(())
+    }
 }
 
 /// Where an install writes.
@@ -227,7 +310,7 @@ pub fn install(pack: &Pack, input: &InstallInput<'_>) -> Result<Report> {
     Ok(report)
 }
 
-fn check_cancel(control: &Control) -> Result<()> {
+pub(crate) fn check_cancel(control: &Control) -> Result<()> {
     if control.cancel.is_cancelled() {
         Err(Error::cancelled())
     } else {
@@ -236,7 +319,11 @@ fn check_cancel(control: &Control) -> Result<()> {
 }
 
 /// Downloads every file from its first URL; a file that failed is tried on its other URLs.
-fn download_files(input: &InstallInput<'_>, files: &[&PackFile], dests: &[PathBuf]) -> Result<()> {
+pub(crate) fn download_files(
+    input: &InstallInput<'_>,
+    files: &[&PackFile],
+    dests: &[PathBuf],
+) -> Result<()> {
     let spec = |file: &PackFile, url: &str, dest: &Path| {
         let mut spec = Download::new(url, dest).size(file.size);
         if let Some(sum) = Checksum::sha512(&file.sha512) {
@@ -354,6 +441,15 @@ pub struct PackFileRecord {
     pub origin_known: bool,
 }
 
+/// One override file of the pack as installed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverrideRecord {
+    /// Path in the game directory.
+    pub path: String,
+    /// Lowercase hex SHA-1 of the file the pack carries.
+    pub sha1: String,
+}
+
 /// What `pack.json` keeps of the installed pack, for updates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackRecord {
@@ -375,6 +471,10 @@ pub struct PackRecord {
     pub installed_unix: i64,
     /// The downloaded files that were installed.
     pub files: Vec<PackFileRecord>,
+    /// The override files as the pack carries them; an update leaves a file alone when it no
+    /// longer matches. Empty in records written before updates existed.
+    #[serde(default)]
+    pub overrides: Vec<OverrideRecord>,
 }
 
 impl PackRecord {
@@ -407,7 +507,15 @@ impl PackRecord {
                     origin_known: false,
                 })
                 .collect(),
+            overrides: Vec::new(),
         }
+    }
+
+    /// Adds the override files of the pack (see [`Pack::override_hashes`]).
+    #[must_use]
+    pub fn with_overrides(mut self, overrides: Vec<OverrideRecord>) -> Self {
+        self.overrides = overrides;
+        self
     }
 
     /// Marks the files whose origin was found (paths as in the pack index).

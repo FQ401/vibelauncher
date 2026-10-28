@@ -48,7 +48,7 @@ fn selection(request: &UpdateRequest) -> Result<Selection<'_>> {
     }
 }
 
-fn spawn_reply(
+pub(crate) fn spawn_reply(
     name: &str,
     replier: Replier,
     work: impl FnOnce() -> Result<Response> + Send + 'static,

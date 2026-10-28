@@ -55,3 +55,19 @@ pub fn hash_file(path: &Path) -> std::io::Result<FileHashes> {
         size,
     })
 }
+
+/// The SHA-1 and size of everything `reader` yields.
+pub fn sha1_of(mut reader: impl Read) -> std::io::Result<(String, u64)> {
+    let mut sha1 = Sha1::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut size = 0u64;
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        size += n as u64;
+        sha1.update(&buf[..n]);
+    }
+    Ok((hex(&sha1.finalize()), size))
+}

@@ -91,7 +91,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
 | `vl-ui-egui` | ui | The shared egui interface. |
 | `vl-modrinth` | core | Modrinth API v2 as pure functions: request URLs with search facets, filters and hash lookups, and tolerant parsing of responses into the catalog types of `vl-core` (size limits, unknown fields ignored, damaged list entries skipped, unsafe file names and non-`https` download URLs dropped). The `mrpack` module parses `modrinth.index.json` (`https` downloads from `cdn.modrinth.com`, `github.com`, `raw.githubusercontent.com` and `gitlab.com` only, safe relative paths, capped sizes and counts). |
 | `vl-platforms` | native | Online mod platforms behind the `CatalogSource` trait; `ModrinthSource` fetches through `vl-net` (HTTP cache, retries, size caps) and paces itself with a rate limiter that follows the server's `X-Ratelimit-*` headers. A second platform adds a module and a `Provider` variant. |
-| `vl-install` | native | Installing a catalog project into an instance: picking the version for the instance's game version and loader, following required dependencies, recognizing what is installed, the plan, verified download, all-or-nothing add to the resource folders, and the origin records (`<instance>/.vibelauncher/resources.json`). The `mrpack` module installs a Modrinth modpack (`.mrpack`, from a file or a catalog project) into a new game directory: archive checks (entry names, symlinks, entry counts), verified downloads of the client files, `overrides/` then `client-overrides/`, and the pack record `<instance>/.vibelauncher/pack.json`. |
+| `vl-install` | native | Installing a catalog project into an instance: picking the version for the instance's game version and loader, following required dependencies, recognizing what is installed, the plan, verified download, all-or-nothing add to the resource folders, and the origin records (`<instance>/.vibelauncher/resources.json`). The `mrpack` module installs a Modrinth modpack (`.mrpack`, from a file or a catalog project) into a new game directory: archive checks (entry names, symlinks, entry counts), verified downloads of the client files, `overrides/` then `client-overrides/`, and the pack record `<instance>/.vibelauncher/pack.json`. The `mrpack_update` module updates an installed pack while keeping the user's changes. |
 | `vl-cli` | app | The headless command line. |
 
 Third-party crates are declared once in `[workspace.dependencies]` and used with
@@ -306,6 +306,25 @@ The data directory holds:
   execution (all or nothing, disabled files stay disabled, the dependency flag of a record is
   kept). `UpdateRequest::version` switches exactly one file to a given version id, older ones
   included; a downgrade happens only that way;
+- modpack updates (`vl-install::mrpack_update`): `CheckPackUpdate` lists the pack project's
+  versions and reports the first one newer than the installed version in an allowed channel
+  (releases only by default); a pack installed from a file has no source and is updated with
+  `PackUpdateRequest::file`. `PlanPackUpdate` downloads the new pack and compares three states:
+  the baseline in `pack.json` (files with hashes, and since updates exist the SHA-1 of every
+  override file), the new index and overrides, and the folder as it is. A file the pack changes
+  and the folder still has as delivered is replaced (a disabled file is replaced in place and
+  stays disabled); a file the pack drops and the user did not touch is removed; a new file
+  that replaces a mod of the same project (matched by origin records, else by file name without
+  version) inherits the user's choice for the old one: disabled stays disabled, deleted or
+  swapped for another version is not brought back. A file the user changed is left alone. An
+  override the pack changed that the user also changed is kept and the pack's version is saved as
+  `<file>.pack-new`; a record without override hashes treats every differing config that way.
+  Files the pack never had are never touched. `reset` makes the folder match the pack instead.
+  `UpdatePack` (an `UpdatePack` task) downloads and extracts everything first, copies each file
+  it is about to change or remove into `.vibelauncher/backup/<UTC time>/` (the newest five
+  backups are kept), applies the changes, rewrites `pack.json` and `resources.json`, then changes
+  the instance's game version and loader as the last step; a failure or a cancel before the end
+  restores every file and both records;
 - mod loaders (`vl-loaders`): Fabric (`meta.fabricmc.net/v2`) and Quilt (`meta.quiltmc.org/v3`)
   share one API shape, `versions/loader/<game>` (versions for a game version, empty or an error
   status when the game is not supported) and `versions/loader/<game>/<loader>/profile/json` (a

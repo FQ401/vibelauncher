@@ -414,6 +414,144 @@ pub struct UpdateRequest {
     pub version: Option<String>,
 }
 
+/// Updating the modpack an instance was installed from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackUpdateRequest {
+    /// The instance.
+    pub instance: InstanceId,
+    /// The least stable channel the new pack version may come from. Releases only by default.
+    #[serde(default = "default_update_stability")]
+    pub min_stability: MinStability,
+    /// Switch to this version id of the pack project instead of the newest one (it may be older).
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Update from this `.mrpack` file; for packs that were installed from a file.
+    #[serde(default)]
+    pub file: Option<String>,
+    /// Put every file of the pack back as the pack has it: restore deleted files, enable
+    /// disabled ones, overwrite changed configs. Files the user added stay.
+    #[serde(default)]
+    pub reset: bool,
+}
+
+impl PackUpdateRequest {
+    /// An update of `instance` to the newest release, keeping the user's changes.
+    pub fn new(instance: InstanceId) -> Self {
+        Self {
+            instance,
+            min_stability: MinStability::Release,
+            version: None,
+            file: None,
+            reset: false,
+        }
+    }
+}
+
+/// The result of checking an instance's modpack for a newer version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackUpdateInfo {
+    /// The pack's name.
+    pub name: String,
+    /// The installed version (the pack's own label when the catalog does not know it).
+    pub current: VersionLabel,
+    /// The newest allowed version when it is newer than the installed one.
+    pub latest: Option<VersionLabel>,
+    /// The pack was installed from a file and cannot be checked; update it with a new file.
+    pub from_file: bool,
+    /// Things worth saying.
+    pub warnings: Vec<String>,
+}
+
+/// What happens to one file of a pack when it is updated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum PackAction {
+    /// The new pack has a file the instance lacks: it is added.
+    Add,
+    /// The pack changed the file: it is replaced.
+    Update,
+    /// The pack dropped the file: it is removed.
+    Remove,
+    /// A disabled file is enabled again (reset only).
+    Enable,
+    /// The user changed the config; the pack's new version is saved beside it as
+    /// `<file>.pack-new` and the file itself is left alone.
+    SaveNew,
+    /// The pack changed or added the file but the user deleted it: it stays deleted.
+    KeepDeleted,
+    /// The user changed or replaced the file: it stays as it is.
+    KeepModified,
+}
+
+/// One file of a pack update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackChange {
+    /// Path in the game directory (without `.disabled`).
+    pub path: String,
+    /// What happens.
+    pub action: PackAction,
+    /// The file is a pack download (a mod, pack or shader) rather than a config or other
+    /// override.
+    pub download: bool,
+    /// The file is disabled by the user and stays disabled.
+    pub disabled: bool,
+    /// Why, when it is not obvious.
+    pub note: Option<String>,
+}
+
+/// A change of the game or the loader a pack asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackVersionChange {
+    /// What the pack had before.
+    pub from: String,
+    /// What the new pack has.
+    pub to: String,
+}
+
+/// What updating a modpack would do, from the old and the new index and the folder as it is now.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PackChanges {
+    /// The pack's name.
+    pub name: String,
+    /// The installed version.
+    pub from: String,
+    /// The version it becomes.
+    pub to: String,
+    /// The new Minecraft version, when it differs.
+    pub game_version: Option<PackVersionChange>,
+    /// The new loader (`fabric 0.16.7`), when it differs.
+    pub loader: Option<PackVersionChange>,
+    /// Every file that is added, replaced, removed or left alone on purpose.
+    pub changes: Vec<PackChange>,
+    /// How many files of the pack stay as they are.
+    pub unchanged: u32,
+    /// Bytes to download.
+    pub download_bytes: u64,
+    /// The update puts every file back as the pack has it.
+    pub reset: bool,
+    /// Things worth saying.
+    pub warnings: Vec<String>,
+}
+
+impl PackChanges {
+    /// Whether applying it changes anything on disk or in the instance.
+    pub fn is_empty(&self) -> bool {
+        self.game_version.is_none()
+            && self.loader.is_none()
+            && !self.changes.iter().any(|c| {
+                matches!(
+                    c.action,
+                    PackAction::Add
+                        | PackAction::Update
+                        | PackAction::Remove
+                        | PackAction::Enable
+                        | PackAction::SaveNew
+                )
+            })
+    }
+}
+
 /// A file whose origin was found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentifiedFile {

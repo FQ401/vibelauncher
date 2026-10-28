@@ -61,7 +61,16 @@ commands:
                                       instance; prints the plan first, --yes skips the question
   packs install <file.mrpack|slug> [--name <n>] [--version <id>] [--group <g>] [--channel <c>]
                                       install a Modrinth modpack as a new instance (name, Minecraft
-                                      version and loader come from the pack)";
+                                      version and loader come from the pack)
+  packs updates <instance> [--channel <release|beta|alpha>]
+                                      look for a newer version of the instance's modpack
+  packs update <instance> [--version <id>] [--file <pack.mrpack>] [--channel <c>] [--reset] [--yes]
+                                      update the modpack; prints what changes first. Files you
+                                      deleted, disabled or changed are kept, changed configs get
+                                      the new version beside them as <file>.pack-new, replaced
+                                      files are backed up under .vibelauncher/backup; --reset puts
+                                      every pack file back as the pack has it; --file updates a
+                                      pack that was installed from a file";
 
 /// A failed command line.
 #[derive(Debug)]

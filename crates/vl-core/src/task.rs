@@ -23,6 +23,8 @@ pub enum TaskKind {
     InstallResource,
     /// Installing a modpack as a new instance.
     InstallPack,
+    /// Updating the modpack of an instance.
+    UpdatePack,
     /// Refreshing the version list.
     RefreshVersions,
     /// Signing in to an account.
