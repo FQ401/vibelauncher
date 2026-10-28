@@ -10,10 +10,12 @@
 
 pub mod arguments;
 pub mod assets;
+pub mod forge;
 pub mod install_profile;
 pub mod libraries;
 pub mod loader;
 pub mod manifest;
+pub mod maven;
 pub mod neoforge;
 pub mod rules;
 pub mod version;

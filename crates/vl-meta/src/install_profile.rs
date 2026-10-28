@@ -1,5 +1,5 @@
-//! Installer profiles (`install_profile.json`, spec 1) of loaders that ship an installer jar
-//! (NeoForge, and Forge since 1.13).
+//! Installer profiles (`install_profile.json`, spec 0 and 1) of loaders that ship an installer jar
+//! (NeoForge, and Forge since 1.13), and the launch profile those installers carry.
 //!
 //! An installer jar holds `install_profile.json`, the launch profile (`version.json`) and data
 //! files (`/data/client.lzma`). The install profile lists:
@@ -15,15 +15,23 @@
 //! coordinates and in-jar paths must be safe). [`InstallProfile::plan`] resolves the processors
 //! of one side into ready argument lists: `{NAME}` is a data value or one of the built-in
 //! values of [`PlanContext`], `[coordinate]` is a path below the library directory. Running them
-//! is the native layer's job.
+//! is the native layer's job. Spec 0 (Forge 1.13–1.16) has the same shape; its processors have no
+//! `sides` and run for both.
+//!
+//! The launch profile is the installer's `version.json`, read by [`launch_profile`]. Its
+//! `-DignoreList` names the vanilla jar as `${version_name}.jar`, which is the file name the
+//! official launcher gives it; here the vanilla jar keeps the game's id, so the name is
+//! rewritten to that. Libraries of the launch profile without a download address
+//! ([`local_libraries`]) come from the installer's `maven/` directory or from the processors.
 
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde_json::Value;
+use vl_core::component::ComponentKind;
 use vl_core::error::{Error, ErrorKind, Result};
 
-use crate::loader::{check_coordinate, maven_path};
+use crate::loader::{LoaderProfile, check_coordinate, maven_path};
 use crate::manifest::is_sha1;
 use crate::version::LibraryEntry;
 
@@ -406,6 +414,55 @@ pub fn manifest_main_class(manifest: &str) -> Option<String> {
         }
     }
     value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
+}
+
+/// The launch profile of an installer-based loader from the installer's `version.json`, with the
+/// `-DignoreList` entry of the vanilla jar renamed to the jar of the game version.
+///
+/// # Errors
+///
+/// `Integrity` for a damaged document or one for another game version.
+pub fn launch_profile(
+    kind: ComponentKind,
+    game: &str,
+    loader_version: &str,
+    version_json: &[u8],
+) -> Result<LoaderProfile> {
+    let mut profile = LoaderProfile::normalize(kind, game, loader_version, version_json)?;
+    let vanilla_jar = format!("{}.jar", profile.inherits_from);
+    for arg in &mut profile.arguments.jvm {
+        for value in &mut arg.values {
+            if value.starts_with("-DignoreList=") {
+                *value = value.replace("${version_name}.jar", &vanilla_jar);
+            }
+        }
+    }
+    Ok(profile)
+}
+
+/// The libraries of a launch profile that name a file but no download address: the installer
+/// carries them at `maven/<path>`, or a processor writes them. Entries without
+/// `downloads.artifact` are not such libraries.
+///
+/// # Errors
+///
+/// `Integrity` for an entry with an unsafe path or an invalid hash.
+pub fn local_libraries(libraries: &[LibraryEntry]) -> Result<Vec<ProfileLibrary>> {
+    let mut out = Vec::new();
+    for lib in libraries {
+        let has_artifact = lib
+            .rest
+            .get("downloads")
+            .and_then(|d| d.get("artifact"))
+            .is_some();
+        if has_artifact {
+            let found = profile_library(lib)?;
+            if found.url.is_none() {
+                out.push(found);
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn profile_library(lib: &LibraryEntry) -> Result<ProfileLibrary> {

@@ -10,14 +10,17 @@
 //! be reached the old one is used. Hashes of the loader's libraries come from the profile; the
 //! files are downloaded and verified by `vl-launch` like any other library.
 //!
-//! NeoForge ([`neoforge`]) is published as installer jars in a Maven repository: its version list
-//! is the repository's metadata, its profile is the installer's `version.json`, and
-//! [`Loaders::install`] runs the installer's processors (Java programs that patch the game jar)
-//! through a [`processors::ProcessorRunner`]. [`Loaders::needs_install`] tells which loaders need
-//! that step after the game files are installed. Forge is not a source yet: asking for it is
-//! `Unsupported`.
+//! NeoForge ([`neoforge`]) and Forge for Minecraft 1.13+ ([`forge`]) are published as installer
+//! jars in a Maven repository: the version list is the repository's metadata (for Forge, with its
+//! promotions), the profile is the installer's `version.json`, and [`Loaders::install`] runs the
+//! installer's processors (Java programs that patch the game jar) through a
+//! [`processors::ProcessorRunner`]; [`installer`] holds what both share.
+//! [`Loaders::needs_install`] tells which loaders need that step after the game files are
+//! installed. Forge for older game versions is `Unsupported`.
 
 pub mod fabric;
+pub mod forge;
+pub mod installer;
 pub mod meta;
 pub mod neoforge;
 pub mod processors;
@@ -47,6 +50,8 @@ pub struct LoadersOptions {
     pub quilt: Endpoints,
     /// The NeoForge repository.
     pub neoforge: neoforge::Maven,
+    /// The Forge repository and promotions.
+    pub forge: forge::Maven,
     /// How long a fetched version list is used without asking the server again.
     pub versions_max_age: Duration,
     /// How long a stored profile is used without asking the server again.
@@ -59,6 +64,7 @@ impl Default for LoadersOptions {
             fabric: fabric::endpoints(),
             quilt: quilt::endpoints(),
             neoforge: neoforge::Maven::default(),
+            forge: forge::Maven::default(),
             versions_max_age: Duration::from_secs(10 * 60),
             profile_max_age: Duration::from_secs(24 * 60 * 60),
         }
@@ -109,8 +115,10 @@ impl Loaders {
         game_version: &str,
         control: &Control,
     ) -> Result<LoaderVersions> {
-        if kind == ComponentKind::NeoForge {
-            return neoforge::versions(self, game_version, control);
+        match kind {
+            ComponentKind::NeoForge => return neoforge::versions(self, game_version, control),
+            ComponentKind::Forge => return forge::versions(self, game_version, control),
+            _ => {}
         }
         let url = self.endpoints(kind)?.versions_url(game_version);
         let options = GetOptions {
@@ -129,7 +137,7 @@ impl Loaders {
     }
 
     /// Picks the loader version to use: `requested` when given and available, else the newest
-    /// stable one.
+    /// stable one. A Forge version may be given in its Maven form (`1.20.1-47.3.0`).
     ///
     /// # Errors
     ///
@@ -143,6 +151,12 @@ impl Loaders {
         control: &Control,
     ) -> Result<LoaderVersion> {
         let list = self.versions(kind, game_version, control)?;
+        let requested = match requested {
+            Some(v) if kind == ComponentKind::Forge => {
+                Some(vl_meta::forge::short_version(game_version, v))
+            }
+            other => other,
+        };
         let found = match requested {
             Some(version) => list.check(version)?,
             None => list.recommended().ok_or_else(|| {
@@ -186,8 +200,14 @@ impl Loaders {
         control: &Control,
         now: i64,
     ) -> Result<LoaderProfile> {
-        if kind == ComponentKind::NeoForge {
-            return neoforge::profile(self, game_version, loader_version, control, now);
+        match kind {
+            ComponentKind::NeoForge => {
+                return neoforge::profile(self, game_version, loader_version, control, now);
+            }
+            ComponentKind::Forge => {
+                return forge::profile(self, game_version, loader_version, control, now);
+            }
+            _ => {}
         }
         let endpoints = self.endpoints(kind)?;
         let key = profile_cache_key(kind, game_version, loader_version)?;
@@ -238,12 +258,14 @@ impl Loaders {
     /// Whether loader `kind` needs [`install`](Self::install) after the game files of its
     /// profile are installed.
     pub fn needs_install(kind: ComponentKind) -> bool {
-        kind == ComponentKind::NeoForge
+        matches!(kind, ComponentKind::NeoForge | ComponentKind::Forge)
     }
 
-    /// Finishes the installation of a loader version: for NeoForge, downloads the installer's
-    /// libraries and runs its client processors (skipped when an earlier run left matching
-    /// files). Loaders that need no such step return at once with `None`.
+    /// Finishes the installation of a loader version: for NeoForge and Forge, puts the libraries
+    /// the installer carries in place, downloads the processors' libraries and runs the client
+    /// processors (skipped when an earlier run left matching files). Call it after the vanilla
+    /// game is installed and before the libraries of the loader profile are: some of them are
+    /// made here. Loaders that need no such step return at once with `None`.
     ///
     /// # Errors
     ///
@@ -255,12 +277,17 @@ impl Loaders {
         kind: ComponentKind,
         game_version: &str,
         loader_version: &str,
-        ctx: &neoforge::InstallContext<'_>,
-    ) -> Result<Option<neoforge::Installation>> {
-        if !Self::needs_install(kind) {
-            return Ok(None);
+        ctx: &installer::InstallContext<'_>,
+    ) -> Result<Option<installer::Installation>> {
+        match kind {
+            ComponentKind::NeoForge => {
+                neoforge::install(self, game_version, loader_version, ctx).map(Some)
+            }
+            ComponentKind::Forge => {
+                forge::install(self, game_version, loader_version, ctx).map(Some)
+            }
+            _ => Ok(None),
         }
-        neoforge::install(self, game_version, loader_version, ctx).map(Some)
     }
 }
 

@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use vl_core::ErrorKind;
-use vl_core::component::ComponentKind::{Fabric, Forge, Quilt};
+use vl_core::component::ComponentKind::{Fabric, Forge, LiteLoader, Quilt};
 use vl_loaders::meta::Endpoints;
 use vl_loaders::{Loaders, LoadersOptions};
 use vl_net::{
@@ -227,8 +227,14 @@ fn loaders_without_a_source_are_unsupported() {
     let server = Arc::new(FakeMeta::default());
     let dir = Temp::new();
     let loaders = loaders(&server, dir.path());
-    let err = loaders.versions(Forge, "1.20.1", &control()).unwrap_err();
+    let err = loaders
+        .versions(LiteLoader, "1.12.2", &control())
+        .unwrap_err();
     assert_eq!(err.kind, ErrorKind::Unsupported);
+    // Forge before Minecraft 1.13 has a legacy installer.
+    let err = loaders.versions(Forge, "1.12.2", &control()).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(err.message.contains("1.13"), "{err}");
     assert_eq!(server.requests(), 0);
 }
 
