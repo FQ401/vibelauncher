@@ -11,6 +11,7 @@ mod java;
 mod launch;
 mod mods;
 mod packs;
+mod storage;
 mod versions;
 
 use std::fmt;
@@ -98,7 +99,19 @@ commands:
                                       the new version beside them as <file>.pack-new, replaced
                                       files are backed up under .vibelauncher/backup; --reset puts
                                       every pack file back as the pack has it; --file updates a
-                                      pack that was installed from a file";
+                                      pack that was installed from a file
+  storage show [--sizes]              the data folder and the folder of every section
+                                      (data, instances, game, java, cache, backups, logs)
+  storage check <section> <path>      check a folder for a section (errors and warnings)
+  storage move <section> <path> [--switch-only] [--yes]
+                                      copy a section to a folder and switch to it after a
+                                      restart; the old copy stays until a cleanup;
+                                      --switch-only uses files you copied yourself; --yes
+                                      moves despite warnings
+  storage reset <section> [--switch-only]
+                                      move a section back to its default place
+  storage cleanup [--trash]           remove old copies left by moves, prune logs and the
+                                      cache; --trash also empties the trash folders";
 
 /// A failed command line.
 #[derive(Debug)]
@@ -142,6 +155,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         ["launch", rest @ ..] => launch::run(facade, rest, out),
         ["catalog", rest @ ..] => catalog::run(facade, rest, out),
         ["packs", rest @ ..] => packs::run(facade, rest, out),
+        ["storage", rest @ ..] => storage::run(facade, rest, out),
         _ => Err(USAGE.into()),
     }
 }
@@ -249,6 +263,14 @@ mod tests {
         let err = run_mock(&["java", "install", "latest"]).unwrap_err();
         assert!(err.to_string().contains("number"), "{err}");
         assert!(run_mock(&["java", "install"]).is_err());
+    }
+
+    #[test]
+    fn storage_arguments_are_checked() {
+        let err = run_mock(&["storage", "reset", "nope"]).unwrap_err();
+        assert!(err.to_string().contains("unknown storage section"), "{err}");
+        assert!(run_mock(&["storage", "move", "cache", "x", "--bad"]).is_err());
+        assert!(run_mock(&["storage"]).is_err());
     }
 
     #[test]

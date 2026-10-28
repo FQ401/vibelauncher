@@ -19,6 +19,7 @@ mod pack_export;
 mod pack_update;
 mod resources;
 mod settings;
+mod storage;
 mod tasks;
 mod updates;
 mod versions;
@@ -65,6 +66,7 @@ pub struct Backend {
     accounts: accounts::Service,
     launch: launch::Service,
     catalog: catalog::Service,
+    storage: storage::Gate,
 }
 
 impl Backend {
@@ -72,15 +74,21 @@ impl Backend {
     /// migrating it to the current format).
     pub fn new(config: BackendConfig) -> vl_core::Result<Self> {
         let store = Store::open(&config.store_options())?;
-        let instances = vl_instance::Instances::open(&store.data_dir().join("instances"))?;
+        let instances = open_instances(&store)?;
         let settings = SettingsStore::new(store.data_dir());
         let events = Arc::new(EventBus::default());
         let tasks = TaskEngine::new(Arc::clone(&events), MAX_PARALLEL_TASKS);
         let accounts = accounts::Service::new(&store, Arc::clone(&events))?;
         let launch = launch::Service::new(&store, Arc::clone(&events))?;
-        let catalog = catalog::Service::new(store.cache_dir())?;
+        let catalog = catalog::Service::new(&store.cache_dir())?;
         Ok(Self {
-            java: java::JavaService::new(store.data_dir(), store.cache_dir(), Arc::clone(&events)),
+            java: java::JavaService::new(
+                store.java_dir(),
+                store.data_dir(),
+                &store.cache_dir(),
+                Arc::clone(&events),
+            ),
+            storage: storage::Gate::default(),
             config,
             store,
             instances,
@@ -122,6 +130,10 @@ impl Backend {
 impl Facade for Backend {
     fn call(&self, command: Command) -> Reply {
         let (replier, reply) = reply_channel();
+        if let Err(e) = storage::admit(self, &command) {
+            replier.send(Err(e));
+            return reply;
+        }
         match command {
             Command::Hello => replier.send(Ok(Response::Hello(BackendInfo {
                 name: "vl-backend".into(),
@@ -141,6 +153,7 @@ impl Facade for Backend {
             }
             Command::Bisect(c) => bisect::handle(self, c, replier),
             Command::Catalog(c) => catalog::handle(self, c, replier),
+            Command::Storage(c) => storage::handle(self, c, replier),
             other => replier.send(Err(Error::unsupported(format!("{other:?}")))),
         }
         reply
@@ -149,6 +162,21 @@ impl Facade for Backend {
     fn subscribe(&self) -> EventStream {
         self.events.subscribe()
     }
+}
+
+/// The instances folder; while it is unavailable (an explicit folder on a disconnected drive) an
+/// empty stand-in inside the data folder, so nothing is created on the wrong drive. Instance
+/// commands are refused in that state (`storage::admit`).
+fn open_instances(store: &Store) -> vl_core::Result<vl_instance::Instances> {
+    let dir = if store
+        .unavailable()
+        .contains(&vl_core::storage::Section::Instances)
+    {
+        store.data_dir().join(".unavailable-instances")
+    } else {
+        store.instances_dir()
+    };
+    vl_instance::Instances::open(&dir)
 }
 
 /// The answer of a command whose domain module does not handle it yet.

@@ -68,12 +68,12 @@ impl Service {
         let client = Client::new(config)?;
         let loaders = Loaders::new(
             client.clone(),
-            store.data_dir().join("loaders"),
+            store.game_dir().join("loaders"),
             LoadersOptions::default(),
         );
         let installer = Installer::new(
             client,
-            Layout::new(store.data_dir()),
+            Layout::new(store.game_dir()),
             InstallerOptions::default(),
         );
         Ok(Self {
@@ -92,6 +92,11 @@ impl Service {
     /// Whether the instance is preparing or running.
     pub(crate) fn is_active(&self, instance: &InstanceId) -> bool {
         self.active().contains_key(instance)
+    }
+
+    /// Whether any instance is preparing or running.
+    pub(crate) fn any_active(&self) -> bool {
+        !self.active().is_empty()
     }
 
     fn active(&self) -> MutexGuard<'_, HashMap<InstanceId, Active>> {

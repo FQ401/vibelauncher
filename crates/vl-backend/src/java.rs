@@ -31,15 +31,19 @@ struct Inner {
     /// The result of the last scan; held during a scan so scans never overlap.
     last: Mutex<Option<Vec<JavaRuntime>>>,
     next_task: AtomicU64,
-    /// Where managed runtimes live (`<data>/java`).
+    /// Where managed runtimes live (the Java section).
     managed_dir: PathBuf,
     /// The HTTP cache of runtime metadata.
     http_cache: PathBuf,
 }
 
 impl JavaService {
-    pub(crate) fn new(data_dir: &Path, cache_dir: &Path, events: Arc<EventBus>) -> Self {
-        let managed_dir = data_dir.join("java");
+    pub(crate) fn new(
+        managed_dir: PathBuf,
+        data_dir: &Path,
+        cache_dir: &Path,
+        events: Arc<EventBus>,
+    ) -> Self {
         let options = FinderOptions {
             managed_dir: Some(managed_dir.clone()),
             cache_file: Some(data_dir.join("java-cache.json")),

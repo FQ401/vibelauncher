@@ -77,7 +77,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth 
 | `vl-mods` | core | Mod metadata: parsing `fabric.mod.json`, `quilt.mod.json`, `META-INF/mods.toml`, `META-INF/neoforge.mods.toml` and `mcmod.info` from bytes into `ModMetadata` (id, name, version, authors, description, icon path, dependencies, loader, game versions). |
 | `vl-crash` | core | Crash diagnosis: text of `latest.log`, a crash report or `hs_err` plus a class-to-mod index in, a `Diagnosis` out (confidence level, signature, suspect mods, localization keys, evidence lines). Signatures are data (`signatures.toml`); a mod is named with certainty only when a signature matched. |
 | `vl-bisect` | core | Mod bisection engine: a serializable `Session` over the enabled mod files (provided and required mod ids) hands out the next set of files to enable and takes the answer (bad, good, skipped). Delta debugging with dependency closure (a file is never disabled while an enabled one requires it), libraries kept enabled until the other mods are cleared, optional hints from a crash diagnosis, several culprits at once, and a verdict (found, not reproduced, inconclusive). About `log2(n)` steps for one culprit. |
-| `vl-store` | native | Data, cache and log directories by OS convention or one portable directory; the on-disk format version and migrations; the lock against a second launcher process; atomic writes. |
+| `vl-store` | native | The data folder (argument, environment variable, portable marker, pointer file, OS convention) and the folders of the storage sections; folder checks; moving a section by copy with rollback and removing old copies; size limits of logs and the cache; the on-disk format version and migrations; the lock against a second launcher process; atomic writes. |
 | `vl-net` | native | HTTP and downloads: parallelism limit, retries, timeouts, size caps, hash checks, HTTP cache (`ETag`, `Last-Modified`), offline reads, proxies, the launcher's `User-Agent`. |
 | `vl-tasks` | native | The task engine: stages with weights, nested subtasks, overall progress, cooperative cancellation, timeouts, a concurrency limit; publishes task events. |
 | `vl-settings` | native | Settings files: global settings and per-instance overrides as TOML, range checks, defaults on damage. |
@@ -115,7 +115,7 @@ pub trait Facade: Send + Sync {
 - A `Command` is grouped by domain: `Hello`, `Instances(InstanceCommand)`,
   `Versions(VersionCommand)`, `Accounts(AccountCommand)`, `Java(JavaCommand)`,
   `Settings(SettingsCommand)`, `Launch(LaunchCommand)`, `Tasks(TaskCommand)`,
-  `Catalog(CatalogCommand)`. Each domain's
+  `Catalog(CatalogCommand)`, `Storage(StorageCommand)`. Each domain's
   command enum lives in that domain's module of `vl-core` and documents the `Response` variant it
   answers.
 - `call` returns at once with a `Reply` that receives exactly one `Result<Response, Error>`. A UI
@@ -233,29 +233,101 @@ the browser.
 
 `vl-store` owns the locations; every other native crate receives its directories from it.
 
-| Location | Windows | macOS | Linux |
-|---|---|---|---|
-| Data | `%APPDATA%\VibeLauncher` | `~/Library/Application Support/VibeLauncher` | `$XDG_DATA_HOME/vibelauncher` |
-| Cache | `%LOCALAPPDATA%\VibeLauncher\cache` | `~/Library/Caches/VibeLauncher` | `$XDG_CACHE_HOME/vibelauncher` |
-| Logs | `<data>/logs` | `~/Library/Logs/VibeLauncher` | `$XDG_STATE_HOME/vibelauncher/logs` |
+**The data folder** (the root) holds the settings, the accounts list, the format version, the
+storage layout and the lock. It is chosen, first match wins, by:
 
-In portable mode all three live under that one directory (`<dir>`, `<dir>/cache`, `<dir>/logs`)
-and nothing is written outside it. `--dir <path>` selects it; otherwise a `vibelauncher.portable`
-file next to the executable selects `<executable directory>/data`. `--dir` wins over the marker.
+1. `--dir <path>` (`vl-cli`, `BackendConfig::data_dir`);
+2. the `VIBELAUNCHER_DIR` environment variable;
+3. a `vibelauncher.portable` file next to the executable: `<executable directory>/data`;
+4. the pointer file `root.json` (`{"root": "<path>", "previous": "<path>"}`) in the OS folder for
+   settings;
+5. the OS convention.
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Data folder by convention | `%APPDATA%\VibeLauncher` | `~/Library/Application Support/VibeLauncher` | `$XDG_DATA_HOME/vibelauncher` |
+| Pointer file | `%LOCALAPPDATA%\VibeLauncher\root.json` | `~/Library/Preferences/VibeLauncher/root.json` | `$XDG_CONFIG_HOME/vibelauncher/root.json` |
+
+The first three sources fix the data folder from outside (`RootSource::is_fixed`); the launcher
+does not write a pointer then. A pointer that names a missing folder is an error that names the
+pointer file; a damaged pointer is an integrity error. The path is resolved once when the store
+opens (absolute, links resolved, the Windows `\\?\` prefix dropped) and used in that form
+everywhere.
+
+**Sections.** Each growing part of the data has a folder of its own (`vl_core::storage::Section`);
+by default every section is inside the data folder, and `storage.json` in the data folder records
+the sections with an explicit folder and the old copies left by moves:
+
+| Section | Default folder | Holds |
+|---|---|---|
+| `data` | the data folder | settings, `accounts.json`, `format.json`, `storage.json`, `java-cache.json`, `.lock` |
+| `instances` | `<data>/instances` | instances |
+| `game` | `<data>` | `versions/`, `libraries/`, `assets/`, `loaders/` (an explicit folder holds the same four) |
+| `java` | `<data>/java` | managed Java runtimes |
+| `cache` | `<data>/cache` | the HTTP cache and other files that can be deleted at any time |
+| `backups` | `<data>/snapshots` | snapshots taken before format migrations |
+| `logs` | `<data>/logs` | launcher logs |
+
+Paths are explicit; the launcher creates no links. An explicit folder that does not exist when
+the store opens is not created again (its drive may be disconnected): the section is listed as
+unavailable, and while the folder of instances, shared game files, Java or the cache is
+unavailable the backend refuses every command except storage, tasks and `Hello`. A damaged
+`storage.json` is an integrity error rather than a fall back to default folders. A data folder
+without `storage.json` uses the default folders, which is the layout of data written before
+sections existed.
+
+**Storage commands** (`StorageCommand`, `vl-cli storage show|check|move|reset|cleanup`):
+
+- `Show { sizes }` returns `StorageInfo`: the data folder and its source, every section (folder,
+  default or explicit, available, size), the old copies, and whether a restart is required.
+- `Check { section, path }` returns a `PathCheck`. Errors: the folder cannot be created or
+  written (a probe file is written and removed, created folders are removed again), it is inside
+  Program Files or an OS folder, it is the root of the system drive, it overlaps the folder of
+  another section, a copy target is not empty, a switch target does not exist (for the data
+  folder: has no `format.json`), less free space than a copy needs (its size plus 5% and
+  64 MiB). Warnings: a folder synchronized by a cloud service (by folder name such as `OneDrive`,
+  `OneDrive - <org>`, `Dropbox`, `Google Drive`, `iCloud Drive`, `CloudStorage`, `YandexDisk`, by
+  the `%OneDrive%` variables, and on Windows by the Files On-Demand attributes of the folder or its
+  nearest existing parent), a network drive (UNC path, a mapped drive that resolves to one, or a
+  network file system), a removable drive, on Windows a path longer than 100 characters or with
+  characters outside ASCII, and less than 5 GiB free.
+- `Move(MoveRequest { section, target, mode })` answers `Response::Task` (`MoveStorage`,
+  cancellable). It is refused while a game or another task runs; `target: None` is the default
+  folder (for the data folder: the OS convention, and the pointer is removed). A copy measures
+  the section, goes into `.<name>.vl-moving` next to the target with byte progress, is counted
+  again, its entries are renamed into the target, and then the path is switched (`storage.json`
+  for a section, the pointer for the data folder), each written atomically. A cancel or a failure
+  at any step removes the copy and keeps the old path. `SwitchOnly` takes a folder the user filled
+  and only switches. The data folder is not moved when it is fixed from outside. Links are not
+  followed or copied; each one is reported as a launcher log line. The services keep the folders
+  they started with, so after a move the backend refuses every command except storage, tasks and
+  `Hello` until it is started again.
+- The old copy is recorded as a leftover with the top-level names it consists of and stays until
+  `Cleanup { trash }`, which removes exactly those names (never a path that is or contains a
+  folder in use), the cache and log folders of earlier launcher versions outside the data folder
+  (OS convention only), prunes logs and the cache, and with `trash` empties `instances/.trash/`
+  and the trash of every instance.
+
+**Growth.** When the store opens and on cleanup, the oldest files are removed until launcher logs
+fit 30 files and 64 MiB and the cache fits 2 GiB. Game logs are limited per instance (see the
+launch flow).
+
+**Long paths.** File operations use the Rust standard library, which passes paths longer than
+the Windows limit with the `\\?\` prefix; a move copies such trees as they are.
 
 `vl-store` also provides, for every native crate:
 
 - `write_atomic` / `write_atomic_with` — write a temporary file next to the target, flush, rename;
   readers see the old or the new file, never a partial one.
-- `Store::open` — creates the directories, takes an exclusive lock on the data directory
+- `Store::open` — creates the data folder, takes an exclusive lock on it
   (`.lock`, released by the OS on exit or crash, so a second launcher is refused with a conflict
   error) and migrates the data to the current format.
 - The format version (`format.json` in the data directory) and the migration chain
   (`format::MIGRATIONS`, one step per version). A directory with content and no version file is
-  format 0. Before the first step the data is copied to `snapshots/format-<n>`; the version is
+  format 0. Before the first step the data is copied to `format-<n>` in the backups section; the version is
   recorded after each step. Data from a newer format is refused and left untouched.
 
-The data directory holds:
+The data folder and its sections hold:
 
 - the format version, checked at start; older formats migrate forward after a snapshot;
 - the global settings file and each instance's overrides (TOML, written atomically; a damaged
@@ -376,7 +448,7 @@ The data directory holds:
   share one API shape, `versions/loader/<game>` (versions for a game version, empty or an error
   status when the game is not supported) and `versions/loader/<game>/<loader>/profile/json` (a
   ready launch profile). The version list goes through the HTTP cache. A profile is normalized
-  and stored at `loaders/loader/<uid>/<game>/<loader>.json` in the data directory: a young entry
+  and stored at `loaders/loader/<uid>/<game>/<loader>.json` in the `game` section: a young entry
   is used as is, an old one is renewed, and an unreachable source falls back to the stored one,
   so an instance launches offline once it was launched or installed. NeoForge
   (`maven.neoforged.net/releases`, `net.neoforged:neoforge`) has no meta server: the version list
@@ -410,14 +482,12 @@ The data directory holds:
   loader without a version gets the default one (the recommended build, else the newest stable) (`InstanceCommand::Create` with
   `LoaderRequest`); `InstanceCommand::SetLoader` replaces or removes the loader of a stopped
   instance and the next launch rebuilds the class path from the new profile;
-- shared game files (libraries, assets, version files) used by all instances;
-- managed Java runtimes;
+- shared game files (libraries, assets, version files) used by all instances (the `game` section);
+- managed Java runtimes (the `java` section);
 - the normalized metadata cache: upstream metadata (Mojang, loader metadata services) is fetched
   at run time, normalized by `vl-meta` and cached here, so installed versions launch offline and
   one upstream outage does not break the others;
 - the account list with public profile data only.
-
-The cache directory holds the HTTP cache and other files that can be deleted at any time.
 
 Secrets — Microsoft refresh and access tokens, and API keys the user enters (such as a personal
 CurseForge API key) — live in the OS keyring, never in the data directory, logs, events or error
@@ -462,8 +532,8 @@ layout: a left rail of five sections (Home, Instances, Catalog, Account, Setting
 tasks panel (Ctrl+J) and the page of the current section; colors, spacing and type scale come from
 the design tokens in `theme.rs`.
 
-**`vl-cli`.** Parses arguments, starts a backend (`--mock` selects `vl-mock`, `--dir` selects a
-portable data directory), sends commands and blocks on replies. Long commands (`launch`) subscribe
+**`vl-cli`.** Parses arguments, starts a backend (`--mock` selects `vl-mock`, `--dir` selects the
+data folder), sends commands and blocks on replies. Long commands (`launch`) subscribe
 first, then print task progress and game log lines until the game exits. Each command group lives
 in its own module under `apps/vl-cli/src/commands/`.
 

@@ -30,6 +30,7 @@ use crate::launch::{LaunchCommand, LaunchEvent};
 use crate::log::{LogBatch, LogLine};
 use crate::resources::{ResourceCommand, ResourceEntry, WorldInfo};
 use crate::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
+use crate::storage::{CleanupReport, PathCheck, StorageCommand, StorageInfo};
 use crate::task::{TaskCommand, TaskEvent, TaskSnapshot};
 use crate::version::{GameVersion, LoaderVersionInfo, VersionCommand, VersionEvent};
 
@@ -71,6 +72,8 @@ pub enum Command {
     Bisect(BisectCommand),
     /// The online mod catalog.
     Catalog(CatalogCommand),
+    /// Where the data is kept.
+    Storage(StorageCommand),
 }
 
 /// The answer to a [`Command`]; each command documents which variant it answers.
@@ -139,6 +142,12 @@ pub enum Response {
     PackExported(PackExport),
     /// The diagnosis of an instance's newest logs.
     Diagnosis(CrashDiagnosis),
+    /// The storage layout.
+    Storage(StorageInfo),
+    /// The result of checking a folder.
+    PathCheck(PathCheck),
+    /// What a storage cleanup did.
+    StorageCleaned(CleanupReport),
 }
 
 /// Something that happened in the launcher.

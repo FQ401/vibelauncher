@@ -1,6 +1,6 @@
 [package]
 name = "vl-store"
-description = "Data directories, portable mode, on-disk format version and migrations, atomic writes."
+description = "Data folder and storage sections, path checks, moves with rollback, on-disk format version and migrations, atomic writes."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,9 @@ layer = "native"
 
 [dependencies]
 vl-core.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+sysinfo.workspace = true
 
 [lints]
 workspace = true
