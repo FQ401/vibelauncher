@@ -10,12 +10,17 @@
 //! [`Resources::class_index`] builds the [`ModClassIndex`] that `vl-crash` uses to attribute a
 //! class in a stack trace to a mod.
 
+pub mod bisect;
 mod index;
 pub mod jar;
 mod store;
 
+pub use bisect::Bisect;
 pub use index::ModClassIndex;
 pub use store::{DISABLED_SUFFIX, Resources};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bisect_tests;

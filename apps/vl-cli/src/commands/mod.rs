@@ -1,6 +1,7 @@
 //! Command groups; each group lives in its own module.
 
 mod accounts;
+mod bisect;
 mod catalog;
 mod info;
 mod instances;
@@ -35,7 +36,14 @@ commands:
                         [--include-pack-files] [--yes]
                                       update, or switch one mod to a version (older only by id)
                                       manage mods (default) or --kind resourcepacks|shaderpacks|
-                                      datapacks|global-datapacks; remove moves to the trash
+                                      datapacks  instances bisect start <instance> [--suspect <mod id>]...
+                                      find the mod that crashes the game: switches halves of
+                                      the enabled mods off and on
+  instances bisect good|bad|skip <instance>
+                                      report how the game ran with the current mods
+  instances bisect status|stop <instance>
+                                      show the step; stop restores every mod
+|global-datapacks; remove moves to the trash
   versions list [--snapshots] [--old] list game versions
   versions install <version> [--loader <fabric|quilt|neoforge|forge>] [--loader-version <v>]
                                       download a version's files without starting it

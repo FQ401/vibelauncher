@@ -9,6 +9,7 @@
 //! one domain stays in one file.
 
 pub mod account;
+pub mod bisect;
 pub mod catalog;
 pub mod component;
 pub mod error;

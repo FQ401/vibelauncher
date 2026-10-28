@@ -13,6 +13,9 @@ layer = "native"
 vl-core.workspace = true
 vl-mods.workspace = true
 vl-crash.workspace = true
+vl-bisect.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 zip.workspace = true
 # Selects the pure-Rust deflate backend that `zip` needs.
 flate2.workspace = true
