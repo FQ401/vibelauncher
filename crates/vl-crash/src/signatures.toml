@@ -1,0 +1,112 @@
+# Crash signatures, evaluated in file order: the first signature whose `triggers` match wins.
+#
+# - `triggers`: regular expressions matched per line; one hit is enough.
+# - `collect`: extra expressions, evaluated only after a trigger hit, that add evidence lines and
+#   captures.
+# - Capture `mod` names a mod id (it ends up in `culprit_mods`); any other named capture becomes a
+#   message argument (first hit wins).
+# - `sources` restricts where the signature is looked for: `latest_log`, `crash_report`, `hs_err`.
+#
+# The patterns are written from the behaviour of the loaders' messages. The ideas follow the
+# open signature sets of codex-minecraft and mclogs (Aternos, MIT licence); no code or data was
+# copied. Quote characters are written as \x27 so the expressions can stay TOML literal strings.
+
+[[signature]]
+id = "wrong_java"
+message_key = "crash-wrong-java"
+action_key = "crash-action-select-java"
+triggers = [
+  'UnsupportedClassVersionError',
+  'requires (?:any )?version (?P<required>[0-9]+)[^\n]*? of java\b[^\n]*(?:wrong version|which is missing)',
+]
+collect = [
+  'class file version (?P<class_version>[0-9]+)',
+  'only recognizes class file versions up to (?P<supported_version>[0-9]+)',
+]
+
+[[signature]]
+id = "native_memory"
+message_key = "crash-native-memory"
+action_key = "crash-action-lower-memory"
+triggers = [
+  'Could not reserve enough space for[^\n]*heap',
+  'There is insufficient memory for the Java Runtime Environment to continue',
+  'Native memory allocation \([a-z]+\) failed',
+]
+
+[[signature]]
+id = "out_of_memory"
+message_key = "crash-out-of-memory"
+action_key = "crash-action-raise-memory"
+triggers = ['OutOfMemoryError(?:: (?P<kind>[^\n]*))?']
+
+[[signature]]
+id = "jvm_crash"
+message_key = "crash-jvm-crash"
+action_key = "crash-action-export-report"
+sources = ["hs_err"]
+triggers = [
+  'A fatal error has been detected by the Java Runtime Environment',
+  'EXCEPTION_ACCESS_VIOLATION',
+  'SIGSEGV',
+  'SIGBUS',
+]
+collect = ['^#\s+[CVjJA]\s+\[(?P<frame>[^\]+]+)']
+
+[[signature]]
+id = "wrong_game_version"
+message_key = "crash-wrong-game-version"
+action_key = "crash-action-change-game-version"
+triggers = [
+  '\((?P<mod>[A-Za-z0-9_.-]+)\)[^\n]*requires [^\n]*? of minecraft\b[^\n]*(?:wrong version|which is missing)',
+  'Mod ID: \x27minecraft\x27, Requested by: \x27(?P<mod>[^\x27]+)\x27, Expected range: \x27(?P<expected>[^\x27]*)\x27, Actual version: \x27(?P<found>[^\x27]*)\x27',
+  'Mod (?P<mod>[A-Za-z0-9_.-]+) requires minecraft (?P<expected>[^\n]*?) (?:but|,)',
+]
+
+[[signature]]
+id = "wrong_loader_version"
+message_key = "crash-wrong-loader-version"
+action_key = "crash-action-change-loader-version"
+triggers = [
+  '\((?P<mod>[A-Za-z0-9_.-]+)\)[^\n]*requires [^\n]*? of (?:fabricloader|fabric-loader|quilt_loader|quilt-loader|neoforge|forge)\b[^\n]*(?:wrong version|which is missing)',
+  'Mod ID: \x27(?:neoforge|forge|fabricloader|quilt_loader)\x27, Requested by: \x27(?P<mod>[^\x27]+)\x27, Expected range: \x27(?P<expected>[^\x27]*)\x27, Actual version: \x27(?P<found>[^\x27]*)\x27',
+]
+
+[[signature]]
+id = "missing_dependency"
+message_key = "crash-missing-dependency"
+action_key = "crash-action-install-dependency"
+triggers = [
+  '\((?P<mod>[A-Za-z0-9_.-]+)\)[^\n]*requires [^\n]*? of (?:[^\n(]*\()?(?P<dependency>[A-Za-z0-9_.-]+)\)?[^\n]*which is missing',
+  'Mod ID: \x27(?P<dependency>[^\x27]+)\x27, Requested by: \x27(?P<mod>[^\x27]+)\x27, Expected range: \x27[^\x27]*\x27, Actual version: \x27\[MISSING\]\x27',
+  'Could not find required mod: (?P<mod>[A-Za-z0-9_.-]+) requires \{(?P<dependency>[A-Za-z0-9_.-]+)',
+]
+
+[[signature]]
+id = "duplicate_mod"
+message_key = "crash-duplicate-mod"
+action_key = "crash-action-remove-duplicate"
+triggers = [
+  '(?i)duplicate (?:mod ?id|versions for mod id)s? \x27?(?P<mod>[A-Za-z0-9_.-]+)',
+  '(?i)found duplicate mods',
+]
+collect = [
+  'Mod ID: \x27(?P<mod>[^\x27]+)\x27 from mod files',
+  '(?i)duplicate mod: (?P<mod>[A-Za-z0-9_.-]+)',
+]
+
+[[signature]]
+id = "mixin_conflict"
+message_key = "crash-mixin-conflict"
+action_key = "crash-action-disable-mod"
+triggers = [
+  'org\.spongepowered\.asm\.mixin\.[A-Za-z0-9_.$]*(?:Exception|Error)',
+  'Mixin (?:apply|transformation) (?:for mod |of )?[^\n]*failed',
+  'Critical injection failure',
+  'MixinApplyError|MixinTransformerError',
+]
+collect = [
+  'from mod (?P<mod>[A-Za-z0-9_.-]+)',
+  'Mixin apply for mod (?P<mod>[A-Za-z0-9_.-]+)',
+  '(?P<mod>[A-Za-z0-9_-]+)\.mixins?\.json',
+]
