@@ -294,7 +294,6 @@ mod tests {
         let good21 = fake(tmp.path(), "good21", "21.0.1");
         let managed = fake(tmp.path(), "managed", "17.0.9");
         let not_java = fake(tmp.path(), "notjava", "NOTJAVA");
-        let hang = fake(tmp.path(), "hang", "HANG");
         let flood = fake(tmp.path(), "flood", "FLOOD");
         let garbage = tmp.path().join("garbage").join("java");
         fs::create_dir_all(garbage.parent().unwrap()).unwrap();
@@ -303,14 +302,15 @@ mod tests {
 
         let cache_file = tmp.path().join("cache").join("java-cache.json");
         let options = FinderOptions {
-            probe_timeout: Duration::from_secs(8),
+            // Generous: nothing in this scan may time out, so a loaded machine cannot change
+            // the outcome. Hanging programs are covered by their own test.
+            probe_timeout: Duration::from_secs(60),
             cache_file: Some(cache_file.clone()),
             ..FinderOptions::default()
         };
         let list = vec![
             candidate(&good8, false),
             candidate(&not_java, false),
-            candidate(&hang, false),
             candidate(&flood, false),
             candidate(&garbage, false),
             candidate(&missing, false),
@@ -318,9 +318,7 @@ mod tests {
             candidate(&managed, true),
             candidate(&good21, false),
         ];
-        let started = Instant::now();
         let found = JavaFinder::new(options.clone()).check(list.clone());
-        assert!(started.elapsed() < Duration::from_secs(30));
 
         let got: Vec<(u32, PathBuf, bool)> = found
             .iter()
@@ -346,6 +344,33 @@ mod tests {
         assert_eq!(again.check(list), found);
     }
 
+    // The timeout is short because the outcome is the same however slow the machine is: a
+    // program that never finishes is dropped. Only fast-failing candidates share the scan.
+    #[test]
+    fn a_hanging_java_is_dropped_without_stopping_the_scan() {
+        let _serial = FAKES.lock().unwrap_or_else(PoisonError::into_inner);
+        let tmp = TempDir::new();
+        let hang = fake(tmp.path(), "hang", "HANG");
+        let not_java = fake(tmp.path(), "notjava", "NOTJAVA");
+        let missing = tmp.path().join("missing").join("java");
+        let finder = JavaFinder::new(FinderOptions {
+            probe_timeout: Duration::from_millis(300),
+            ..FinderOptions::default()
+        });
+        let started = Instant::now();
+        let found = finder.check(vec![
+            candidate(&not_java, false),
+            candidate(&hang, false),
+            candidate(&missing, false),
+        ]);
+        assert!(found.is_empty(), "{found:?}");
+        assert!(
+            matches!(finder.probe(&hang), Err(probe::ProbeError::Timeout)),
+            "a hanging program is a timeout"
+        );
+        assert!(started.elapsed() < Duration::from_secs(20));
+    }
+
     #[test]
     fn a_launcher_stub_collapses_into_the_installation_it_points_to() {
         let _serial = FAKES.lock().unwrap_or_else(PoisonError::into_inner);
@@ -362,7 +387,7 @@ mod tests {
         );
         let other = fake(tmp.path(), "other", "17.0.9");
         let finder = JavaFinder::new(FinderOptions {
-            probe_timeout: Duration::from_secs(5),
+            probe_timeout: Duration::from_secs(60),
             ..FinderOptions::default()
         });
         let found = finder.check(vec![
