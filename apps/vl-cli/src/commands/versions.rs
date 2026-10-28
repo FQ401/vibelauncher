@@ -2,11 +2,12 @@
 
 use std::time::Duration;
 
+use vl_core::instance::LoaderRequest;
 use vl_core::task::TaskOutcome;
 use vl_core::version::{VersionCommand, VersionFilter};
 use vl_core::{Command, Event, Facade, Response};
 
-use super::{CliError, Out, USAGE, call, unexpected};
+use super::{CliError, Out, USAGE, call, loader_flags, parse_loader, unexpected};
 use crate::progress::ProgressPrinter;
 
 /// How long `vl-cli` waits for an event before it waits again.
@@ -15,7 +16,8 @@ const POLL: Duration = Duration::from_millis(500);
 pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<(), CliError> {
     match args {
         ["list", flags @ ..] => list(facade, flags, out),
-        ["install", id] => install(facade, id, out),
+        ["install", id, flags @ ..] => install(facade, id, loader_flags(flags)?, out),
+        ["loaders", loader, game] => loaders(facade, loader, game, out),
         _ => Err(USAGE.into()),
     }
 }
@@ -40,11 +42,37 @@ fn list(facade: &dyn Facade, flags: &[&str], out: Out<'_>) -> Result<(), CliErro
     }
 }
 
+/// Prints the versions of a loader for a game version, the stable ones marked.
+fn loaders(facade: &dyn Facade, loader: &str, game: &str, out: Out<'_>) -> Result<(), CliError> {
+    let command = Command::Versions(VersionCommand::LoaderVersions {
+        loader: parse_loader(loader)?,
+        game_version: game.to_owned(),
+    });
+    match call(facade, command)? {
+        Response::LoaderVersions(versions) => {
+            for v in versions {
+                let mark = if v.stable { "stable" } else { "" };
+                writeln!(out, "{:<24} {mark}", v.version)?;
+            }
+            Ok(())
+        }
+        other => Err(unexpected(&other)),
+    }
+}
+
 /// Installs a version's files without starting the game and prints the progress.
-fn install(facade: &dyn Facade, id: &str, out: Out<'_>) -> Result<(), CliError> {
+fn install(
+    facade: &dyn Facade,
+    id: &str,
+    loader: Option<LoaderRequest>,
+    out: Out<'_>,
+) -> Result<(), CliError> {
     // Subscribe before the command so no event is missed.
     let events = facade.subscribe();
-    let command = Command::Versions(VersionCommand::Install { id: id.to_owned() });
+    let command = Command::Versions(VersionCommand::Install {
+        id: id.to_owned(),
+        loader,
+    });
     let task = match call(facade, command)? {
         Response::Task(task) => task,
         other => return Err(unexpected(&other)),

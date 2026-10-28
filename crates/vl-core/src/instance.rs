@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::component::ComponentKind;
 use crate::ids::{InstanceId, TaskId};
 
 /// The mod loader an instance runs on.
@@ -62,6 +63,16 @@ pub struct InstanceSummary {
     pub problem: Option<String>,
 }
 
+/// A mod loader to put on an instance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoaderRequest {
+    /// Which loader; must be a loader, not the game.
+    pub kind: ComponentKind,
+    /// The loader version; `None` picks the newest stable version for the game version.
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
 /// The parameters of a new instance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewInstance {
@@ -71,6 +82,9 @@ pub struct NewInstance {
     pub game_version: String,
     /// The group to show the instance in.
     pub group: Option<String>,
+    /// The mod loader to install on it; `None` creates a vanilla instance.
+    #[serde(default)]
+    pub loader: Option<LoaderRequest>,
 }
 
 /// Instance commands.
@@ -80,8 +94,17 @@ pub struct NewInstance {
 pub enum InstanceCommand {
     /// All instances → `Response::Instances`.
     List,
-    /// Creates an instance → `Response::Instance`.
+    /// Creates an instance → `Response::Instance`. With a loader the answer waits for the
+    /// loader's version list.
     Create(NewInstance),
+    /// Replaces the instance's loader (`None` removes it) → `Response::Instance`. The loader
+    /// must support the instance's game version.
+    SetLoader {
+        /// The instance.
+        id: InstanceId,
+        /// The new loader.
+        loader: Option<LoaderRequest>,
+    },
     /// Renames an instance and its directory → `Response::Instance`.
     Rename {
         /// The instance.

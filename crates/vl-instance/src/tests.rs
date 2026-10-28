@@ -19,6 +19,7 @@ fn new(name: &str) -> NewInstance {
         name: name.into(),
         game_version: "1.21.1".into(),
         group: None,
+        loader: None,
     }
 }
 
@@ -152,4 +153,60 @@ fn unknown_config_fields_and_missing_optionals_are_accepted() {
     let list = inst.list().unwrap();
     assert_eq!(list[0].loader, Loader::Fabric("0.16".into()));
     assert!(list[0].problem.is_none());
+}
+
+fn fabric(version: Option<&str>) -> Option<vl_core::instance::LoaderRequest> {
+    Some(vl_core::instance::LoaderRequest {
+        kind: vl_core::component::ComponentKind::Fabric,
+        version: version.map(str::to_owned),
+    })
+}
+
+#[test]
+fn creates_an_instance_with_a_loader_and_changes_it() {
+    let t = Tmp::new("loader");
+    let inst = Instances::open(&t.0.join("instances")).unwrap();
+    let mut n = new("Modded");
+    n.loader = fabric(Some("0.18.4"));
+    let a = inst.create(&n).unwrap();
+    assert_eq!(a.loader, Loader::Fabric("0.18.4".into()));
+    assert_eq!(a.game_version, "1.21.1");
+    let cfg = inst.load(&a.id).unwrap();
+    assert_eq!(cfg.components.len(), 2);
+
+    // Switching replaces the loader component, never adds a second one.
+    let quilt = Some(vl_core::instance::LoaderRequest {
+        kind: vl_core::component::ComponentKind::Quilt,
+        version: Some("0.30.0".into()),
+    });
+    let b = inst.set_loader(&a.id, quilt.as_ref()).unwrap();
+    assert_eq!(b.loader, Loader::Quilt("0.30.0".into()));
+    assert_eq!(inst.load(&a.id).unwrap().components.len(), 2);
+    let c = inst
+        .set_loader(&a.id, fabric(Some("0.19.0")).as_ref())
+        .unwrap();
+    assert_eq!(c.loader, Loader::Fabric("0.19.0".into()));
+
+    let d = inst.set_loader(&a.id, None).unwrap();
+    assert_eq!(d.loader, Loader::Vanilla);
+    assert_eq!(inst.load(&a.id).unwrap().components.len(), 1);
+    assert_eq!(inst.list().unwrap()[0].loader, Loader::Vanilla);
+}
+
+#[test]
+fn a_loader_needs_a_chosen_safe_version() {
+    let t = Tmp::new("loader-bad");
+    let inst = Instances::open(&t.0.join("instances")).unwrap();
+    let mut n = new("Modded");
+    n.loader = fabric(None);
+    assert!(inst.create(&n).is_err());
+    n.loader = fabric(Some("../x"));
+    assert!(inst.create(&n).is_err());
+    n.loader = Some(vl_core::instance::LoaderRequest {
+        kind: vl_core::component::ComponentKind::Game,
+        version: Some("1.0".into()),
+    });
+    assert!(inst.create(&n).is_err());
+    // Nothing half-made is left in the list.
+    assert!(inst.list().unwrap().is_empty());
 }

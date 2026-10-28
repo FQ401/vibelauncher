@@ -151,6 +151,7 @@ fn instances_are_created_renamed_and_deleted_with_events() {
             name: "Survival".into(),
             game_version: "26.3".into(),
             group: None,
+            loader: None,
         })))
         .wait()
         .unwrap()
@@ -179,6 +180,7 @@ fn instances_are_created_renamed_and_deleted_with_events() {
             name: "Future".into(),
             game_version: "99.0".into(),
             group: None,
+            loader: None,
         })))
         .wait()
         .unwrap_err();

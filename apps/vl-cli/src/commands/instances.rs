@@ -1,9 +1,9 @@
 //! `instances …`.
 
-use vl_core::instance::{InstanceCommand, NewInstance};
-use vl_core::{Command, Facade, Response};
+use vl_core::instance::{InstanceCommand, LoaderRequest, NewInstance};
+use vl_core::{Command, Facade, InstanceId, Response};
 
-use super::{CliError, Out, USAGE, call, unexpected};
+use super::{CliError, Out, USAGE, call, loader_flags, parse_loader, unexpected};
 
 pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<(), CliError> {
     match args {
@@ -24,15 +24,44 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
             }
             other => Err(unexpected(&other)),
         },
-        ["create", name, version] => {
+        ["create", name, version, flags @ ..] => {
             let command = Command::Instances(InstanceCommand::Create(NewInstance {
                 name: (*name).into(),
                 game_version: (*version).into(),
                 group: None,
+                loader: loader_flags(flags)?,
             }));
             match call(facade, command)? {
                 Response::Instance(i) => {
-                    writeln!(out, "created {} ({})", i.id, i.name)?;
+                    writeln!(out, "created {} ({}) {:?}", i.id, i.name, i.loader)?;
+                    Ok(())
+                }
+                other => Err(unexpected(&other)),
+            }
+        }
+        ["set-loader", instance, loader, flags @ ..] => {
+            let id = InstanceId::new(instance).ok_or(CliError::from(USAGE))?;
+            let request = if *loader == "none" {
+                if !flags.is_empty() {
+                    return Err(USAGE.into());
+                }
+                None
+            } else {
+                let kind = parse_loader(loader)?;
+                let version = match flags {
+                    [] => None,
+                    ["--loader-version", v] => Some((*v).to_owned()),
+                    _ => return Err(USAGE.into()),
+                };
+                Some(LoaderRequest { kind, version })
+            };
+            let command = Command::Instances(InstanceCommand::SetLoader {
+                id,
+                loader: request,
+            });
+            match call(facade, command)? {
+                Response::Instance(i) => {
+                    writeln!(out, "{} now runs {:?}", i.id, i.loader)?;
                     Ok(())
                 }
                 other => Err(unexpected(&other)),

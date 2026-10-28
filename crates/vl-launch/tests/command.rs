@@ -268,6 +268,7 @@ fn prepare_installs_chooses_java_and_warns() {
     let runtimes = [runtime(21, Arch::X86_64), runtime(8, Arch::X86_64)];
     let input = PrepareInput {
         version: "1.0",
+        loader: None,
         game_dir: &game,
         session: &session,
         settings: &settings,
@@ -321,6 +322,7 @@ fn launchwrapper_versions_get_java_8_even_when_newer_is_installed() {
     let runtimes = [runtime(21, Arch::X86_64), runtime(8, Arch::X86_64)];
     let input = PrepareInput {
         version: "1.0",
+        loader: None,
         game_dir: &game,
         session: &session,
         settings: &settings,
@@ -350,4 +352,101 @@ fn launchwrapper_versions_get_java_8_even_when_newer_is_installed() {
     };
     let err = prepare(&installer, &input, &Job::new()).expect_err("too new");
     assert_eq!(err.kind, ErrorKind::Java);
+}
+
+#[test]
+fn prepare_with_a_loader_downloads_its_libraries_and_starts_its_main_class() {
+    let server = Arc::new(FakeServer::default());
+    add_version(&server, "1.0", "1.0", json!({}), json!({}));
+    let loader_jar = b"loader jar".to_vec();
+    server.add(
+        &format!("{BASE}/maven/net/example/loader/0.1/loader-0.1.jar"),
+        loader_jar.clone(),
+    );
+    let profile = json!({
+        "id": "example-loader-0.1-1.0",
+        "inheritsFrom": "1.0",
+        "type": "release",
+        "releaseTime": "2020-01-02T00:00:00+00:00",
+        "mainClass": "net.example.loader.Knot",
+        "arguments": {"game": [], "jvm": ["-Dexample.loader=1"]},
+        "libraries": [{
+            "name": "net.example:loader:0.1",
+            "url": format!("{BASE}/maven/"),
+            "sha1": sha1_hex(&loader_jar),
+            "size": loader_jar.len(),
+        }],
+    });
+    let profile = vl_meta::loader::LoaderProfile::normalize(
+        vl_core::component::ComponentKind::Fabric,
+        "1.0",
+        "0.1",
+        &serde_json::to_vec(&profile).unwrap(),
+    )
+    .unwrap();
+
+    let dir = TempDir::new();
+    let installer = installer(&server, dir.path());
+    let game = dir.path().join("game");
+    let session = session();
+    let settings = Settings::default();
+    let runtimes = [runtime(17, Arch::X86_64)];
+    let input = PrepareInput {
+        version: "1.0",
+        loader: Some(&profile),
+        game_dir: &game,
+        session: &session,
+        settings: &settings,
+        runtimes: &runtimes,
+        fixed_java: None,
+        launcher_name: "VibeLauncher",
+        launcher_version: "1",
+    };
+    let prepared = prepare(&installer, &input, &Job::new()).expect("prepare");
+
+    let jar = installer
+        .layout()
+        .libraries_dir()
+        .join("net/example/loader/0.1/loader-0.1.jar");
+    assert_eq!(std::fs::read(jar).unwrap(), loader_jar);
+    assert_eq!(prepared.installed.id, "example-loader-0.1-1.0");
+    // The vanilla client jar is the game, the loader's class comes first on the class path.
+    assert_eq!(
+        prepared.installed.client_jar,
+        installer.layout().client_jar("1.0")
+    );
+    let args = &prepared.command.args;
+    assert!(args.contains(&"net.example.loader.Knot".to_owned()));
+    assert!(!args.contains(&"net.example.Main".to_owned()));
+    assert!(args.contains(&"-Dexample.loader=1".to_owned()));
+    let classpath = value_after(args, "-cp");
+    let loader_at = classpath.find("loader-0.1.jar").unwrap();
+    assert!(
+        loader_at < classpath.find("lib-1.0.jar").unwrap(),
+        "{classpath}"
+    );
+    // The game arguments of the vanilla version are kept.
+    assert_eq!(value_after(args, "--version"), "example-loader-0.1-1.0");
+}
+
+#[test]
+fn a_loader_profile_for_another_game_version_is_refused() {
+    let server = Arc::new(FakeServer::default());
+    add_version(&server, "1.0", "1.0", json!({}), json!({}));
+    let profile = json!({
+        "id": "x-1.1", "inheritsFrom": "1.1", "mainClass": "a.B", "libraries": [],
+    });
+    let profile = vl_meta::loader::LoaderProfile::normalize(
+        vl_core::component::ComponentKind::Quilt,
+        "1.1",
+        "0.1",
+        &serde_json::to_vec(&profile).unwrap(),
+    )
+    .unwrap();
+    let dir = TempDir::new();
+    let installer = installer(&server, dir.path());
+    let err = installer
+        .install_with("1.0", Some(&profile), None, &Job::new())
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidInput);
 }

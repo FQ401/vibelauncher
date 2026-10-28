@@ -6,6 +6,7 @@ use std::path::Path;
 use vl_core::java::JavaRuntime;
 use vl_core::settings::Settings;
 use vl_core::{Error, ErrorKind, Result};
+use vl_meta::loader::LoaderProfile;
 
 use crate::command::{self, CommandInput, CommandLine};
 use crate::install::{Installed, Installer};
@@ -22,6 +23,8 @@ const MAX_HEAP_32_BIT_MIB: u32 = 1024;
 pub struct PrepareInput<'a> {
     /// The game version id to install and launch.
     pub version: &'a str,
+    /// The mod loader's profile (for `version`), if the instance has one.
+    pub loader: Option<&'a LoaderProfile>,
     /// The instance's game directory (created when missing).
     pub game_dir: &'a Path,
     /// The player's session. It is a parameter on purpose: the caller decides where it comes
@@ -59,7 +62,8 @@ pub struct Prepared {
 /// Everything [`Installer::install`] reports, `Java` when no runtime fits, `Io` when the game
 /// directory cannot be created, `InvalidInput` for unusable settings or session.
 pub fn prepare(installer: &Installer, input: &PrepareInput<'_>, job: &Job) -> Result<Prepared> {
-    let installed = installer.install(input.version, Some(input.game_dir), job)?;
+    let installed =
+        installer.install_with(input.version, input.loader, Some(input.game_dir), job)?;
     job.check()?;
     fs::create_dir_all(input.game_dir)
         .map_err(|e| Error::new(ErrorKind::Io, format!("{}: {e}", input.game_dir.display())))?;

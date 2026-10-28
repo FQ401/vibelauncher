@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use vl_core::instance::InstanceState;
+use vl_core::component::ComponentSet;
+use vl_core::instance::{InstanceState, LoaderRequest};
 use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
 use vl_core::log::{LogBatch, LogLevel, LogLine, LogSource};
 use vl_core::settings::Settings;
@@ -23,7 +24,8 @@ use vl_core::{Error, ErrorKind, Event, EventBus, InstanceId, Replier, Response};
 use vl_java::select::JavaRequirement;
 use vl_launch::process::{self, GameBatch, RunningGame, SpawnOptions};
 use vl_launch::{Installer, InstallerOptions, Job, Layout, PrepareInput};
-use vl_net::{CancelToken, Client, NetConfig};
+use vl_loaders::{Loaders, LoadersOptions};
+use vl_net::{CancelToken, Client, Control, NetConfig};
 use vl_store::Store;
 use vl_tasks::{TaskContext, TaskHandle, TaskSpec};
 
@@ -44,6 +46,7 @@ enum Active {
 #[derive(Clone)]
 pub(crate) struct Service {
     installer: Arc<Installer>,
+    loaders: Arc<Loaders>,
     active: Arc<Mutex<HashMap<InstanceId, Active>>>,
     events: Arc<EventBus>,
 }
@@ -53,6 +56,11 @@ impl Service {
         let mut config = NetConfig::new(LAUNCHER_VERSION);
         config.cache_dir = Some(store.cache_dir().join("http"));
         let client = Client::new(config)?;
+        let loaders = Loaders::new(
+            client.clone(),
+            store.data_dir().join("loaders"),
+            LoadersOptions::default(),
+        );
         let installer = Installer::new(
             client,
             Layout::new(store.data_dir()),
@@ -60,9 +68,20 @@ impl Service {
         );
         Ok(Self {
             installer: Arc::new(installer),
+            loaders: Arc::new(loaders),
             active: Arc::default(),
             events,
         })
+    }
+
+    /// The mod loader sources.
+    pub(crate) fn loaders(&self) -> &Loaders {
+        &self.loaders
+    }
+
+    /// Whether the instance is preparing or running.
+    pub(crate) fn is_active(&self, instance: &InstanceId) -> bool {
+        self.active().contains_key(instance)
     }
 
     fn active(&self) -> MutexGuard<'_, HashMap<InstanceId, Active>> {
@@ -112,7 +131,7 @@ fn stop(service: &Service, instance: &InstanceId) -> vl_core::Result<Response> {
 /// Everything a launch task needs, gathered before the task starts.
 struct Plan {
     request: LaunchRequest,
-    version: String,
+    components: ComponentSet,
     game_dir: std::path::PathBuf,
     log_dir: std::path::PathBuf,
     settings: Settings,
@@ -125,10 +144,9 @@ fn launch(backend: &Backend, request: LaunchRequest) -> vl_core::Result<Response
     let service = backend.launch.clone();
     let id = request.instance.clone();
     let config = backend.instances.load(&id)?;
-    let version = config
-        .game_version()
-        .map(str::to_owned)
-        .ok_or_else(|| Error::invalid_input(format!("instance {id} has no game version")))?;
+    let components =
+        ComponentSet::from_pairs(config.components.iter().map(|c| (&*c.uid, &*c.version)))
+            .map_err(|e| Error::new(e.kind, format!("instance {id}: {}", e.message)))?;
     let plan = Plan {
         game_dir: backend.instances.game_dir(&id)?,
         log_dir: backend.instances.dir(&id)?.join("logs"),
@@ -136,7 +154,7 @@ fn launch(backend: &Backend, request: LaunchRequest) -> vl_core::Result<Response
         accounts: backend.accounts.clone(),
         java: backend.java.clone(),
         instances: backend.instances.clone(),
-        version,
+        components,
         request,
     };
 
@@ -184,8 +202,23 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
             Some(path) => Some(plan.java.probe(path)?),
             None => None,
         };
+        let loader = match plan.components.loader() {
+            Some(l) => {
+                ctx.set_stage("loader");
+                let control = Control::with_cancel(job.cancel_token().clone());
+                Some(service.loaders.profile(
+                    l.kind,
+                    plan.components.game_version(),
+                    &l.version,
+                    &control,
+                )?)
+            }
+            None => None,
+        };
+        job.check()?;
         let input = PrepareInput {
-            version: &plan.version,
+            version: plan.components.game_version(),
+            loader: loader.as_ref(),
             game_dir: &plan.game_dir,
             session: &session,
             settings: &plan.settings,
@@ -259,9 +292,10 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
 /// Downloads a managed Java when no installed one runs the version, so the launch never stops
 /// at "no Java found". A Java fixed in the settings is never replaced.
 fn ensure_java(service: &Service, plan: &Plan, job: &Job) -> vl_core::Result<()> {
-    let installed = service
-        .installer
-        .install(&plan.version, Some(&plan.game_dir), job)?;
+    let installed =
+        service
+            .installer
+            .install(plan.components.game_version(), Some(&plan.game_dir), job)?;
     let wanted = installed.version.java_version_or_default();
     let arch = installed.platform.arch;
     if vl_launch::java::choose(&plan.java.runtimes(), wanted.major_version, None, arch).is_ok() {
@@ -317,19 +351,47 @@ pub(crate) fn with_job<T>(
     })
 }
 
-/// `VersionCommand::Install`: a task that installs `version` without starting it.
-pub(crate) fn install(backend: &Backend, version: &str) -> vl_core::Result<Response> {
+/// `VersionCommand::Install`: a task that installs `version` (and the profile and libraries of
+/// `loader`, when given) without starting it.
+pub(crate) fn install(
+    backend: &Backend,
+    version: &str,
+    loader: Option<LoaderRequest>,
+) -> vl_core::Result<Response> {
     if !vl_launch::layout::is_safe_component(version) {
         return Err(Error::new(
             ErrorKind::InvalidInput,
             format!("invalid version id {version:?}"),
         ));
     }
+    if loader.as_ref().is_some_and(|l| !l.kind.is_loader()) {
+        return Err(Error::invalid_input("the game is not a loader"));
+    }
     let installer = Arc::clone(&backend.launch.installer);
+    let loaders = Arc::clone(&backend.launch.loaders);
     let version = version.to_owned();
+    let subject = match &loader {
+        Some(l) => format!("{version} + {}", l.kind.display_name()),
+        None => version.clone(),
+    };
     let handle = backend.tasks().spawn(
-        TaskSpec::new(TaskKind::InstallVersion).subject(&version),
-        move |ctx| with_job(ctx, |job| installer.install(&version, None, job)).map(|_| ()),
+        TaskSpec::new(TaskKind::InstallVersion).subject(&subject),
+        move |ctx| {
+            with_job(ctx, |job| {
+                let profile = match &loader {
+                    Some(l) => {
+                        let control = Control::with_cancel(job.cancel_token().clone());
+                        let chosen =
+                            loaders.pick(l.kind, &version, l.version.as_deref(), &control)?;
+                        Some(loaders.profile(l.kind, &version, &chosen.version, &control)?)
+                    }
+                    None => None,
+                };
+                installer
+                    .install_with(&version, profile.as_ref(), None, job)
+                    .map(|_| ())
+            })
+        },
     );
     Ok(Response::Task(handle.id()))
 }

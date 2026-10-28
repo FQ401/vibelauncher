@@ -3,8 +3,11 @@
 //! Delete moves the instance into the launcher's own trash inside the instances directory (see
 //! `vl_instance::Instances::delete`); no command erases data.
 
-use vl_core::instance::{InstanceCommand, InstanceEvent};
-use vl_core::{Event, Replier, Response};
+use std::thread;
+
+use vl_core::instance::{InstanceCommand, InstanceEvent, InstanceSummary, LoaderRequest};
+use vl_core::{Error, Event, InstanceId, Replier, Response};
+use vl_net::Control;
 
 use crate::Backend;
 
@@ -12,12 +15,18 @@ pub(crate) fn handle(backend: &Backend, command: InstanceCommand, replier: Repli
     let service = &backend.instances;
     let result = match command {
         InstanceCommand::List => service.list().map(Response::Instances),
+        InstanceCommand::Create(new) if new.loader.is_some() => {
+            return create_with_loader(backend, new, replier);
+        }
         InstanceCommand::Create(new) => service.create(&new).map(|i| {
             backend
                 .events
                 .publish(&Event::Instance(InstanceEvent::Added(i.clone())));
             Response::Instance(i)
         }),
+        InstanceCommand::SetLoader { id, loader } => {
+            return set_loader(backend, id, loader, replier);
+        }
         InstanceCommand::Rename { id, name } => service.rename(&id, &name).map(|i| {
             if i.id != id {
                 backend
@@ -46,6 +55,82 @@ pub(crate) fn handle(backend: &Backend, command: InstanceCommand, replier: Repli
     replier.send(result);
 }
 
+/// Runs `work` on its own thread (it may wait for the network) and answers with its result.
+fn answer_later(
+    replier: Replier,
+    work: impl FnOnce() -> vl_core::Result<Response> + Send + 'static,
+) {
+    // A thread that cannot start drops the replier; the caller sees a dropped command.
+    let _ = thread::Builder::new()
+        .name("instance-loader".into())
+        .spawn(move || replier.send(work()));
+}
+
+fn create_with_loader(
+    backend: &Backend,
+    mut new: vl_core::instance::NewInstance,
+    replier: Replier,
+) {
+    let backend_instances = backend.instances.clone();
+    let events = std::sync::Arc::clone(&backend.events);
+    let loaders = backend.launch.loaders().clone();
+    answer_later(replier, move || {
+        if let Some(request) = &new.loader {
+            let chosen = loaders.pick(
+                request.kind,
+                new.game_version.trim(),
+                request.version.as_deref(),
+                &Control::default(),
+            )?;
+            new.loader = Some(LoaderRequest {
+                kind: request.kind,
+                version: Some(chosen.version),
+            });
+        }
+        let created = backend_instances.create(&new)?;
+        events.publish(&Event::Instance(InstanceEvent::Added(created.clone())));
+        Ok(Response::Instance(created))
+    });
+}
+
+fn set_loader(backend: &Backend, id: InstanceId, loader: Option<LoaderRequest>, replier: Replier) {
+    if backend.launch.is_active(&id) {
+        replier.send(Err(Error::conflict(format!("instance {id} is running"))));
+        return;
+    }
+    let instances = backend.instances.clone();
+    let events = std::sync::Arc::clone(&backend.events);
+    let loaders = backend.launch.loaders().clone();
+    answer_later(replier, move || {
+        let loader = match loader {
+            Some(request) => {
+                let game = instances
+                    .load(&id)?
+                    .game_version()
+                    .map(str::to_owned)
+                    .ok_or_else(|| Error::invalid_input(format!("instance {id} has no game")))?;
+                if !request.kind.is_loader() {
+                    return Err(Error::invalid_input("the game is not a loader"));
+                }
+                let chosen = loaders.pick(
+                    request.kind,
+                    &game,
+                    request.version.as_deref(),
+                    &Control::default(),
+                )?;
+                Some(LoaderRequest {
+                    kind: request.kind,
+                    version: Some(chosen.version),
+                })
+            }
+            None => None,
+        };
+        let summary: InstanceSummary = instances.set_loader(&id, loader.as_ref())?;
+        events.publish(&Event::Instance(InstanceEvent::Changed(summary.clone())));
+        Ok(Response::Instance(summary))
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use vl_core::instance::{InstanceCommand, NewInstance};
@@ -67,6 +152,7 @@ mod tests {
             name: "One".into(),
             game_version: "1.21.1".into(),
             group: None,
+            loader: None,
         })) else {
             panic!("create failed");
         };

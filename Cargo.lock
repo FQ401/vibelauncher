@@ -4094,6 +4094,7 @@ dependencies = [
  "vl-instance",
  "vl-java",
  "vl-launch",
+ "vl-loaders",
  "vl-meta",
  "vl-net",
  "vl-settings",
@@ -4170,6 +4171,17 @@ dependencies = [
  "vl-store",
  "vl-tasks",
  "zip",
+]
+
+[[package]]
+name = "vl-loaders"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "vl-core",
+ "vl-meta",
+ "vl-net",
+ "vl-store",
 ]
 
 [[package]]

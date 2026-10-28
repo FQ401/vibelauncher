@@ -24,7 +24,7 @@ use crate::launch::{LaunchCommand, LaunchEvent};
 use crate::log::{LogBatch, LogLine};
 use crate::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
 use crate::task::{TaskCommand, TaskEvent, TaskSnapshot};
-use crate::version::{GameVersion, VersionCommand, VersionEvent};
+use crate::version::{GameVersion, LoaderVersionInfo, VersionCommand, VersionEvent};
 
 /// The launcher behind a front end: the real backend or the mock.
 pub trait Facade: Send + Sync {
@@ -79,6 +79,8 @@ pub enum Response {
     Instance(InstanceSummary),
     /// Game versions.
     Versions(Vec<GameVersion>),
+    /// Versions of a mod loader for a game version, newest first.
+    LoaderVersions(Vec<LoaderVersionInfo>),
     /// Accounts.
     Accounts(Vec<Account>),
     /// One account.

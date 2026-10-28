@@ -118,7 +118,8 @@ impl Instances {
             .collect())
     }
 
-    /// Creates a vanilla instance.
+    /// Creates an instance: vanilla, or with the loader named in `new` (its version must be
+    /// chosen; see [`InstanceConfig::set_loader`]).
     pub fn create(&self, new: &NewInstance) -> vl_core::Result<InstanceSummary> {
         let name = new.name.trim();
         if name.is_empty() {
@@ -129,7 +130,10 @@ impl Instances {
             return Err(Error::invalid_input("the game version is empty"));
         }
         self.clean_leftovers();
-        let cfg = InstanceConfig::vanilla(name, version, new.group.clone(), now());
+        let mut cfg = InstanceConfig::vanilla(name, version, new.group.clone(), now());
+        if new.loader.is_some() {
+            cfg.set_loader(new.loader.as_ref())?;
+        }
         let (id, target) = self.free_name(&naming::dir_name(name));
         let staging = self.root.join(format!("{CREATING_PREFIX}{id}"));
         let _ = fs::remove_dir_all(&staging);
@@ -172,6 +176,22 @@ impl Instances {
         }
         let new_id = InstanceId::new(&new_id).ok_or_else(|| Error::internal("empty id"))?;
         Ok(summary(&new_id, &cfg))
+    }
+
+    /// Replaces the loader of an instance (`None` makes it vanilla).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`InstanceConfig::set_loader`] and of loading and writing the config.
+    pub fn set_loader(
+        &self,
+        id: &InstanceId,
+        loader: Option<&vl_core::instance::LoaderRequest>,
+    ) -> vl_core::Result<InstanceSummary> {
+        let mut cfg = self.load(id)?;
+        cfg.set_loader(loader)?;
+        write_config(&self.dir(id)?.join(CONFIG_FILE), &cfg)?;
+        Ok(summary(id, &cfg))
     }
 
     /// Moves an instance into `.trash/`; nothing is erased. Returns where it went.
