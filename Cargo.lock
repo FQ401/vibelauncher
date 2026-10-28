@@ -4091,6 +4091,7 @@ version = "0.0.0"
 dependencies = [
  "vl-auth",
  "vl-core",
+ "vl-install",
  "vl-instance",
  "vl-java",
  "vl-launch",
@@ -4129,6 +4130,23 @@ dependencies = [
  "regex",
  "serde",
  "toml",
+]
+
+[[package]]
+name = "vl-install"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "vl-core",
+ "vl-net",
+ "vl-platforms",
+ "vl-resources",
+ "vl-store",
+ "zip",
 ]
 
 [[package]]

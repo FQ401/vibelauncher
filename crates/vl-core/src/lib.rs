@@ -14,6 +14,7 @@ pub mod component;
 pub mod error;
 pub mod facade;
 pub mod ids;
+pub mod install;
 pub mod instance;
 pub mod java;
 pub mod launch;

@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::install::InstallRequest;
 
 /// The most results one search page may ask for.
 pub const MAX_SEARCH_LIMIT: u32 = 100;
@@ -472,6 +473,11 @@ pub enum CatalogCommand {
         /// The hashes, in hex.
         hashes: Vec<String>,
     },
+    /// Works out what installing a project into an instance would do → `Response::InstallPlan`.
+    PlanInstall(InstallRequest),
+    /// Installs a project and its required dependencies into an instance as a task
+    /// → `Response::Task`. The plan is worked out again when the task starts.
+    Install(InstallRequest),
 }
 
 #[cfg(test)]

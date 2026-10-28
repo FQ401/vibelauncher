@@ -48,7 +48,10 @@ commands:
   catalog project <slug>              show a project
   catalog versions <slug> [--version <v>] [--loader <l>]
                                       list a project's versions
-  catalog lookup <sha1>...            find which versions own files with these hashes";
+  catalog lookup <sha1>...            find which versions own files with these hashes
+  catalog install <slug|id> --instance <id> [--version <id>] [--channel <release|beta|alpha>] [--yes]
+                                      install a project and its required dependencies into an
+                                      instance; prints the plan first, --yes skips the question";
 
 /// A failed command line.
 #[derive(Debug)]

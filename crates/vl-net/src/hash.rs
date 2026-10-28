@@ -1,7 +1,7 @@
 //! Expected content checks and streaming hashing.
 
 use sha1::Sha1;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 use crate::error::NetError;
 
@@ -12,6 +12,8 @@ pub enum Checksum {
     Sha1(String),
     /// SHA-256, 64 hex digits.
     Sha256(String),
+    /// SHA-512, 128 hex digits.
+    Sha512(String),
 }
 
 impl Checksum {
@@ -25,16 +27,22 @@ impl Checksum {
         valid_hex(hex, 64).then(|| Self::Sha256(hex.to_ascii_lowercase()))
     }
 
+    /// A SHA-512 checksum from hex (any case); `None` when malformed.
+    pub fn sha512(hex: &str) -> Option<Self> {
+        valid_hex(hex, 128).then(|| Self::Sha512(hex.to_ascii_lowercase()))
+    }
+
     fn algorithm(&self) -> &'static str {
         match self {
             Self::Sha1(_) => "sha1",
             Self::Sha256(_) => "sha256",
+            Self::Sha512(_) => "sha512",
         }
     }
 
     fn expected(&self) -> &str {
         match self {
-            Self::Sha1(h) | Self::Sha256(h) => h,
+            Self::Sha1(h) | Self::Sha256(h) | Self::Sha512(h) => h,
         }
     }
 }
@@ -56,6 +64,7 @@ pub(crate) enum Hasher {
     None,
     Sha1(Box<Sha1>),
     Sha256(Box<Sha256>),
+    Sha512(Box<Sha512>),
 }
 
 impl Hasher {
@@ -64,6 +73,7 @@ impl Hasher {
             None => Self::None,
             Some(Checksum::Sha1(_)) => Self::Sha1(Box::new(Sha1::new())),
             Some(Checksum::Sha256(_)) => Self::Sha256(Box::new(Sha256::new())),
+            Some(Checksum::Sha512(_)) => Self::Sha512(Box::new(Sha512::new())),
         }
     }
 
@@ -72,6 +82,7 @@ impl Hasher {
             Self::None => {}
             Self::Sha1(h) => h.update(data),
             Self::Sha256(h) => h.update(data),
+            Self::Sha512(h) => h.update(data),
         }
     }
 
@@ -83,6 +94,7 @@ impl Hasher {
             Self::None => return Ok(()),
             Self::Sha1(h) => to_hex(&h.finalize()),
             Self::Sha256(h) => to_hex(&h.finalize()),
+            Self::Sha512(h) => to_hex(&h.finalize()),
         };
         if actual == checksum.expected() {
             Ok(())
@@ -116,6 +128,17 @@ mod tests {
         h.update(b"ab");
         h.update(b"c");
         assert!(h.verify(c.as_ref()).is_ok());
+    }
+
+    #[test]
+    fn sha512_is_checked() {
+        let digest = to_hex(&Sha512::digest(b"abc"));
+        assert!(digest.starts_with("ddaf35a193617aba"));
+        let c = Checksum::sha512(&digest);
+        let mut h = Hasher::new(c.as_ref());
+        h.update(b"abc");
+        assert!(h.verify(c.as_ref()).is_ok());
+        assert!(Checksum::sha512("abc").is_none());
     }
 
     #[test]
