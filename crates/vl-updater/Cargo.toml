@@ -1,0 +1,28 @@
+[package]
+name = "vl-updater"
+description = "Self-update on the machine: install method detection, manifest check, verified staging and file replacement."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-net.workspace = true
+vl-store.workspace = true
+vl-update.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+zip.workspace = true
+# Selects the pure-Rust deflate backend that `zip` needs.
+flate2.workspace = true
+
+[dev-dependencies]
+minisign.workspace = true
+
+[lints]
+workspace = true

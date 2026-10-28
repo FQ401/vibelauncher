@@ -43,8 +43,8 @@ layer = "native"
 
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
-| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-bisect`, `vl-modrinth`, `vl-curseforge` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
-| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-install`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
+| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-bisect`, `vl-modrinth`, `vl-curseforge`, `vl-update` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
+| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-install`, `vl-launch`, `vl-updater` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
 | `app` | `vl-cli`, the desktop app | `core`, `backend`, `ui` | Binaries: choose a backend, own the window or the terminal. Live in `apps/`. |
@@ -63,9 +63,9 @@ Cargo itself rejects dependency cycles, including cycles inside a layer.
 app       vl-cli · vibelauncher          → core, backend, ui
 ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
-native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-install · vl-launch
+native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-install · vl-launch · vl-updater
                                          → core, native
-core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth · vl-curseforge → core
+core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth · vl-curseforge · vl-update → core
 ```
 
 ## Crates
@@ -94,6 +94,8 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth 
 | `vl-curseforge` | core | CurseForge API v1 as pure functions: request URLs (search of Minecraft projects by class — mods `6`, modpacks `4471`, resource packs, shaders, data packs — with game version, loader, category ids, sort and paging cut to 50 a page and to the 10 000-result window; project, project files with one game version and one loader filter, one file, categories, fingerprint lookup, and the batches `POST /v1/mods/files` and `POST /v1/mods` of at most 500 ids), the `ApiKey` type (masked `Debug` and `Display`), the CurseForge fingerprint (MurmurHash2, seed 1, over the bytes without tab, line feed, carriage return and space; also fed in pieces with `Fingerprinter` once the counted length is known), and tolerant parsing of `{"data": ...}` answers into the catalog types of `vl-core` (a file is a version with one file; game version labels split into game versions and loaders; a file without `downloadUrl` gets `https://edge.forgecdn.net/files/{id / 1000}/{id % 1000}/{encoded name}`; size limits, damaged entries skipped, unsafe file names and non-`https` links dropped). Batches parse into `ModFile` (id, project, name, size, SHA-1, the API's `https` download URL or none) and `ModSummary` (class, slug, website page, whether distribution is allowed). The `manifest` module parses a modpack's `manifest.json` (`minecraftModpack`, version 1; Minecraft version, mod loaders with the primary one split as `forge-47.2.0` → Forge `47.2.0`, a Minecraft version prefix dropped; files as project and file ids with `required`, each file id once; the override folder, `overrides` by default, a safe relative path; capped sizes and counts). |
 | `vl-platforms` | native | Online mod platforms behind the `CatalogSource` trait; `ModrinthSource` and `CurseForgeSource` fetch through `vl-net` (HTTP cache, retries, size caps) and pace themselves with a rate limiter that follows the server's `X-Ratelimit-*` headers and `429`. A platform is a module and a `Provider` variant. The CurseForge key comes from an `ApiKeySource`: the `VL_CURSEFORGE_API_KEY` environment variable (development), then the user's key in the OS keyring (`KeyringApiKey`). `CurseForgeSource::files_by_ids` and `mods_by_ids` read files and projects in batches (repeats asked once, at most 20 000 ids, `NoApiKey` before anything is sent). `CatalogSource::file_hash` names the hash a platform finds local files by: SHA-1 for Modrinth, the fingerprint for CurseForge, whose `versions_by_hashes` and `latest_versions_by_hashes` take fingerprints in decimal and answer SHA hashes with `Unsupported` (Modrinth answers fingerprints so). |
 | `vl-install` | native | Installing a catalog project into an instance: picking the version for the instance's game version and loader, following required dependencies, recognizing what is installed, the plan, verified download, all-or-nothing add to the resource folders, and the origin records (`<instance>/.vibelauncher/resources.json`). The `mrpack` module installs a Modrinth modpack (`.mrpack`, from a file or a catalog project) into a new game directory: archive checks (entry names, symlinks, entry counts), verified downloads of the client files, `overrides/` then `client-overrides/`, and the pack record `<instance>/.vibelauncher/pack.json`. The `mrpack_update` module updates an installed pack while keeping the user's changes. The `cfpack` module installs a CurseForge modpack (a zip with `manifest.json`, from a file or a catalog project) the same way: archive checks, the files resolved by id through the API, verified downloads, the override folder, and the same pack and origin records; `cfpack_update` gives `mrpack_update` the files of a new CurseForge pack in the same shape, so both formats are updated by one set of rules. |
+| `vl-update` | core | Self-update rules: the release manifest `latest.json` verified with a detached minisign signature (`minisign-verify`, prehashed signatures only) before it is parsed, the release public key embedded at build time (`RELEASE_PUBLIC_KEY`; without one every check fails closed), versions (`MAJOR.MINOR.PATCH[-pre]`, Semantic Versioning order), install method detection, the decision for a manifest (up to date, an update with its artifact, or a newer version to install by hand) with rollback refused, and the replacement plan as data. |
+| `vl-updater` | native | Self-update on the machine: the install method of the running process, the manifest check through `vl-net`, the rollback floor, verified staging downloads, the game guard, and the replacement of portable folders and AppImages; the "just updated" marker. |
 | `vl-cli` | app | The headless command line. |
 
 Third-party crates are declared once in `[workspace.dependencies]` and used with
@@ -645,6 +647,51 @@ On disk (`vl-settings`, TOML, written with `vl_store::write_atomic`):
 - a file that cannot be parsed gives defaults, a malformed or out-of-range group is reset to its
   default (in an instance file: dropped, so the instance inherits), each with a
   `SettingsEvent::Warning`; the original is copied to `<file>.bad` first.
+
+## Self-update
+
+The launcher trusts its own signed manifest, not the operating system's code signing.
+
+- **Manifest.** `latest.json` (format 1, stable channel) holds the version, the release date, the
+  minimum version that may update itself, the release page, and per platform and install method
+  one artifact with its `https` URL, SHA-256 and size. `latest.json.minisig` is its detached
+  minisign signature. Both are fetched past the HTTP cache with size caps (64 KiB and 2 KiB); the
+  signature is checked over the exact bytes before they are parsed. Artifacts of an unknown OS,
+  architecture or kind are skipped; a pre-release on the stable channel, a non-`https` URL, a
+  malformed hash, a size of 0 or above 1 GiB, or two artifacts for the same platform and kind
+  make the manifest invalid.
+- **Key.** The minisign public key is embedded at build time (`vl_update::RELEASE_PUBLIC_KEY`,
+  from the `VL_UPDATE_PUBLIC_KEY` environment variable). A build without it refuses every
+  update check with `ErrorKind::Unsupported`.
+- **Rollback.** A manifest older than the running version, or than the newest manifest verified
+  on this machine (`<data>/updates/state.json`), is refused; the stored version only grows.
+- **Install method.** Detected from the running executable: the marker file
+  `vibelauncher.install` next to it (`msi`, `deb`, `rpm`, `portable`), the `APPIMAGE` variable
+  on Linux, a `.app` bundle on macOS, a system path below `/usr` (unknown), else a portable
+  folder.
+
+  | Install method | Artifact | Replacement | Started afterwards |
+  |---|---|---|---|
+  | MSI | `msi` | run the new package (not implemented yet) | the executable |
+  | portable | `portable` (zip) | unpack over the folder | the executable |
+  | macOS app | `dmg` | copy the bundle from the disk image (not implemented yet) | the bundle |
+  | AppImage | `app_image` | rename the new file over the old one | the AppImage |
+  | deb, rpm, unknown | — | none: the release page is shown | — |
+
+  A running version below the minimum version is also sent to the release page.
+- **Download and replacement.** The artifact is downloaded through `vl-net` into
+  `<data>/updates/staging/<version>/` with its size and SHA-256 checked before the file appears
+  (progress and cancellation from the task); downloads of other versions are removed. The
+  replacement is never started while a game runs, and checks the file's size and SHA-256 again
+  first. A portable archive is unpacked into `<folder>/.vl-update-new/` (entry names checked, no
+  links, at most 10 000 entries and 2 GiB, no `data`, portable marker or install marker at its
+  top level); then each of its top-level items moves the old item into
+  `<folder>/.vl-update-old/` and takes its place, and a failure moves everything back. Items
+  the archive does not have, such as the user's `data` folder, are not touched. An AppImage is
+  copied next to the old one, made executable and renamed over it.
+- **After the update.** `<data>/updates/just-updated.json` records the old and the new version;
+  the next start reads and removes it, and reports it only when the running version is the new
+  one.
 
 ## Front ends
 
