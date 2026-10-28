@@ -55,6 +55,7 @@ commands:
   accounts refresh <account>          renew a Microsoft sign-in
   java list                           list Java runtimes
   java install <major>                download a Java runtime (8, 17, 21...)
+  java pick <major> [heap_mib]        show the Java a launch would choose (heap default 4096)
   launch <instance> [--offline]       launch and follow the game log
   catalog search <query> [--type <mod|modpack|resourcepack|shader|datapack>] [--version <v>]
                          [--loader <l>] [--category <c>] [--sort <relevance|downloads|follows|newest|updated>]

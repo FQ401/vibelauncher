@@ -334,13 +334,34 @@ fn launchwrapper_versions_get_java_8_even_when_newer_is_installed() {
     let prepared = prepare(&installer, &input, &Job::new()).expect("prepare");
     assert_eq!(prepared.java.runtime.major, 8);
 
-    // A 32-bit Java is the last resort and its heap is limited.
+    // A 32-bit Java is refused for the default heap, which it cannot hold.
     let only_32_bit = [runtime(8, Arch::X86)];
     let input = PrepareInput {
         runtimes: &only_32_bit,
         ..input
     };
-    let prepared = prepare(&installer, &input, &Job::new()).expect("prepare");
+    let err = prepare(&installer, &input, &Job::new()).expect_err("32-bit, large heap");
+    assert_eq!(err.kind, ErrorKind::Java);
+
+    // It is the last resort for a small heap.
+    let mut small = Settings::default();
+    small.memory.max_mib = 1024;
+    small.memory.min_mib = 512;
+    let small_input = PrepareInput {
+        settings: &small,
+        ..input
+    };
+    let prepared = prepare(&installer, &small_input, &Job::new()).expect("prepare");
+    assert_eq!(prepared.command.args[1], "-Xmx1024M");
+    assert!(prepared.java.reason.contains("32-bit"));
+
+    // A 32-bit Java fixed in the settings is respected, with the heap limited.
+    let fixed = runtime(8, Arch::X86);
+    let fixed_input = PrepareInput {
+        fixed_java: Some(&fixed),
+        ..input
+    };
+    let prepared = prepare(&installer, &fixed_input, &Job::new()).expect("prepare");
     assert_eq!(prepared.command.args[1], "-Xmx1024M");
     assert!(prepared.warnings.iter().any(|w| w.contains("32-bit")));
 

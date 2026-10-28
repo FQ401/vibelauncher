@@ -157,6 +157,20 @@ pub(crate) fn not_yet(replier: Replier, domain: &str, command: &impl std::fmt::D
     ))));
 }
 
+/// Which of `runtimes` a launch would use for a game that needs Java `major` with a heap of up to
+/// `heap_mib`, as the line the launch log carries; the error text when none fits (a managed Java
+/// is then downloaded).
+pub fn describe_java_pick(
+    runtimes: &[vl_core::java::JavaRuntime],
+    major: u32,
+    heap_mib: u32,
+) -> Result<String, String> {
+    let arch = vl_core::platform::Platform::current().arch;
+    vl_launch::java::choose(runtimes, major, None, arch, heap_mib)
+        .map(|choice| choice.reason)
+        .map_err(|e| e.message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -39,6 +39,8 @@ use vl_tasks::{TaskContext, TaskHandle, TaskSpec};
 
 use crate::Backend;
 
+/// The heap assumed when installing a loader outside a launch (no instance settings at hand).
+const DEFAULT_HEAP_MIB: u32 = 4096;
 const LAUNCHER_NAME: &str = "VibeLauncher";
 const LAUNCHER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -208,6 +210,7 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
                 &plan.java,
                 plan.components.game_version(),
                 Some(&plan.game_dir),
+                plan.settings.memory.max_mib,
                 job,
             )?;
         }
@@ -237,8 +240,11 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
                 kind,
                 profile,
                 Some(&plan.game_dir),
-                fixed.as_ref(),
-                &runtimes,
+                JavaPool {
+                    fixed: fixed.as_ref(),
+                    runtimes: &runtimes,
+                    heap_mib: plan.settings.memory.max_mib,
+                },
                 job,
             )?;
             if let Some(done) = done {
@@ -261,6 +267,11 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
     })?;
     ctx.check()?;
 
+    service.log(
+        LogSource::Launcher,
+        LogLevel::Info,
+        prepared.java.reason.clone(),
+    );
     for warning in &prepared.warnings {
         service.log(LogSource::Launcher, LogLevel::Warn, warning.clone());
     }
@@ -326,12 +337,14 @@ fn ensure_java(
     java: &crate::java::JavaService,
     game: &str,
     game_dir: Option<&std::path::Path>,
+    heap_mib: u32,
     job: &Job,
 ) -> vl_core::Result<()> {
     let installed = installer.install(game, game_dir, job)?;
     let wanted = installed.version.java_version_or_default();
     let arch = installed.platform.arch;
-    if vl_launch::java::choose(&java.runtimes(), wanted.major_version, None, arch).is_ok() {
+    if vl_launch::java::choose(&java.runtimes(), wanted.major_version, None, arch, heap_mib).is_ok()
+    {
         return Ok(());
     }
     job.report("java", 0, None, ProgressUnit::Bytes);
@@ -344,15 +357,29 @@ fn ensure_java(
 /// game files are installed first, then the loader's processors run on the Java the game would
 /// use (`fixed`, else the best of `runtimes`). The loader's own libraries are installed after
 /// this step (some of them are its output).
+/// The Java a loader installation may use.
+struct JavaPool<'a> {
+    /// The runtime fixed in the settings.
+    fixed: Option<&'a JavaRuntime>,
+    /// The installed runtimes.
+    runtimes: &'a [JavaRuntime],
+    /// The largest heap the game will start with.
+    heap_mib: u32,
+}
+
 fn install_loader(
     service: &Service,
     kind: ComponentKind,
     profile: &LoaderProfile,
     game_dir: Option<&std::path::Path>,
-    fixed: Option<&JavaRuntime>,
-    runtimes: &[JavaRuntime],
+    pool: JavaPool<'_>,
     job: &Job,
 ) -> vl_core::Result<Option<Installation>> {
+    let JavaPool {
+        fixed,
+        runtimes,
+        heap_mib,
+    } = pool;
     let installed = service
         .installer
         .install_with(&profile.inherits_from, None, game_dir, job)?;
@@ -361,7 +388,7 @@ fn install_loader(
     let arch = installed.platform.arch;
     let java = match fixed {
         Some(runtime) => vl_launch::java::check_fixed(runtime, required, arch)?,
-        None => vl_launch::java::choose(runtimes, required, None, arch)?,
+        None => vl_launch::java::choose(runtimes, required, None, arch, heap_mib)?,
     };
     let progress_job = job.clone();
     let control = Control::with_cancel(job.cancel_token().clone()).on_progress(move |p| {
@@ -480,11 +507,27 @@ pub(crate) fn install(
                     None => None,
                 };
                 if let Some(profile) = profile.as_ref().filter(|p| Loaders::needs_install(p.kind)) {
-                    ensure_java(&service.installer, &java, &version, None, job)?;
+                    ensure_java(
+                        &service.installer,
+                        &java,
+                        &version,
+                        None,
+                        DEFAULT_HEAP_MIB,
+                        job,
+                    )?;
                     let runtimes = java.runtimes();
-                    if let Some(done) =
-                        install_loader(&service, profile.kind, profile, None, None, &runtimes, job)?
-                    {
+                    if let Some(done) = install_loader(
+                        &service,
+                        profile.kind,
+                        profile,
+                        None,
+                        JavaPool {
+                            fixed: None,
+                            runtimes: &runtimes,
+                            heap_mib: DEFAULT_HEAP_MIB,
+                        },
+                        job,
+                    )? {
                         service.log(LogSource::Launcher, LogLevel::Info, describe(&done));
                     }
                 }
