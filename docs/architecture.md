@@ -289,6 +289,23 @@ The data directory holds:
   platform, project, version, hashes and whether it came as a dependency; a record counts only
   while the file's SHA-1 matches, a damaged file or entry is skipped and the damaged file is kept
   as `resources.json.bad`;
+- updates and origin discovery (`vl-install::updates`): `CatalogCommand::IdentifyMods` looks
+  files without an origin record up by SHA-1 (`version_files`) and writes their records.
+  `CheckUpdates` hashes every file of mods, resource packs, shader packs and data packs, asks
+  `version_files` once for all of them, then `POST /version_files/update` once for the mods
+  (loaders of the instance, its game version, `version_types` from the channel setting, release
+  only by default) and once for the other kinds (the loaders their installed versions have). The
+  answer is checked again: it must be the same project, fit the game version and loader, be of an
+  allowed channel and be published later than the installed version, so a check never proposes a
+  downgrade. The report lists `updates` (current to new), `from_pack` (files recorded in
+  `pack.json`, skipped unless `include_pack_files`; the pack is updated as a whole), and
+  `unchecked` (no origin and unknown to the platform, an origin the platform no longer knows, or
+  a mod in an instance without a loader). `PlanUpdate` and `Update` (an `InstallResource` task)
+  pin the chosen versions in the same planner as an install, reusing the check's scan and
+  versions, so new required dependencies are resolved the same way; the swap is the install
+  execution (all or nothing, disabled files stay disabled, the dependency flag of a record is
+  kept). `UpdateRequest::version` switches exactly one file to a given version id, older ones
+  included; a downgrade happens only that way;
 - mod loaders (`vl-loaders`): Fabric (`meta.fabricmc.net/v2`) and Quilt (`meta.quiltmc.org/v3`)
   share one API shape, `versions/loader/<game>` (versions for a game version, empty or an error
   status when the game is not supported) and `versions/loader/<game>/<loader>/profile/json` (a

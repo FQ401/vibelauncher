@@ -7,7 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::install::{InstallRequest, PackInstallRequest};
+use crate::ids::InstanceId;
+use crate::install::{InstallRequest, PackInstallRequest, UpdateCheckRequest, UpdateRequest};
 
 /// The most results one search page may ask for.
 pub const MAX_SEARCH_LIMIT: u32 = 100;
@@ -482,6 +483,22 @@ pub enum CatalogCommand {
     /// instance is announced with `InstanceEvent::Added` when the task succeeds; when it fails
     /// or is cancelled no instance is left.
     InstallPack(PackInstallRequest),
+    /// Looks for newer versions of the instance's mods, packs and shaders with one or two batched
+    /// requests → `Response::UpdateReport`.
+    CheckUpdates(UpdateCheckRequest),
+    /// Works out what an update (or a version switch) would do → `Response::InstallPlan`.
+    PlanUpdate(UpdateRequest),
+    /// Updates files as a task → `Response::Task`. All files are replaced or none; enabled and
+    /// disabled files stay so.
+    Update(UpdateRequest),
+    /// Finds the origin of files added by hand (by hash) and records it → `Response::Identified`.
+    IdentifyMods {
+        /// The instance.
+        instance: InstanceId,
+        /// The platform.
+        #[serde(default)]
+        provider: Provider,
+    },
 }
 
 #[cfg(test)]

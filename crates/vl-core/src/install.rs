@@ -278,3 +278,164 @@ pub struct PackInstallRequest {
     #[serde(default)]
     pub min_stability: MinStability,
 }
+
+/// Checking an instance's mods, packs and shaders for newer versions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateCheckRequest {
+    /// The instance.
+    pub instance: InstanceId,
+    /// The platform.
+    #[serde(default)]
+    pub provider: Provider,
+    /// The least stable channel an update may come from. Releases only by default.
+    #[serde(default = "default_update_stability")]
+    pub min_stability: MinStability,
+    /// Also check files that came with the instance's modpack (they are skipped by default;
+    /// the pack is updated as a whole).
+    #[serde(default)]
+    pub include_pack_files: bool,
+}
+
+fn default_update_stability() -> MinStability {
+    MinStability::Release
+}
+
+impl UpdateCheckRequest {
+    /// A check of `instance` with the defaults.
+    pub fn new(instance: InstanceId) -> Self {
+        Self {
+            instance,
+            provider: Provider::default(),
+            min_stability: MinStability::Release,
+            include_pack_files: false,
+        }
+    }
+}
+
+/// A version of a project, as shown in an update list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VersionLabel {
+    /// Version id on the platform.
+    pub id: String,
+    /// Version number.
+    pub number: String,
+    /// Release channel.
+    pub channel: ReleaseChannel,
+}
+
+/// A file for which a newer version exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateCandidate {
+    /// The folder.
+    pub kind: ResourceKind,
+    /// The file name without `.disabled`.
+    pub file: String,
+    /// Whether the file is enabled; an update keeps it so.
+    pub enabled: bool,
+    /// What to call it: the mod's name when the jar says one, else the file name.
+    pub name: String,
+    /// Project id on the platform.
+    pub project_id: String,
+    /// The version in the folder.
+    pub current: VersionLabel,
+    /// The version an update installs.
+    pub latest: VersionLabel,
+    /// The file came with the instance's modpack.
+    pub from_pack: bool,
+}
+
+/// Why a file could not be checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum UncheckedReason {
+    /// No origin record, and the platform does not know the file (added by hand, or not from
+    /// this platform).
+    NoOrigin,
+    /// An origin record exists but the platform no longer knows the file.
+    UnknownToPlatform,
+    /// A mod in an instance without a mod loader.
+    NoLoader,
+}
+
+/// A file that could not be checked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UncheckedFile {
+    /// The folder.
+    pub kind: ResourceKind,
+    /// The file name without `.disabled`.
+    pub file: String,
+    /// Why.
+    pub reason: UncheckedReason,
+}
+
+/// A file that came with the modpack and was left out of the check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackFile {
+    /// The folder.
+    pub kind: ResourceKind,
+    /// The file name without `.disabled`.
+    pub file: String,
+}
+
+/// The result of an update check.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct UpdateReport {
+    /// The game version of the instance.
+    pub game_version: String,
+    /// The mod loader of the instance.
+    pub loader: Option<String>,
+    /// Files with a newer version.
+    pub updates: Vec<UpdateCandidate>,
+    /// How many files are on their newest allowed version.
+    pub up_to_date: u32,
+    /// Files left out because they came with the modpack.
+    pub from_pack: Vec<PackFile>,
+    /// Files that could not be checked.
+    pub unchecked: Vec<UncheckedFile>,
+    /// Things worth saying.
+    pub warnings: Vec<String>,
+}
+
+/// Updating files to newer versions, or switching one to a chosen version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateRequest {
+    /// What to check and how.
+    pub check: UpdateCheckRequest,
+    /// Update everything that has an update.
+    #[serde(default)]
+    pub all: bool,
+    /// Update these files, projects or mods: a file name, a project id or a mod id.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Switch the one selected file to this version id, newer or older than the current one.
+    /// Needs exactly one entry in `files`.
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
+/// A file whose origin was found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentifiedFile {
+    /// The folder.
+    pub kind: ResourceKind,
+    /// The file name without `.disabled`.
+    pub file: String,
+    /// Project id on the platform.
+    pub project_id: String,
+    /// The version.
+    pub version: VersionLabel,
+}
+
+/// The result of identifying files added by hand.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct IdentifyReport {
+    /// Files whose origin was found and recorded now.
+    pub identified: Vec<IdentifiedFile>,
+    /// Files that already had a record.
+    pub already_known: u32,
+    /// Files the platform does not know.
+    pub unknown: Vec<PackFile>,
+    /// Things worth saying.
+    pub warnings: Vec<String>,
+}

@@ -25,6 +25,7 @@ use vl_platforms::Platforms;
 use vl_tasks::TaskSpec;
 
 use crate::Backend;
+use crate::updates;
 
 /// Folder of the launcher's own files inside an instance.
 const META_DIR: &str = ".vibelauncher";
@@ -57,6 +58,14 @@ pub(crate) fn handle(backend: &Backend, command: CatalogCommand, replier: Replie
         CatalogCommand::InstallPack(request) => {
             return replier.send(install_pack(backend, request));
         }
+        CatalogCommand::CheckUpdates(request) => {
+            return updates::check(backend, request, replier);
+        }
+        CatalogCommand::PlanUpdate(request) => return updates::plan(backend, request, replier),
+        CatalogCommand::Update(request) => return replier.send(updates::update(backend, request)),
+        CatalogCommand::IdentifyMods { instance, provider } => {
+            return updates::identify(backend, &instance, provider, replier);
+        }
         _ => {}
     }
     let platforms = Arc::clone(&backend.catalog.platforms);
@@ -68,18 +77,26 @@ pub(crate) fn handle(backend: &Backend, command: CatalogCommand, replier: Replie
 }
 
 /// What an install into an instance works on, gathered before the work starts.
-struct Job {
-    platforms: Arc<Platforms>,
-    client: Client,
-    resources: vl_resources::Resources,
-    origins: OriginStore,
-    staging: std::path::PathBuf,
-    target: Target,
-    request: InstallRequest,
+pub(crate) struct Job {
+    pub(crate) platforms: Arc<Platforms>,
+    pub(crate) client: Client,
+    pub(crate) resources: vl_resources::Resources,
+    pub(crate) origins: OriginStore,
+    pub(crate) staging: std::path::PathBuf,
+    pub(crate) target: Target,
+    pub(crate) meta: std::path::PathBuf,
+    pub(crate) request: InstallRequest,
 }
 
 fn job(backend: &Backend, request: InstallRequest) -> Result<(Job, String)> {
-    let id = &request.instance;
+    let id = request.instance.clone();
+    let (mut job, name) = context(backend, &id)?;
+    job.request = request;
+    Ok((job, name))
+}
+
+/// What work on the instance `id` needs; `request` is filled in by the caller that has one.
+pub(crate) fn context(backend: &Backend, id: &vl_core::InstanceId) -> Result<(Job, String)> {
     let config = backend.instances.load(id)?;
     if backend.launch.is_active(id) {
         return Err(Error::conflict(format!("instance {id} is running")));
@@ -102,11 +119,18 @@ fn job(backend: &Backend, request: InstallRequest) -> Result<(Job, String)> {
         resources: crate::resources::open(backend, id)?,
         origins: OriginStore::new(meta.join("resources.json")),
         staging: meta.join("staging"),
+        meta: meta.clone(),
         target: Target {
             game_version,
             loader: loader.map(str::to_owned),
         },
-        request,
+        request: InstallRequest {
+            instance: id.clone(),
+            provider: Default::default(),
+            project: String::new(),
+            version: None,
+            min_stability: Default::default(),
+        },
     };
     Ok((job, config.name))
 }
