@@ -305,6 +305,6 @@ pub enum BisectEvent {
         /// The instance.
         instance: InstanceId,
         /// What it found.
-        report: AutoBisectReport,
+        report: Box<AutoBisectReport>,
     },
 }

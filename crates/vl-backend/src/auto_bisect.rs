@@ -474,12 +474,12 @@ impl Driver<'_> {
                     game.stop();
                     stopping = Some(Instant::now());
                 }
-                (None, None, Some(at)) if watch != Watch::Manual => {
-                    if at.elapsed() >= self.setup.timeout {
-                        game.stop();
-                        stopping = Some(Instant::now());
-                        hung = true;
-                    }
+                (None, None, Some(at))
+                    if watch != Watch::Manual && at.elapsed() >= self.setup.timeout =>
+                {
+                    game.stop();
+                    stopping = Some(Instant::now());
+                    hung = true;
                 }
                 _ => {}
             }
@@ -502,6 +502,7 @@ impl Driver<'_> {
             Some(world) => world.finish(),
             None => Ok(()),
         };
+        let _ = remove_file(&self.setup.meta_dir().join(QUICK_PLAY_LOG));
         mods.and(world)
     }
 }

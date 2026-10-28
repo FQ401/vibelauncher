@@ -181,7 +181,7 @@ fn auto(backend: &Backend, request: AutoBisectRequest) -> vl_core::Result<Respon
             write_report(&report_file(&setup.instance_dir), &report)?;
             events.publish(&Event::Bisect(BisectEvent::Finished {
                 instance: id.clone(),
-                report,
+                report: Box::new(report),
             }));
             Ok(())
         },

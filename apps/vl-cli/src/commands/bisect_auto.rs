@@ -73,7 +73,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
                 instance: i,
                 report: r,
             }) if i == instance => {
-                report = Some(r);
+                report = Some(*r);
             }
             Event::Lagged { missed } => writeln!(out, "[vl-cli] {missed} events skipped")?,
             _ => {}

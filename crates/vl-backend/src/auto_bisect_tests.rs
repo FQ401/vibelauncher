@@ -445,6 +445,7 @@ fn quick_play_enters_the_world_and_the_world_is_put_back() {
     assert!(!world.join("touched.dat").exists(), "the world is put back");
     assert_eq!(fs::read(world.join("level.dat")).unwrap(), b"original");
     assert!(!t.dir.join(".vibelauncher").join(WORLD_BACKUP_DIR).exists());
+    assert!(!t.dir.join(".vibelauncher").join(QUICK_PLAY_LOG).exists());
 }
 
 #[test]
