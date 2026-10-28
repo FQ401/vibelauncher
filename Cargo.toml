@@ -33,6 +33,8 @@ vl-install = { path = "crates/vl-install" }
 vl-backend = { path = "crates/vl-backend" }
 vl-mock = { path = "crates/vl-mock" }
 vl-ui-egui = { path = "crates/vl-ui-egui" }
+vl-update = { path = "crates/vl-update" }
+vl-updater = { path = "crates/vl-updater" }
 
 # Third-party crates.
 apple-native-keyring-store = { version = "1.0.2", default-features = false, features = ["keychain"] }
@@ -42,6 +44,9 @@ rpassword = "7.5.4"
 regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 keyring-core = "1.0.1"
+minisign-verify = "0.3.0"
+# Tests only: signs synthetic release manifests with throwaway keys made inside the tests.
+minisign = "0.10.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha1 = "0.11.0"
