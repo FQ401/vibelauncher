@@ -1,0 +1,17 @@
+{
+  "minecraft": {
+    "version": "1.20.1",
+    "modLoaders": [{"id": "forge-47.2.0", "primary": true}]
+  },
+  "manifestType": "minecraftModpack",
+  "manifestVersion": 1,
+  "name": "Example Adventures",
+  "version": "3.1.0",
+  "author": "example_author",
+  "files": [
+    {"projectID": 910001, "fileID": 5100200, "required": true},
+    {"projectID": 910002, "fileID": 5200300, "required": false},
+    {"projectID": 910003, "fileID": 5300400}
+  ],
+  "overrides": "overrides"
+}

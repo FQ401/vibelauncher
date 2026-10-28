@@ -249,7 +249,8 @@ mod tests {
 #[serde(rename_all = "snake_case", tag = "kind")]
 #[non_exhaustive]
 pub enum PackSource {
-    /// An `.mrpack` file on disk.
+    /// A pack file on disk: a Modrinth `.mrpack`, or a CurseForge zip with `manifest.json`
+    /// (told apart by content).
     File {
         /// Path of the file.
         path: String,
@@ -261,7 +262,7 @@ pub enum PackSource {
         provider: Provider,
         /// Project id or slug.
         project: String,
-        /// A version id to install instead of choosing one.
+        /// A version id (on CurseForge a file id) to install instead of choosing one.
         #[serde(default)]
         version: Option<String>,
     },

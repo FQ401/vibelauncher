@@ -29,6 +29,8 @@ pub const MAX_PROJECT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_FILES_BYTES: usize = 16 * 1024 * 1024;
 /// Largest accepted category list.
 pub const MAX_CATEGORIES_BYTES: usize = 4 * 1024 * 1024;
+/// Largest accepted answer of a batch of mods or files.
+pub const MAX_BATCH_BYTES: usize = 32 * 1024 * 1024;
 /// Largest accepted fingerprint lookup response.
 pub const MAX_FINGERPRINTS_BYTES: usize = 32 * 1024 * 1024;
 
@@ -247,11 +249,15 @@ struct RawMod {
     latest_files_indexes: Vec<Value>,
     #[serde(default, deserialize_with = "lenient")]
     date_modified: String,
+    #[serde(default, deserialize_with = "lenient")]
+    allow_mod_distribution: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct RawLinks {
+    #[serde(default, deserialize_with = "lenient")]
+    website_url: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     issues_url: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
@@ -639,6 +645,135 @@ pub fn fits(version: &ProjectVersion, filter: &VersionFilter) -> bool {
     };
     wanted(&filter.game_versions, &version.game_versions)
         && wanted(&filter.loaders, &version.loaders)
+}
+
+// ---------------------------------------------------------------- batches
+
+/// Most entries taken from one batch answer.
+pub const MAX_BATCH_ITEMS: usize = 20_000;
+
+/// A file as a modpack install needs it, from `POST /v1/mods/files`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModFile {
+    /// The file id.
+    pub id: u64,
+    /// The project (mod) id.
+    pub mod_id: u64,
+    /// The display name.
+    pub display_name: String,
+    /// The file name as CurseForge has it; check it with [`ModFile::safe_file_name`].
+    pub file_name: String,
+    /// Size in bytes (0 when unknown).
+    pub size: u64,
+    /// Lowercase hex SHA-1 when CurseForge gives a valid one.
+    pub sha1: Option<String>,
+    /// The `https` download URL the API gives. `None` when the author does not allow
+    /// downloads through other apps (the API sends `null`) or the URL is not `https`.
+    pub download_url: Option<String>,
+}
+
+impl ModFile {
+    /// The file name when it is one plain name (no directory part, no `..`).
+    pub fn safe_file_name(&self) -> Option<&str> {
+        is_plain_file_name(&self.file_name).then_some(self.file_name.as_str())
+    }
+
+    /// The address on CurseForge's CDN built from the id and name ([`edge_url`]); `None` for
+    /// an unsafe name.
+    pub fn edge_url(&self) -> Option<String> {
+        self.safe_file_name().map(|name| edge_url(self.id, name))
+    }
+}
+
+fn convert_mod_file(raw: RawFile) -> Option<ModFile> {
+    if raw.id == 0 {
+        return None;
+    }
+    let sha1 = raw
+        .hashes
+        .into_iter()
+        .filter_map(from::<RawHash>)
+        .find(|h| h.algo == 1 && HashAlgorithm::Sha1.is_valid(&h.value))
+        .map(|h| h.value.to_ascii_lowercase());
+    let download_url = raw
+        .download_url
+        .map(|u| u.trim().to_owned())
+        .filter(|u| is_https(u) && u.len() <= MAX_URL && !u.chars().any(char::is_control));
+    Some(ModFile {
+        id: raw.id,
+        mod_id: raw.mod_id,
+        display_name: cut(raw.display_name, MAX_TITLE),
+        // One character over the limit keeps a too long name unsafe.
+        file_name: cut(raw.file_name, MAX_NAME + 1),
+        size: raw.file_length,
+        sha1,
+        download_url,
+    })
+}
+
+/// Parses a `POST /v1/mods/files` response. A damaged entry or one without an id is skipped.
+pub fn parse_mod_files(bytes: &[u8]) -> Result<Vec<ModFile>> {
+    check_size(bytes, MAX_BATCH_BYTES, "file batch")?;
+    let (data, _) = data(bytes, "file batch")?;
+    Ok(list(data, "file batch")?
+        .into_iter()
+        .filter_map(from::<RawFile>)
+        .filter_map(convert_mod_file)
+        .take(MAX_BATCH_ITEMS)
+        .collect())
+}
+
+/// What a modpack install needs to know of a project, from `POST /v1/mods`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModSummary {
+    /// The project (mod) id.
+    pub id: u64,
+    /// The display name.
+    pub name: String,
+    /// The short name.
+    pub slug: String,
+    /// The class (`6` mods, `12` resource packs, `6552` shaders, ...); 0 when unknown.
+    pub class_id: u64,
+    /// The project's page on the CurseForge website (`https` only).
+    pub website_url: Option<String>,
+    /// Whether the author allows downloads through other apps; `None` when not said.
+    pub allow_distribution: Option<bool>,
+}
+
+impl ModSummary {
+    /// The page where the user downloads the project's files by hand: the website URL, else
+    /// [`project_page_url`].
+    pub fn page_url(&self) -> String {
+        self.website_url
+            .clone()
+            .unwrap_or_else(|| project_page_url(self.id))
+    }
+}
+
+/// A web address of a project that works for every class: CurseForge redirects it to the
+/// project's page.
+pub fn project_page_url(mod_id: u64) -> String {
+    format!("https://www.curseforge.com/projects/{mod_id}")
+}
+
+/// Parses a `POST /v1/mods` response. A damaged entry or one without an id is skipped.
+pub fn parse_mods(bytes: &[u8]) -> Result<Vec<ModSummary>> {
+    check_size(bytes, MAX_BATCH_BYTES, "mod batch")?;
+    let (data, _) = data(bytes, "mod batch")?;
+    Ok(list(data, "mod batch")?
+        .into_iter()
+        .filter_map(from::<RawMod>)
+        .filter(|m| m.id > 0)
+        .take(MAX_BATCH_ITEMS)
+        .map(|m| ModSummary {
+            id: m.id,
+            name: cut(m.name, MAX_TITLE),
+            slug: cut(m.slug, MAX_SLUG),
+            class_id: m.class_id,
+            website_url: link(m.links.website_url).filter(|u| is_https(u)),
+            allow_distribution: m.allow_mod_distribution,
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------- categories

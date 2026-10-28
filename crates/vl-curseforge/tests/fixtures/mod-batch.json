@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "id": 910001,
+      "name": "Example Storage",
+      "slug": "example-storage",
+      "classId": 6,
+      "allowModDistribution": true,
+      "links": {"websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/example-storage"}
+    },
+    {
+      "id": 910002,
+      "name": "Quiet Shaders",
+      "slug": "quiet-shaders",
+      "classId": 6552,
+      "allowModDistribution": false,
+      "links": {"websiteUrl": "javascript:alert(1)"}
+    },
+    {"id": 0, "name": "no id"},
+    17
+  ]
+}

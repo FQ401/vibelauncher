@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 
-use vl_core::catalog::CatalogCommand;
+use vl_core::catalog::{CatalogCommand, Provider};
 use vl_core::component::ComponentKind;
 use vl_core::install::{InstallRequest, PackInstallRequest, PackSource};
 use vl_core::instance::{InstanceEvent, InstanceSummary, Loader, LoaderRequest, NewInstance};
@@ -253,12 +253,12 @@ fn install_pack(backend: &Backend, request: PackInstallRequest) -> Result<Respon
                     client: &client,
                     control: &control,
                 };
-                let (created, warnings) = run_pack(&work, &request, || wired.check())?;
+                let (created, notes) = run_pack(&work, &request, || wired.check())?;
                 events.publish(&Event::Instance(InstanceEvent::Added(created)));
-                for text in warnings {
+                for (level, text) in notes {
                     events.publish(&Event::Log(LogLine {
                         source: LogSource::Launcher,
-                        level: LogLevel::Info,
+                        level,
                         text,
                     }));
                 }
@@ -298,11 +298,16 @@ pub(crate) fn component_of(kind: PackLoader) -> Result<ComponentKind> {
     }
 }
 
+/// Lines for the launcher log after a pack install.
+type Notes = Vec<(LogLevel, String)>;
+
+/// Installs a pack as a new instance: a Modrinth `.mrpack`, or a CurseForge zip (a catalog
+/// project of CurseForge, or a file with `manifest.json` and no `modrinth.index.json`).
 fn run_pack(
     work: &PackWork<'_>,
     request: &PackInstallRequest,
     check: impl Fn() -> Result<()>,
-) -> Result<(InstanceSummary, Vec<String>)> {
+) -> Result<(InstanceSummary, Notes)> {
     static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let scratch = work.instances.root().join(format!(
         ".pack-{}-{}",
@@ -312,6 +317,22 @@ fn run_pack(
     let _scratch = Cleanup(scratch.clone(), false);
     let (file, source) = match &request.source {
         PackSource::File { path } => (std::path::PathBuf::from(path), None),
+        PackSource::Catalog {
+            provider: Provider::CurseForge,
+            project,
+            version,
+        } => {
+            let (file, record) = vl_install::cfpack::fetch(
+                work.platforms.curseforge(),
+                work.client,
+                project,
+                version.as_deref(),
+                request.min_stability,
+                &scratch,
+                work.control,
+            )?;
+            (file, Some(record))
+        }
         PackSource::Catalog {
             provider,
             project,
@@ -332,39 +353,22 @@ fn run_pack(
         _ => return Err(Error::unsupported("this pack source")),
     };
     check()?;
+    let curseforge = match &source {
+        Some(record) => record.provider == Provider::CurseForge,
+        None => vl_install::cfpack::is_curseforge_pack(&file)?,
+    };
+    if curseforge {
+        return run_curseforge_pack(work, request, &check, &file, source);
+    }
     let pack = vl_install::mrpack::Pack::open(&file)?;
     let game_version = pack
         .index
         .game_version()
         .ok_or_else(|| Error::invalid_input("the pack does not name a Minecraft version"))?
         .to_owned();
-    let loader = match pack.index.loader() {
-        None => None,
-        Some((kind, version)) => {
-            let component = component_of(kind)?;
-            let chosen =
-                work.loaders
-                    .pick(component, &game_version, Some(version), work.control)?;
-            Some(LoaderRequest {
-                kind: component,
-                version: Some(chosen.version),
-            })
-        }
-    };
+    let loader = pack_loader(work, &game_version, pack.index.loader())?;
     check()?;
-    let name = request
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|n| !n.is_empty())
-        .unwrap_or(&pack.index.name)
-        .to_owned();
-    let created = work.instances.create(&NewInstance {
-        name,
-        game_version,
-        group: request.group.clone(),
-        loader,
-    })?;
+    let created = create_instance(work, request, &pack.index.name, game_version, loader)?;
     let dir = work.instances.dir(&created.id)?;
     let mut undo = Cleanup(dir.clone(), false);
     let meta = dir.join(META_DIR);
@@ -409,6 +413,120 @@ fn run_pack(
         notes.push(format!(
             "installed optional files of the pack: {}",
             report.optional.join(", ")
+        ));
+    }
+    Ok((
+        created,
+        notes.into_iter().map(|n| (LogLevel::Info, n)).collect(),
+    ))
+}
+
+/// The loader request of a pack's loader, with the version the loader source has.
+fn pack_loader(
+    work: &PackWork<'_>,
+    game_version: &str,
+    loader: Option<(PackLoader, &str)>,
+) -> Result<Option<LoaderRequest>> {
+    let Some((kind, version)) = loader else {
+        return Ok(None);
+    };
+    let component = component_of(kind)?;
+    let chosen = work
+        .loaders
+        .pick(component, game_version, Some(version), work.control)?;
+    Ok(Some(LoaderRequest {
+        kind: component,
+        version: Some(chosen.version),
+    }))
+}
+
+/// Creates the instance of a pack: the requested name, else the pack's.
+fn create_instance(
+    work: &PackWork<'_>,
+    request: &PackInstallRequest,
+    pack_name: &str,
+    game_version: String,
+    loader: Option<LoaderRequest>,
+) -> Result<InstanceSummary> {
+    let name = request
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(pack_name)
+        .to_owned();
+    work.instances.create(&NewInstance {
+        name,
+        game_version,
+        group: request.group.clone(),
+        loader,
+    })
+}
+
+/// Installs a CurseForge pack (see [`vl_install::cfpack`]). The files are resolved through the
+/// API before the instance is created, so a missing key (`NoApiKey`) or a refused one leaves
+/// nothing behind. Files the API cannot serve do not stop the install: each one is a warning in
+/// the launcher log with the page to download it from, and they are kept in `pack.json`.
+fn run_curseforge_pack(
+    work: &PackWork<'_>,
+    request: &PackInstallRequest,
+    check: &impl Fn() -> Result<()>,
+    file: &Path,
+    source: Option<vl_install::mrpack::PackSourceRecord>,
+) -> Result<(InstanceSummary, Notes)> {
+    use vl_install::cfpack;
+    let pack = cfpack::CfPack::open(file)?;
+    let loader = pack.loader()?;
+    let resolved = cfpack::resolve(work.platforms.curseforge(), &pack, work.control)?;
+    check()?;
+    let game_version = pack.game_version().to_owned();
+    let loader = pack_loader(
+        work,
+        &game_version,
+        loader.as_ref().map(|(k, v)| (*k, v.as_str())),
+    )?;
+    check()?;
+    let created = create_instance(work, request, &pack.manifest.name, game_version, loader)?;
+    let dir = work.instances.dir(&created.id)?;
+    let mut undo = Cleanup(dir.clone(), false);
+    let meta = dir.join(META_DIR);
+    let report = cfpack::install(
+        &pack,
+        &resolved,
+        &vl_install::mrpack::InstallInput {
+            client: work.client,
+            game_dir: &work.instances.game_dir(&created.id)?,
+            staging: &meta.join("staging"),
+            control: work.control,
+        },
+    )?;
+    check()?;
+    let (record, origins) = cfpack::record(&pack, &report, source)?;
+    OriginStore::new(meta.join("resources.json")).save(&origins)?;
+    record.save(&meta)?;
+    // The instance is complete: keep it.
+    undo.1 = true;
+    let blocked = report.blocked.len();
+    let mut notes: Notes = report
+        .notes()
+        .into_iter()
+        .enumerate()
+        .map(|(n, text)| {
+            let level = if n < blocked {
+                LogLevel::Warn
+            } else {
+                LogLevel::Info
+            };
+            (level, text)
+        })
+        .collect();
+    if blocked > 0 {
+        notes.push((
+            LogLevel::Warn,
+            format!(
+                "{blocked} file(s) of the pack must be downloaded by hand; the list is kept in \
+                 .vibelauncher/pack.json"
+            ),
         ));
     }
     Ok((created, notes))
@@ -508,10 +626,7 @@ mod tests {
     fn run_pack_file(
         root: &std::path::Path,
         pack_file: &std::path::Path,
-    ) -> (
-        Result<(InstanceSummary, Vec<String>)>,
-        vl_instance::Instances,
-    ) {
+    ) -> (Result<(InstanceSummary, Notes)>, vl_instance::Instances) {
         run_pack_with(root, pack_file, std::sync::Arc::new(Offline))
     }
 
@@ -519,10 +634,7 @@ mod tests {
         root: &std::path::Path,
         pack_file: &std::path::Path,
         transport: std::sync::Arc<dyn vl_net::HttpTransport>,
-    ) -> (
-        Result<(InstanceSummary, Vec<String>)>,
-        vl_instance::Instances,
-    ) {
+    ) -> (Result<(InstanceSummary, Notes)>, vl_instance::Instances) {
         let client = Client::with_transport(NetConfig::new("0.0.0"), transport);
         let instances = vl_instance::Instances::open(&root.join("instances")).unwrap();
         let loaders = vl_loaders::Loaders::new(
@@ -530,7 +642,15 @@ mod tests {
             root.join("profiles"),
             vl_loaders::LoadersOptions::default(),
         );
-        let platforms = Platforms::new(client.clone());
+        // No CurseForge key, whatever the machine has.
+        let platforms = Platforms::with_sources(
+            vl_platforms::ModrinthSource::new(client.clone(), Default::default()),
+            vl_platforms::CurseForgeSource::new(
+                client.clone(),
+                Default::default(),
+                std::sync::Arc::new(vl_platforms::curseforge::ApiKeys::default()),
+            ),
+        );
         let control = Control::default();
         let work = PackWork {
             instances: &instances,
@@ -589,6 +709,36 @@ mod tests {
         assert_eq!(instances.list().unwrap().len(), 1, "{names:?}");
         assert_eq!(names.len(), 1, "{names:?}");
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_curseforge_zip_without_a_key_is_refused_and_leaves_nothing() {
+        use std::io::Write;
+        let root = std::env::temp_dir().join(format!("vl-backend-cf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("pack.zip");
+        let manifest = r#"{"minecraft":{"version":"1.20.1","modLoaders":[{"id":"forge-47.2.0","primary":true}]},
+            "manifestType":"minecraftModpack","manifestVersion":1,"name":"CF Pack",
+            "files":[{"projectID":1,"fileID":2,"required":true}],"overrides":"overrides"}"#;
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&file).unwrap());
+        let o = zip::write::SimpleFileOptions::default();
+        w.start_file("manifest.json", o).unwrap();
+        w.write_all(manifest.as_bytes()).unwrap();
+        w.start_file("overrides/config/a.txt", o).unwrap();
+        w.write_all(b"hello").unwrap();
+        w.finish().unwrap();
+
+        let (result, instances) = run_pack_file(&root, &file);
+        assert_eq!(result.unwrap_err().kind, ErrorKind::NoApiKey);
+        assert!(instances.list().unwrap().is_empty());
+        let left: Vec<_> = std::fs::read_dir(instances.root())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -23,12 +23,13 @@ use vl_core::catalog::{
 };
 use vl_core::{Error, ErrorKind, Result};
 use vl_curseforge::parse::{
-    self, Category, FingerprintMatch, MAX_CATEGORIES_BYTES, MAX_FILES_BYTES,
-    MAX_FINGERPRINTS_BYTES, MAX_PROJECT_BYTES, MAX_SEARCH_BYTES,
+    self, Category, FingerprintMatch, MAX_BATCH_BYTES, MAX_CATEGORIES_BYTES, MAX_FILES_BYTES,
+    MAX_FINGERPRINTS_BYTES, MAX_PROJECT_BYTES, MAX_SEARCH_BYTES, ModFile, ModSummary,
 };
 use vl_curseforge::{
-    API_KEY_ENV, API_KEY_HEADER, ApiKey, Endpoints, MAX_FINGERPRINTS_PER_REQUEST, MAX_PAGE_SIZE,
-    MAX_RESULT_WINDOW, Page, numeric_id, rejected_api_key, unsent_filter,
+    API_KEY_ENV, API_KEY_HEADER, ApiKey, Endpoints, MAX_FINGERPRINTS_PER_REQUEST,
+    MAX_IDS_PER_REQUEST, MAX_PAGE_SIZE, MAX_RESULT_WINDOW, Page, numeric_id, rejected_api_key,
+    unsent_filter,
 };
 use vl_net::{Client, Control, GetOptions, NetError, RequestHooks};
 
@@ -40,6 +41,9 @@ pub const KEYRING_ENTRY: &str = "api-key:curseforge";
 
 /// The most fingerprints one lookup accepts.
 pub const MAX_LOOKUP_FINGERPRINTS: usize = 10_000;
+
+/// The most project or file ids one batch lookup accepts.
+pub const MAX_LOOKUP_IDS: usize = 20_000;
 
 /// Where the CurseForge API key comes from.
 pub trait ApiKeySource: Send + Sync {
@@ -437,6 +441,65 @@ impl CurseForgeSource {
         }
         matches.sort_by_key(|m| m.fingerprint);
         Ok(matches)
+    }
+
+    /// The files with these ids (`POST /v1/mods/files`), in requests of at most
+    /// [`MAX_IDS_PER_REQUEST`]; repeats are asked once and ids CurseForge does not know are
+    /// left out. Without a key this fails with `NoApiKey` before anything is sent.
+    pub fn files_by_ids(&self, file_ids: &[u64], control: &Control) -> Result<Vec<ModFile>> {
+        let url = self.options.endpoints.files_by_ids_url();
+        self.batch(file_ids, control, |chunk| {
+            let body = self.options.endpoints.files_by_ids_body(chunk)?;
+            let bytes = self.post(&url, &body, MAX_BATCH_BYTES, control)?;
+            Ok(parse::parse_mod_files(&bytes)?
+                .into_iter()
+                .filter(|f| chunk.binary_search(&f.id).is_ok())
+                .collect())
+        })
+    }
+
+    /// The projects with these ids (`POST /v1/mods`), in requests of at most
+    /// [`MAX_IDS_PER_REQUEST`]; repeats are asked once and unknown ids are left out. Without a
+    /// key this fails with `NoApiKey` before anything is sent.
+    pub fn mods_by_ids(&self, mod_ids: &[u64], control: &Control) -> Result<Vec<ModSummary>> {
+        let url = self.options.endpoints.mods_by_ids_url();
+        self.batch(mod_ids, control, |chunk| {
+            let body = self.options.endpoints.mods_by_ids_body(chunk)?;
+            let bytes = self.post(&url, &body, MAX_BATCH_BYTES, control)?;
+            Ok(parse::parse_mods(&bytes)?
+                .into_iter()
+                .filter(|m| chunk.binary_search(&m.id).is_ok())
+                .collect())
+        })
+    }
+
+    fn batch<T>(
+        &self,
+        ids: &[u64],
+        control: &Control,
+        mut ask: impl FnMut(&[u64]) -> Result<Vec<T>>,
+    ) -> Result<Vec<T>> {
+        // The key is checked even for an empty list, so a missing key is reported at once.
+        self.key()?;
+        if ids.len() > MAX_LOOKUP_IDS {
+            return Err(Error::invalid_input(format!(
+                "at most {MAX_LOOKUP_IDS} ids per lookup"
+            )));
+        }
+        let unique: Vec<u64> = ids
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut out = Vec::new();
+        for chunk in unique.chunks(MAX_IDS_PER_REQUEST) {
+            if control.cancel.is_cancelled() {
+                return Err(Error::cancelled());
+            }
+            out.extend(ask(chunk)?);
+        }
+        Ok(out)
     }
 }
 

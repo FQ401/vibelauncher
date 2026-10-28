@@ -485,9 +485,11 @@ pub enum CatalogCommand {
     /// Installs a project and its required dependencies into an instance as a task
     /// → `Response::Task`. The plan is worked out again when the task starts.
     Install(InstallRequest),
-    /// Installs a modpack (`.mrpack`) as a new instance, as a task → `Response::Task`. The new
-    /// instance is announced with `InstanceEvent::Added` when the task succeeds; when it fails
-    /// or is cancelled no instance is left.
+    /// Installs a modpack (a Modrinth `.mrpack` or a CurseForge zip) as a new instance, as a
+    /// task → `Response::Task`. The new instance is announced with `InstanceEvent::Added` when
+    /// the task succeeds; when it fails or is cancelled no instance is left. Files of a
+    /// CurseForge pack that cannot be downloaded through the API are reported as launcher log
+    /// warnings with the page to get them from, and the install goes on without them.
     InstallPack(PackInstallRequest),
     /// Looks for newer versions of the instance's mods, packs and shaders with one or two batched
     /// requests → `Response::UpdateReport`.

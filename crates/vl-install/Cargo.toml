@@ -1,6 +1,6 @@
 [package]
 name = "vl-install"
-description = "Installing catalog projects into instances: version choice, dependencies, plan, download and origin records."
+description = "Installing catalog projects and modpacks into instances: version choice, dependencies, plan, download and origin records."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,7 @@ layer = "native"
 
 [dependencies]
 vl-core.workspace = true
+vl-curseforge.workspace = true
 vl-modrinth.workspace = true
 vl-net.workspace = true
 vl-platforms.workspace = true

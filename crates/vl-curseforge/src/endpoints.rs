@@ -23,6 +23,9 @@ pub const MAX_CATEGORY_IDS: usize = 10;
 /// The most fingerprints one `/v1/fingerprints` request carries.
 pub const MAX_FINGERPRINTS_PER_REQUEST: usize = 1_000;
 
+/// The most ids one `POST /v1/mods` or `POST /v1/mods/files` request carries.
+pub const MAX_IDS_PER_REQUEST: usize = 500;
+
 /// The longest slug accepted.
 const MAX_SLUG_LEN: usize = 128;
 
@@ -213,6 +216,35 @@ impl Endpoints {
         serde_json::to_vec(&serde_json::json!({ "fingerprints": fingerprints }))
             .map_err(|e| Error::internal(e.to_string()))
     }
+
+    /// `POST /v1/mods/files`: the URL.
+    pub fn files_by_ids_url(&self) -> String {
+        format!("{}/v1/mods/files", self.base)
+    }
+
+    /// `POST /v1/mods/files`: the JSON body for at most [`MAX_IDS_PER_REQUEST`] file ids.
+    pub fn files_by_ids_body(&self, file_ids: &[u64]) -> Result<Vec<u8>> {
+        ids_body("fileIds", file_ids)
+    }
+
+    /// `POST /v1/mods`: the URL.
+    pub fn mods_by_ids_url(&self) -> String {
+        format!("{}/v1/mods", self.base)
+    }
+
+    /// `POST /v1/mods`: the JSON body for at most [`MAX_IDS_PER_REQUEST`] mod ids.
+    pub fn mods_by_ids_body(&self, mod_ids: &[u64]) -> Result<Vec<u8>> {
+        ids_body("modIds", mod_ids)
+    }
+}
+
+fn ids_body(key: &str, ids: &[u64]) -> Result<Vec<u8>> {
+    if ids.len() > MAX_IDS_PER_REQUEST {
+        return Err(Error::invalid_input(format!(
+            "at most {MAX_IDS_PER_REQUEST} ids per request"
+        )));
+    }
+    serde_json::to_vec(&serde_json::json!({ key: ids })).map_err(|e| Error::internal(e.to_string()))
 }
 
 /// The part of `filter` that [`Endpoints::files`] does not send to the server: check it on the
@@ -453,6 +485,24 @@ mod tests {
         assert_eq!(body, br#"{"fingerprints":[1,4294967295]}"#);
         let many = vec![0; MAX_FINGERPRINTS_PER_REQUEST + 1];
         assert!(e.fingerprints_body(&many).is_err());
+    }
+
+    #[test]
+    fn batch_requests() {
+        let e = Endpoints::default();
+        assert_eq!(
+            e.files_by_ids_url(),
+            "https://api.curseforge.com/v1/mods/files"
+        );
+        assert_eq!(e.mods_by_ids_url(), "https://api.curseforge.com/v1/mods");
+        assert_eq!(
+            e.files_by_ids_body(&[5_100_200, 7]).unwrap(),
+            br#"{"fileIds":[5100200,7]}"#
+        );
+        assert_eq!(e.mods_by_ids_body(&[1]).unwrap(), br#"{"modIds":[1]}"#);
+        let many = vec![1; MAX_IDS_PER_REQUEST + 1];
+        assert!(e.files_by_ids_body(&many).is_err());
+        assert!(e.mods_by_ids_body(&many).is_err());
     }
 
     #[test]
