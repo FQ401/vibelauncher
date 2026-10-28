@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(s.reason, SuggestionReason::OsFolder);
         assert_eq!(
             s.folder,
-            PathBuf::from(r"C:\Users\Alex\AppData\Roaming\VibeLauncher")
+            PathBuf::from(r"C:\Users\Alex\AppData\Roaming").join("VibeLauncher")
         );
         assert!(s.on_system_drive && s.current_on_system_drive);
         assert_eq!(s.drive.as_ref().map(|d| d.system), Some(true));
