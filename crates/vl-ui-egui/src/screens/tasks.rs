@@ -17,6 +17,9 @@ fn title(i18n: &I18n, task: &TaskSnapshot) -> String {
         TaskKind::SignIn => "task-sign-in",
         TaskKind::JavaScan => "task-java-scan",
         TaskKind::JavaDownload => "task-java-download",
+        TaskKind::InstallResource => "task-install-resource",
+        TaskKind::InstallPack => "task-install-pack",
+        TaskKind::UpdatePack => "task-update-pack",
         _ => "task-other",
     };
     let name = i18n.t(key);

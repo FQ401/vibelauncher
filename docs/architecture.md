@@ -735,6 +735,15 @@ one), game versions of each kind, an offline account, Java runtimes and default 
 operations run on background threads: a launch reports preparation progress by stage, moves the
 instance to `Running`, prints synthetic game log lines and exits (or runs until stopped); a
 Microsoft sign-in shows a device code and adds a synthetic account; tasks can be cancelled.
+
+The mock also answers the resource, catalog and bisection domains. Instances have mod, pack and
+shader folders and worlds with data packs that commands change in memory. The catalog holds
+invented projects of every type on both platforms (a Modrinth and a CurseForge flavour) with
+sorting, filters and paging; installs, update checks and updates, modpack installs and updates
+(including a CurseForge pack with a file the API will not serve, reported as launcher log
+warnings) and exports run as tasks with progress. A bisection narrows the mods of an instance
+down by the user's reports, or runs as a task that finds a fixed culprit. Without a CurseForge
+key (`MockOptions::curseforge_key`) every CurseForge request answers `NoApiKey`.
 `MockOptions` sets the pacing; `MockOptions::instant()` makes tests run without delays.
 
 ## Extension points

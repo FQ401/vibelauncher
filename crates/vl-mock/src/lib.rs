@@ -1,12 +1,17 @@
 //! A facade with synthetic data: the UI and `vl-cli` run on it without the native layer.
 //!
 //! [`MockFacade`] answers every facade command from in-memory synthetic data (instances, versions,
-//! accounts, Java runtimes, settings) and simulates long operations on background threads: a
+//! accounts, Java runtimes, settings, installed mods and packs, a catalog of invented projects on
+//! both platforms, modpacks, mod bisection) and simulates long operations on background threads: a
 //! launch reports task progress, moves the instance to `Running`, streams game log lines and
 //! exits. Nothing touches files, the network or real processes.
 
+mod bisect;
 mod catalog;
 mod data;
+mod installs;
+mod packs;
+mod resources;
 mod sim;
 
 use std::collections::HashMap;
@@ -15,9 +20,11 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use vl_core::account::{Account, AccountCommand, AccountEvent, AccountKind};
+use vl_core::bisect::AutoBisectReport;
 use vl_core::instance::{InstanceCommand, InstanceEvent, InstanceState, InstanceSummary, Loader};
 use vl_core::java::{JavaCommand, JavaEvent, JavaRuntime};
 use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
+use vl_core::resources::ResourceEntry;
 use vl_core::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
 use vl_core::task::{TaskCommand, TaskKind, TaskSnapshot};
 use vl_core::version::{GameVersion, VersionCommand, VersionEvent};
@@ -36,6 +43,10 @@ pub struct MockOptions {
     /// Whether a simulated game exits by itself after its log lines; otherwise it runs until
     /// `LaunchCommand::Stop`.
     pub exit_after_log: bool,
+    /// Whether the mock starts with a CurseForge API key (`SetApiKey` and `RemoveApiKey` change it).
+    /// Without one, every CurseForge request answers
+    /// `ErrorKind::NoApiKey`.
+    pub curseforge_key: bool,
 }
 
 impl Default for MockOptions {
@@ -45,6 +56,7 @@ impl Default for MockOptions {
             step_delay: Duration::from_millis(120),
             game_log_lines: 40,
             exit_after_log: false,
+            curseforge_key: false,
         }
     }
 }
@@ -56,6 +68,7 @@ impl MockOptions {
             step_delay: Duration::ZERO,
             game_log_lines: 5,
             exit_after_log: true,
+            curseforge_key: false,
         }
     }
 }
@@ -83,6 +96,16 @@ struct State {
     tasks: HashMap<TaskId, (TaskSnapshot, Arc<AtomicBool>)>,
     /// Stop flags of running (or preparing) games.
     games: HashMap<InstanceId, Arc<AtomicBool>>,
+    /// Whether a CurseForge API key is set.
+    curseforge_key: bool,
+    /// Resource folders by instance and folder key (see `resources`), created on first use.
+    resources: HashMap<(InstanceId, String), Vec<ResourceEntry>>,
+    /// The modpack each instance was installed from.
+    packs: HashMap<InstanceId, packs::Origin>,
+    /// Manual bisection sessions.
+    bisects: HashMap<InstanceId, bisect::Session>,
+    /// The report of the last automatic bisection of each instance.
+    bisect_reports: HashMap<InstanceId, AutoBisectReport>,
 }
 
 impl MockFacade {
@@ -97,6 +120,11 @@ impl MockFacade {
             overrides: HashMap::new(),
             tasks: HashMap::new(),
             games: HashMap::new(),
+            curseforge_key: options.curseforge_key,
+            resources: HashMap::new(),
+            packs: packs::initial().into_iter().collect(),
+            bisects: HashMap::new(),
+            bisect_reports: HashMap::new(),
         };
         Self {
             inner: Arc::new(Inner {
@@ -122,7 +150,9 @@ impl MockFacade {
             Command::Settings(c) => self.settings(c),
             Command::Launch(c) => self.launch(c),
             Command::Tasks(c) => self.tasks(c),
-            Command::Catalog(c) => catalog::handle(c),
+            Command::Resources(c) => resources::handle(&self.inner, c),
+            Command::Bisect(c) => bisect::handle(&self.inner, c),
+            Command::Catalog(c) => catalog::handle(&self.inner, c),
             other => Err(unsupported(&other)),
         }
     }
@@ -177,6 +207,10 @@ impl MockFacade {
                     }
                     state.instances.retain(|i| i.id != id);
                     state.overrides.remove(&id);
+                    state.resources.retain(|(owner, _), _| owner != &id);
+                    state.packs.remove(&id);
+                    state.bisects.remove(&id);
+                    state.bisect_reports.remove(&id);
                 }
                 inner.publish(Event::Instance(InstanceEvent::Removed(id)));
                 Ok(Response::Done)
