@@ -16,7 +16,9 @@
 //! 3. The asset index is fetched and parsed, the objects to fetch are listed.
 //! 4. The client jar, libraries, logging configuration and asset objects are downloaded as one
 //!    batch with one byte-progress. Files already present with the expected size are kept
-//!    ([`Verify::Quick`]) or hashed again ([`Verify::Full`]).
+//!    ([`Verify::Quick`]) or hashed again ([`Verify::Full`]). A library without an address
+//!    (a loader's installer or processors make it) is never downloaded: it must exist, and
+//!    under [`Verify::Full`] match its SHA-1 when the version names one.
 //! 5. Natives are unpacked, and the files of the `virtual` / `map_to_resources` asset layouts
 //!    are restored.
 
@@ -131,6 +133,19 @@ impl Installer {
             client,
             layout,
             options,
+        }
+    }
+
+    /// A copy of this installer that checks existing files as `verify` says.
+    #[must_use]
+    pub fn with_verify(&self, verify: Verify) -> Self {
+        Self {
+            client: self.client.clone(),
+            layout: self.layout.clone(),
+            options: InstallerOptions {
+                verify,
+                ..self.options.clone()
+            },
         }
     }
 
@@ -340,19 +355,15 @@ impl Installer {
     fn library_fetch(&self, base: &Path, file: &LibraryFile) -> Result<Option<Fetch>> {
         let dest = join_relative(base, &file.path);
         let known = fs::metadata(&dest).ok().filter(|m| m.is_file());
+        let Some(url) = &file.url else {
+            return self
+                .check_unfetchable(&dest, file, known.is_some())
+                .map(|()| None);
+        };
         let full = self.options.verify == Verify::Full && file.sha1.is_some();
         if !full && known.is_some_and(|m| file.size.is_none_or(|s| s == m.len())) {
             return Ok(None);
         }
-        let Some(url) = &file.url else {
-            return Err(Error::new(
-                ErrorKind::NotFound,
-                format!(
-                    "library file {} is missing and has no download address",
-                    file.path
-                ),
-            ));
-        };
         let mut spec = Download::new(url, dest);
         if let Some(size) = file.size {
             spec = spec.size(size);
@@ -364,6 +375,38 @@ impl Installer {
             spec,
             size: file.size.unwrap_or(0),
         }))
+    }
+
+    /// A library without an address cannot be downloaded again: its loader's installer made it.
+    /// It must be there, and a full check hashes it too.
+    fn check_unfetchable(&self, dest: &Path, file: &LibraryFile, exists: bool) -> Result<()> {
+        if !exists {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!(
+                    "library file {} is missing and has no download address: install the mod loader again",
+                    file.path
+                ),
+            ));
+        }
+        let wrong_size = fs::metadata(dest)
+            .ok()
+            .is_some_and(|m| file.size.is_some_and(|s| s != m.len()));
+        let wrong_hash = self.options.verify == Verify::Full
+            && match &file.sha1 {
+                Some(expected) => !sha1_matches(dest, expected)?,
+                None => false,
+            };
+        if wrong_size || wrong_hash {
+            return Err(Error::new(
+                ErrorKind::Integrity,
+                format!(
+                    "library file {} does not match its checksum and has no download address: install the mod loader again",
+                    file.path
+                ),
+            ));
+        }
+        Ok(())
     }
 
     fn checked_fetch(&self, url: &str, dest: &Path, sha1: &str, size: u64) -> Option<Fetch> {
@@ -399,6 +442,28 @@ impl Installer {
             Some(e) => Err(e.into()),
         }
     }
+}
+
+/// Whether the file's SHA-1 is `expected` (hex, any case).
+fn sha1_matches(path: &Path, expected: &str) -> Result<bool> {
+    use sha1::{Digest, Sha1};
+    use std::io::Read;
+    let mut file = fs::File::open(path).map_err(|e| io_error(path, &e))?;
+    let mut hasher = Sha1::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buffer).map_err(|e| io_error(path, &e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    let actual: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Ok(actual.eq_ignore_ascii_case(expected))
 }
 
 /// Loads version JSONs from disk, or from the network through the manifest.

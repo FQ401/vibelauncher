@@ -320,3 +320,91 @@ fn a_loader_with_its_own_copy_of_the_game_jar_runs_from_it() {
     // The vanilla jar is downloaded to its own place.
     assert!(layout.client_jar("1.0").is_file());
 }
+
+/// A loader profile with one library its installer makes: it has a checksum and no address.
+fn installer_made_library(installer: &vl_launch::Installer, body: &[u8]) -> std::path::PathBuf {
+    let child = json!({
+        "id": "1.0-installer",
+        "inheritsFrom": "1.0",
+        "type": "release",
+        "mainClass": "net.example.LoaderMain",
+        "libraries": [{
+            "name": "net.example:made:1.0",
+            "downloads": {"artifact": {
+                "path": "net/example/made/1.0/made-1.0.jar",
+                "url": "",
+                "sha1": sha1_hex(body),
+                "size": body.len(),
+            }},
+        }],
+    });
+    let path = installer.layout().version_json("1.0-installer");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&child).unwrap()).unwrap();
+    let lib = installer
+        .layout()
+        .libraries_dir()
+        .join("net/example/made/1.0/made-1.0.jar");
+    std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+    lib
+}
+
+#[test]
+fn a_full_check_keeps_an_installer_made_library_that_matches() {
+    let server = Arc::new(FakeServer::default());
+    add_version(&server, "1.0", "1.0", json!({}), json!({}));
+    let dir = TempDir::new();
+    let installer = installer(&server, dir.path());
+    let lib = installer_made_library(&installer, b"made by the installer");
+    std::fs::write(&lib, b"made by the installer").unwrap();
+    let full = installer.with_verify(vl_launch::Verify::Full);
+    full.install("1.0-installer", None, &Job::new())
+        .expect("full check");
+    assert_eq!(std::fs::read(&lib).unwrap(), b"made by the installer");
+}
+
+#[test]
+fn a_full_check_names_a_damaged_installer_made_library() {
+    let server = Arc::new(FakeServer::default());
+    add_version(&server, "1.0", "1.0", json!({}), json!({}));
+    let dir = TempDir::new();
+    let installer = installer(&server, dir.path());
+    let lib = installer_made_library(&installer, b"made by the installer");
+    // Same size, other content: only the checksum tells.
+    std::fs::write(&lib, b"made by the instalLER").unwrap();
+    installer
+        .install("1.0-installer", None, &Job::new())
+        .expect("a quick check keeps it");
+    let full = installer.with_verify(vl_launch::Verify::Full);
+    let e = full
+        .install("1.0-installer", None, &Job::new())
+        .unwrap_err();
+    assert_eq!(e.kind, ErrorKind::Integrity, "{e:?}");
+    assert!(e.message.contains("made-1.0.jar"), "{}", e.message);
+    assert!(
+        e.message.contains("install the mod loader again"),
+        "{}",
+        e.message
+    );
+    // Never downloaded, never replaced.
+    assert_eq!(std::fs::read(&lib).unwrap(), b"made by the instalLER");
+}
+
+#[test]
+fn a_missing_installer_made_library_asks_for_the_loader_again() {
+    let server = Arc::new(FakeServer::default());
+    add_version(&server, "1.0", "1.0", json!({}), json!({}));
+    let dir = TempDir::new();
+    let installer = installer(&server, dir.path());
+    installer_made_library(&installer, b"made by the installer");
+    let full = installer.with_verify(vl_launch::Verify::Full);
+    let e = full
+        .install("1.0-installer", None, &Job::new())
+        .unwrap_err();
+    assert_eq!(e.kind, ErrorKind::NotFound, "{e:?}");
+    assert!(
+        e.message.contains("install the mod loader again"),
+        "{}",
+        e.message
+    );
+}

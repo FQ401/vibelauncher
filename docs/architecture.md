@@ -209,6 +209,14 @@ preparing or running game.
   Message and action keys are Fluent ids in the interface locale (`crash-*`, `crash-action-*`).
 - Apple silicon: LWJGL 3 versions without arm64 natives get LWJGL 3.3.3 from Maven Central;
   LWJGL 2 versions (up to 1.12.2) are installed for `x86_64` and need an `x86_64` Java (Rosetta).
+  The Java choice and the managed Java download both follow that adjusted platform
+  (`Installed::platform`), not the one the launcher runs on.
+- File check: `LaunchCommand::Verify { instance }` runs a `VerifyFiles` task that installs the
+  instance's version and loader with `Verify::Full` (`vl-cli instances verify <instance>`): every
+  existing file is hashed and damaged downloadable files are fetched again. A library without a
+  download address (made by a Forge or NeoForge installer or its processors) is never fetched: it
+  must exist and match its SHA-1, else the task fails with an error asking to install the mod
+  loader again.
 
 
 ### Threading
