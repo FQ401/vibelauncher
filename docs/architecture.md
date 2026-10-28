@@ -44,7 +44,7 @@ layer = "native"
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
 | `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-modrinth` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
-| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
+| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-install`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
 | `app` | `vl-cli`, the desktop app | `core`, `backend`, `ui` | Binaries: choose a backend, own the window or the terminal. Live in `apps/`. |
@@ -63,7 +63,7 @@ Cargo itself rejects dependency cycles, including cycles inside a layer.
 app       vl-cli · vibelauncher          → core, backend, ui
 ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
-native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-launch
+native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-install · vl-launch
                                          → core, native
 core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
 ```
@@ -91,6 +91,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
 | `vl-ui-egui` | ui | The shared egui interface. |
 | `vl-modrinth` | core | Modrinth API v2 as pure functions: request URLs with search facets, filters and hash lookups, and tolerant parsing of responses into the catalog types of `vl-core` (size limits, unknown fields ignored, damaged list entries skipped, unsafe file names and non-`https` download URLs dropped). |
 | `vl-platforms` | native | Online mod platforms behind the `CatalogSource` trait; `ModrinthSource` fetches through `vl-net` (HTTP cache, retries, size caps) and paces itself with a rate limiter that follows the server's `X-Ratelimit-*` headers. A second platform adds a module and a `Provider` variant. |
+| `vl-install` | native | Installing a catalog project into an instance: picking the version for the instance's game version and loader, following required dependencies, recognizing what is installed, the plan, verified download, all-or-nothing add to the resource folders, and the origin records (`<instance>/.vibelauncher/resources.json`). |
 | `vl-cli` | app | The headless command line. |
 
 Third-party crates are declared once in `[workspace.dependencies]` and used with
@@ -269,6 +270,25 @@ The data directory holds:
   the reset), a `410` means the API version was retired and is reported as `Unsupported`. Answers
   go through the HTTP cache: young ones are reused, old ones serve offline. Catalog data is shown
   as the platform's data, with its name and links, and is not used to train models;
+- installing from the catalog (`vl-install`): `CatalogCommand::PlanInstall` returns an
+  `InstallPlan` and `CatalogCommand::Install` runs it as an `InstallResource` task. The version
+  is the newest one that lists the instance's game version and loader (Quilt also takes Fabric
+  versions, its own first), preferring `release` over `beta` over `alpha` down to the least
+  stable channel the request allows (default `beta`); the platform's filtering is checked again
+  on the response. Required dependencies are followed recursively (depth and count capped, cycles
+  cut) and placed before the project that needs them. A file counts as installed when its SHA-1
+  matches an origin record, is known to the platform (`version_files`), or, for a required
+  dependency only, when a jar declares a mod id equal to the project slug. Such a dependency is
+  left alone whatever its version; the requested project is replaced when another version is
+  installed (the old file moves to the instance trash, a disabled file stays disabled). An
+  `incompatible` dependency of any chosen version, or of an installed file whose version is
+  known, is a `Conflict` that names both sides; optional dependencies are listed as
+  recommendations and never installed. Files are downloaded to `<instance>/.vibelauncher/staging`
+  with size and SHA-512 (SHA-1 when that is all the platform gives) checks, then added one by one;
+  a failure puts the folders back as they were. `resources.json` records, per installed file,
+  platform, project, version, hashes and whether it came as a dependency; a record counts only
+  while the file's SHA-1 matches, a damaged file or entry is skipped and the damaged file is kept
+  as `resources.json.bad`;
 - mod loaders (`vl-loaders`): Fabric (`meta.fabricmc.net/v2`) and Quilt (`meta.quiltmc.org/v3`)
   share one API shape, `versions/loader/<game>` (versions for a game version, empty or an error
   status when the game is not supported) and `versions/loader/<game>/<loader>/profile/json` (a

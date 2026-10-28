@@ -13,7 +13,7 @@ use crate::Backend;
 
 const TRASH_DIR: &str = ".trash";
 
-fn open(backend: &Backend, id: &InstanceId) -> vl_core::Result<Resources> {
+pub(crate) fn open(backend: &Backend, id: &InstanceId) -> vl_core::Result<Resources> {
     let instance_dir = backend.instances.dir(id)?;
     if !instance_dir.is_dir() {
         return Err(vl_core::Error::not_found(format!("instance {id}")));

@@ -1,0 +1,28 @@
+[package]
+name = "vl-install"
+description = "Installing catalog projects into instances: version choice, dependencies, plan, download and origin records."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-net.workspace = true
+vl-platforms.workspace = true
+vl-resources.workspace = true
+vl-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+zip.workspace = true
+flate2.workspace = true
+
+[lints]
+workspace = true

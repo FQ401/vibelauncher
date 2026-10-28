@@ -19,6 +19,7 @@ pub use channel::{EventBus, EventStream, Replier, Reply, reply_channel};
 use crate::account::{Account, AccountCommand, AccountEvent};
 use crate::catalog::{CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage};
 use crate::ids::TaskId;
+use crate::install::InstallPlan;
 use crate::instance::{InstanceCommand, InstanceEvent, InstanceSummary};
 use crate::java::{JavaCommand, JavaEvent, JavaRuntime};
 use crate::launch::{LaunchCommand, LaunchEvent};
@@ -114,6 +115,8 @@ pub enum Response {
     CatalogVersions(Vec<ProjectVersion>),
     /// Versions found by file hash.
     CatalogHashMatches(Vec<HashMatch>),
+    /// What installing a project would do.
+    InstallPlan(InstallPlan),
 }
 
 /// Something that happened in the launcher.

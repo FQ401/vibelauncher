@@ -4,7 +4,7 @@
 //!   (`ETag` / `Last-Modified`), offline reads from that cache, retries with exponential backoff,
 //!   timeouts and a response size cap.
 //! - [`Client::download`] / [`Client::download_all`]: files with a parallelism limit, size and
-//!   SHA-1 / SHA-256 checks, a temporary file and an atomic rename.
+//!   SHA-1 / SHA-256 / SHA-512 checks, a temporary file and an atomic rename.
 //! - System, HTTP and SOCKS5 proxies; the launcher's own `User-Agent` without personal details.
 //! - Progress and cancellation through a callback and a [`CancelToken`] ([`Control`]); the task
 //!   engine wires them, this crate does not depend on it.

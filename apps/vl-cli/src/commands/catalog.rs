@@ -1,15 +1,25 @@
-//! `catalog search | project | versions | lookup`.
+//! `catalog search | project | versions | lookup | install`.
+
+use std::io::{BufRead, IsTerminal};
+use std::time::Duration;
 
 use vl_core::catalog::{
     CatalogCommand, HashAlgorithm, HashMatch, Project, ProjectType, ProjectVersion, SearchPage,
     SearchQuery, SearchSort, VersionFilter,
 };
-use vl_core::{Command, Facade, Response};
+use vl_core::install::{InstallPlan, InstallRequest, MinStability, PlanAction, PlanItem, PlanRole};
+use vl_core::task::TaskOutcome;
+use vl_core::{Command, Event, Facade, InstanceId, Response};
 
 use super::{CliError, Out, USAGE, call, unexpected};
+use crate::progress::{ProgressPrinter, human_bytes};
+
+/// How long `vl-cli` waits for an event before it waits again.
+const POLL: Duration = Duration::from_millis(250);
 
 pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<(), CliError> {
     match args {
+        ["install", project, flags @ ..] => install(facade, project, flags, out),
         ["search", query, flags @ ..] => search(facade, query, flags, out),
         ["project", id] => project(facade, id, out),
         ["versions", id, flags @ ..] => versions(facade, id, flags, out),
@@ -208,6 +218,178 @@ fn lookup(facade: &dyn Facade, hashes: &[&str], out: Out<'_>) -> Result<(), CliE
     }
 }
 
+/// `catalog install <slug|id> --instance <id> [--version <id>] [--channel <c>] [--yes]`: prints
+/// the plan, asks (or takes `--yes`), then follows the install task.
+fn install(
+    facade: &dyn Facade,
+    project: &str,
+    flags: &[&str],
+    out: Out<'_>,
+) -> Result<(), CliError> {
+    let mut instance = None;
+    let mut version = None;
+    let mut min_stability = MinStability::default();
+    let mut yes = false;
+    let mut it = flags.iter();
+    while let Some(flag) = it.next() {
+        if *flag == "--yes" {
+            yes = true;
+            continue;
+        }
+        let value = it.next().ok_or(CliError::from(USAGE))?;
+        match *flag {
+            "--instance" => instance = Some((*value).to_owned()),
+            "--version" => version = Some((*value).to_owned()),
+            "--channel" => {
+                min_stability = MinStability::parse(value)
+                    .ok_or_else(|| CliError::from("channel is release, beta or alpha"))?;
+            }
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let instance = instance
+        .and_then(|i| InstanceId::new(&i))
+        .ok_or_else(|| CliError::from("--instance <id> is required"))?;
+    let request = InstallRequest {
+        instance: instance.clone(),
+        provider: Default::default(),
+        project: project.to_owned(),
+        version,
+        min_stability,
+    };
+    let planned = call(
+        facade,
+        Command::Catalog(CatalogCommand::PlanInstall(request.clone())),
+    )?;
+    let plan = match planned {
+        Response::InstallPlan(plan) => plan,
+        other => return Err(unexpected(&other)),
+    };
+    print_plan(&instance, &plan, out)?;
+    if plan.downloads().next().is_none() {
+        writeln!(out, "nothing to install")?;
+        return Ok(());
+    }
+    if !yes && !confirmed(out)? {
+        writeln!(out, "not installed; add --yes to install")?;
+        return Ok(());
+    }
+    // Subscribe before the command so no event is missed.
+    let events = facade.subscribe();
+    let task = match call(facade, Command::Catalog(CatalogCommand::Install(request)))? {
+        Response::Task(task) => task,
+        other => return Err(unexpected(&other)),
+    };
+    let mut printer = ProgressPrinter::new(task, "install");
+    loop {
+        let Some(event) = events.next_timeout(POLL) else {
+            continue;
+        };
+        match event {
+            Event::Task(task_event) => match printer.handle(&task_event, out)? {
+                Some(TaskOutcome::Succeeded) => {
+                    writeln!(out, "[install] done")?;
+                    return Ok(());
+                }
+                Some(TaskOutcome::Failed(e)) => return Err(e.into()),
+                Some(_) => return Err("install cancelled".into()),
+                None => {}
+            },
+            Event::Lagged { missed } => writeln!(out, "[vl-cli] {missed} events skipped")?,
+            _ => {}
+        }
+    }
+}
+
+/// Asks on a terminal; anything else is a plan only.
+fn confirmed(out: Out<'_>) -> Result<bool, CliError> {
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return Ok(false);
+    }
+    write!(out, "install? [y/N] ")?;
+    out.flush()?;
+    let mut answer = String::new();
+    stdin.lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
+}
+
+fn print_plan(instance: &InstanceId, plan: &InstallPlan, out: Out<'_>) -> Result<(), CliError> {
+    writeln!(
+        out,
+        "plan for {instance} (Minecraft {}, {}):",
+        plan.game_version,
+        plan.loader.as_deref().unwrap_or("no loader")
+    )?;
+    for item in &plan.items {
+        print_item(item, out)?;
+    }
+    for s in &plan.satisfied {
+        writeln!(
+            out,
+            "  have      {} {} ({}, matched by {:?})",
+            s.title,
+            s.version.as_deref().unwrap_or(""),
+            s.file,
+            s.matched_by
+        )?;
+    }
+    for r in &plan.recommended {
+        writeln!(
+            out,
+            "  optional  {} (suggested by {}); not installed",
+            r.slug.as_deref().unwrap_or(&r.project_id),
+            r.suggested_by
+        )?;
+    }
+    for w in &plan.warnings {
+        writeln!(out, "  warning   {w}")?;
+    }
+    let count = plan.downloads().count();
+    writeln!(
+        out,
+        "{count} file(s) to download, {}",
+        human_bytes(plan.download_bytes())
+    )?;
+    Ok(())
+}
+
+fn print_item(item: &PlanItem, out: Out<'_>) -> Result<(), CliError> {
+    let verb = match &item.action {
+        PlanAction::Install => "install",
+        PlanAction::Present { .. } => "have",
+        PlanAction::Replace { .. } => "replace",
+        _ => "change",
+    };
+    let channel = format!("{:?}", item.channel).to_lowercase();
+    write!(
+        out,
+        "  {verb:<9} {} {} [{channel}] {} -> {}/ ({})",
+        item.title,
+        item.version_number,
+        item.file.filename,
+        item.kind.dir(),
+        human_bytes(item.file.size)
+    )?;
+    match &item.action {
+        PlanAction::Replace { file, old_version } => write!(
+            out,
+            "; replaces {file}{}",
+            old_version
+                .as_deref()
+                .map(|v| format!(" ({v})"))
+                .unwrap_or_default()
+        )?,
+        PlanAction::Present { file } => write!(out, "; already there as {file}")?,
+        _ => {}
+    }
+    if let PlanRole::Dependency { required_by } = &item.role {
+        write!(out, "; needed by {required_by}")?;
+    }
+    writeln!(out)?;
+    Ok(())
+}
+
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -258,6 +440,103 @@ mod tests {
     fn looks_up_hashes() {
         let out = run_mock(&["lookup", &"a".repeat(40)]).unwrap();
         assert!(out.contains("0 of 1 files known"), "{out}");
+    }
+
+    #[test]
+    fn install_checks_its_arguments() {
+        assert!(
+            run_mock(&["install", "x"]).is_err(),
+            "--instance is required"
+        );
+        assert!(run_mock(&["install", "x", "--instance"]).is_err());
+        assert!(run_mock(&["install", "x", "--instance", "a", "--channel", "nightly"]).is_err());
+        assert!(run_mock(&["install", "x", "--instance", "a", "--nope", "1"]).is_err());
+    }
+
+    #[test]
+    fn prints_a_plan() {
+        use vl_core::catalog::{ProjectType, Provider, ReleaseChannel, VersionFile};
+        use vl_core::install::{MatchedBy, Recommendation, Satisfied};
+        use vl_core::resources::ResourceKind;
+
+        let item = |title: &str, role, action| PlanItem {
+            provider: Provider::Modrinth,
+            project_id: title.to_lowercase(),
+            slug: title.to_lowercase(),
+            title: title.to_owned(),
+            project_type: ProjectType::Mod,
+            kind: ResourceKind::Mods,
+            role,
+            version_id: "v".into(),
+            version_number: "1.0".into(),
+            channel: ReleaseChannel::Release,
+            file: VersionFile {
+                filename: format!("{}.jar", title.to_lowercase()),
+                url: "https://example.invalid/f".into(),
+                size: 2048,
+                sha1: None,
+                sha512: None,
+                primary: true,
+            },
+            action,
+        };
+        let plan = InstallPlan {
+            game_version: "1.21.4".into(),
+            loader: Some("fabric".into()),
+            items: vec![
+                item(
+                    "Lib",
+                    PlanRole::Dependency {
+                        required_by: "Sodium".into(),
+                    },
+                    PlanAction::Install,
+                ),
+                item(
+                    "Sodium",
+                    PlanRole::Requested,
+                    PlanAction::Replace {
+                        file: "old.jar".into(),
+                        old_version: Some("0.9".into()),
+                    },
+                ),
+            ],
+            satisfied: vec![Satisfied {
+                project_id: "api".into(),
+                slug: "api".into(),
+                title: "Api".into(),
+                file: "api.jar".into(),
+                version: Some("3".into()),
+                matched_by: MatchedBy::Hash,
+            }],
+            recommended: vec![Recommendation {
+                project_id: "x".into(),
+                slug: Some("extra".into()),
+                title: None,
+                suggested_by: "Sodium".into(),
+            }],
+            warnings: vec!["careful".into()],
+        };
+        let mut out = Vec::new();
+        let id = InstanceId::new("main").unwrap();
+        print_plan(&id, &plan, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(
+            out.contains("plan for main (Minecraft 1.21.4, fabric)"),
+            "{out}"
+        );
+        assert!(
+            out.contains("install   Lib 1.0 [release] lib.jar -> mods/"),
+            "{out}"
+        );
+        assert!(out.contains("needed by Sodium"), "{out}");
+        assert!(out.contains("replaces old.jar (0.9)"), "{out}");
+        assert!(out.contains("have      Api 3 (api.jar"), "{out}");
+        assert!(
+            out.contains("optional  extra (suggested by Sodium); not installed"),
+            "{out}"
+        );
+        assert!(out.contains("warning   careful"), "{out}");
+        assert!(out.contains("2 file(s) to download, 4.0 KiB"), "{out}");
     }
 
     #[test]
