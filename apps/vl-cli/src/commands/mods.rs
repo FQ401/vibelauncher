@@ -121,7 +121,7 @@ fn update(
             _ => return Err(USAGE.into()),
         }
     }
-    if request.all == request.files.is_empty() {
+    if request.all != request.files.is_empty() {
         return Err("name the mods to update, or pass --all".into());
     }
     let planned = call(
@@ -304,6 +304,15 @@ mod tests {
         assert!(run_mock(&["update", "main", "--nope"]).is_err());
         assert!(run_mock(&["updates", "main", "extra"]).is_err());
         assert!(run_mock(&["identify"]).is_err());
+        // `--all` or names pass the argument check (the mock then has no such instance).
+        for args in [
+            &["update", "main", "--all"][..],
+            &["update", "main", "a", "b"][..],
+        ] {
+            let err = run_mock(args).unwrap_err().to_string();
+            assert!(!err.contains("name the mods"), "{err}");
+        }
+        assert!(run_mock(&["update", "main", "a", "--all"]).is_err());
     }
 
     #[test]
