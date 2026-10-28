@@ -43,8 +43,8 @@ use zip::ZipArchive;
 
 use crate::mrpack::{
     InstallInput, MAX_ENTRIES, MAX_PACK_BYTES, OverrideRecord, PackFileRecord, PackKind,
-    PackRecord, PackSourceRecord, RECORD_FORMAT, bad, check_cancel, extract_entries, hash_entries,
-    io,
+    PackRecord, PackSourceRecord, RECORD_FORMAT, bad, check_cancel, extract_entries,
+    extract_entries_to, hash_entries, io,
 };
 use crate::origin::{Origin, now_unix};
 
@@ -177,13 +177,28 @@ impl CfPack {
     ///
     /// `Io` or `Integrity` when the archive cannot be read, `Integrity` past the byte budget.
     pub fn override_hashes(&self) -> Result<Vec<OverrideRecord>> {
-        // A later copy of the same path wins.
-        let last: std::collections::BTreeMap<&str, usize> = self
-            .overrides
+        hash_entries(&self.path, self.final_overrides())
+    }
+
+    /// The archive entry of each override path; a later copy of the same path wins.
+    fn final_overrides(&self) -> std::collections::BTreeMap<&str, usize> {
+        self.overrides
             .iter()
             .map(|(i, rel)| (rel.as_str(), *i))
-            .collect();
-        hash_entries(&self.path, last)
+            .collect()
+    }
+
+    /// Extracts the named override files, each to its own destination.
+    ///
+    /// # Errors
+    ///
+    /// `NotFound` for a path the pack does not carry, `Cancelled`, `Io`, `Integrity`.
+    pub(crate) fn extract_overrides_to(
+        &self,
+        wanted: &[(String, PathBuf)],
+        control: &Control,
+    ) -> Result<()> {
+        extract_entries_to(&self.path, &self.final_overrides(), wanted, control)
     }
 }
 
@@ -300,7 +315,7 @@ impl PlannedFile {
         format!("{}/{}{disabled}", self.kind.dir(), self.file_name)
     }
 
-    fn blocked(&self, reason: BlockReason) -> BlockedFile {
+    pub(crate) fn blocked(&self, reason: BlockReason) -> BlockedFile {
         BlockedFile {
             project_id: self.project_id,
             file_id: self.file_id,

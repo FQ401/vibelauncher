@@ -56,6 +56,36 @@ pub fn hash_file(path: &Path) -> std::io::Result<FileHashes> {
     })
 }
 
+/// The CurseForge fingerprint of the file at `path`. The file is read twice (the counted length
+/// enters the hash first), in pieces, never whole.
+pub fn fingerprint_file(path: &Path) -> std::io::Result<u32> {
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut len = 0u64;
+    let mut size = 0u64;
+    let mut file = File::open(path)?;
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        size += n as u64;
+        if size > MAX_HASHED_BYTES {
+            return Err(std::io::Error::other("file is too large to hash"));
+        }
+        len += vl_curseforge::fingerprint_len(&buf[..n]);
+    }
+    let mut hasher = vl_curseforge::Fingerprinter::new(len);
+    let mut file = File::open(path)?;
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finish())
+}
+
 /// The SHA-1 and size of everything `reader` yields.
 pub fn sha1_of(mut reader: impl Read) -> std::io::Result<(String, u64)> {
     let mut sha1 = Sha1::new();

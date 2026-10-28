@@ -426,20 +426,25 @@ pub enum HashAlgorithm {
     Sha1,
     /// SHA-512 (128 hex digits).
     Sha512,
+    /// The CurseForge fingerprint (MurmurHash2 of the file without whitespace bytes), a decimal
+    /// 32-bit number.
+    Fingerprint,
 }
 
 impl HashAlgorithm {
-    /// The number of hex digits of a digest.
-    pub fn hex_len(self) -> usize {
-        match self {
-            Self::Sha1 => 40,
-            Self::Sha512 => 128,
-        }
-    }
-
-    /// Whether `hash` is a digest of this algorithm in hex (either case).
+    /// Whether `hash` is a value of this algorithm: hex of the right length (either case) for
+    /// the SHA digests, a decimal number below 2^32 without sign or leading zeros for the
+    /// fingerprint.
     pub fn is_valid(self, hash: &str) -> bool {
-        hash.len() == self.hex_len() && hash.bytes().all(|b| b.is_ascii_hexdigit())
+        let hex = |len: usize| hash.len() == len && hash.bytes().all(|b| b.is_ascii_hexdigit());
+        match self {
+            Self::Sha1 => hex(40),
+            Self::Sha512 => hex(128),
+            Self::Fingerprint => {
+                hash.bytes().all(|b| b.is_ascii_digit())
+                    && hash.parse::<u32>().is_ok_and(|n| n.to_string() == hash)
+            }
+        }
     }
 }
 
@@ -565,6 +570,11 @@ mod tests {
         assert!(HashAlgorithm::Sha1.is_valid(&"a".repeat(40)));
         assert!(!HashAlgorithm::Sha1.is_valid(&"g".repeat(40)));
         assert!(!HashAlgorithm::Sha512.is_valid(&"a".repeat(40)));
+        assert!(HashAlgorithm::Fingerprint.is_valid("0"));
+        assert!(HashAlgorithm::Fingerprint.is_valid("4294967295"));
+        for bad in ["", "4294967296", "+1", "-1", "01", "1a", " 1"] {
+            assert!(!HashAlgorithm::Fingerprint.is_valid(bad), "{bad:?}");
+        }
     }
 
     #[test]

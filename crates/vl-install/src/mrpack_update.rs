@@ -16,6 +16,11 @@
 //!
 //! With `reset` the folder is made to match the pack instead.
 //!
+//! A pack installed from CurseForge is updated by the same rules ([`NewPack::CurseForge`]): its
+//! new files are resolved through the API by [`crate::cfpack_update`], files the pack does not
+//! require are added disabled, and a file that cannot be downloaded is left to the user while
+//! the old file of its project stays.
+//!
 //! [`apply`] downloads everything first, copies each file it is about to change or remove into
 //! `<instance>/.vibelauncher/backup/<time>/`, then makes the changes one by one; a failure or a
 //! cancel puts every file (and `pack.json` and `resources.json`) back as it was. The loader and
@@ -33,14 +38,16 @@ use vl_core::install::{
 };
 use vl_core::resources::ResourceKind;
 use vl_core::{Error, ErrorKind, Result};
-use vl_modrinth::mrpack::PackFile;
+use vl_modrinth::mrpack::{PackFile, PackLoader};
 use vl_net::{Client, Control};
-use vl_platforms::CatalogSource;
+use vl_platforms::{CatalogSource, CurseForgeSource};
 
+use crate::cfpack::{self, BlockedFile, CfPack, is_curseforge_pack};
+use crate::cfpack_update::CfNew;
 use crate::hashing::hash_file;
 use crate::mrpack::{
-    InstallInput, OverrideRecord, Pack, PackFileRecord, PackRecord, PackSourceRecord, Report,
-    check_cancel, download_files, fetch, io,
+    InstallInput, OverrideRecord, Pack, PackFileRecord, PackKind, PackRecord, PackSourceRecord,
+    RECORD_FORMAT, Report, check_cancel, download_files_allowing, fetch, io,
 };
 use crate::mrpack_origins::{Resolved, kind_and_name, resolve};
 use crate::origin::{Origin, OriginStore};
@@ -60,6 +67,8 @@ const SCRATCH_DIR: &str = "pack-update";
 pub struct Context<'a> {
     /// The catalog the pack came from (also used to find the origin of the new files).
     pub source: &'a dyn CatalogSource,
+    /// CurseForge, for packs installed from it: their files are resolved by id.
+    pub curseforge: Option<&'a CurseForgeSource>,
     /// Downloads.
     pub client: &'a Client,
     /// The instance's game directory.
@@ -77,7 +86,7 @@ pub struct Wanted<'a> {
     pub min: MinStability,
     /// A version id of the pack project; may be older than the installed one.
     pub version: Option<&'a str>,
-    /// A local `.mrpack` for a pack that has no catalog source.
+    /// A local pack file (`.mrpack`, or a CurseForge zip) for a pack that has no catalog source.
     pub file: Option<&'a Path>,
     /// Put every file back as the pack has it.
     pub reset: bool,
@@ -91,10 +100,15 @@ fn label(v: &vl_core::catalog::ProjectVersion) -> VersionLabel {
     }
 }
 
-fn has_pack_file(v: &vl_core::catalog::ProjectVersion) -> bool {
+/// Whether a version carries a pack file of this format.
+fn has_pack_file(v: &vl_core::catalog::ProjectVersion, kind: PackKind) -> bool {
+    let extension = match kind {
+        PackKind::Modrinth => ".mrpack",
+        PackKind::CurseForge => ".zip",
+    };
     v.files
         .iter()
-        .any(|f| f.filename.to_ascii_lowercase().ends_with(".mrpack"))
+        .any(|f| f.filename.to_ascii_lowercase().ends_with(extension))
 }
 
 /// Looks for a version of the pack's project newer than the installed one, in a channel `min`
@@ -140,7 +154,9 @@ pub fn check(ctx: &Context<'_>, record: &PackRecord, min: MinStability) -> Resul
     let newer = &versions[..position.unwrap_or(versions.len())];
     let latest = newer
         .iter()
-        .find(|v| min.rank(v.channel).is_some() && has_pack_file(v) && v.id != src.version_id)
+        .find(|v| {
+            min.rank(v.channel).is_some() && has_pack_file(v, record.kind) && v.id != src.version_id
+        })
         .map(label);
     Ok(PackUpdateInfo {
         name: record.name.clone(),
@@ -180,12 +196,79 @@ struct Op {
     kind: OpKind,
 }
 
+/// The new version of a pack, in its format.
+#[derive(Debug, Clone)]
+pub enum NewPack {
+    /// A Modrinth `.mrpack`.
+    Modrinth(Pack),
+    /// A CurseForge zip with its files resolved through the API.
+    CurseForge(Box<CfNew>),
+}
+
+impl NewPack {
+    fn name(&self) -> &str {
+        match self {
+            Self::Modrinth(p) => &p.index.name,
+            Self::CurseForge(c) => &c.pack.manifest.name,
+        }
+    }
+
+    /// The pack's own version label.
+    fn label(&self) -> &str {
+        match self {
+            Self::Modrinth(p) => &p.index.version_id,
+            Self::CurseForge(c) => &c.pack.manifest.version,
+        }
+    }
+
+    fn game_version(&self) -> Option<&str> {
+        match self {
+            Self::Modrinth(p) => p.index.game_version(),
+            Self::CurseForge(c) => Some(c.pack.game_version()).filter(|v| !v.is_empty()),
+        }
+    }
+
+    /// The pack's mod loader and its version.
+    ///
+    /// # Errors
+    ///
+    /// `Unsupported` for a CurseForge loader the launcher cannot install.
+    pub fn loader(&self) -> Result<Option<(PackLoader, String)>> {
+        match self {
+            Self::Modrinth(p) => Ok(p.index.loader().map(|(l, v)| (l, v.to_owned()))),
+            Self::CurseForge(c) => c.pack.loader(),
+        }
+    }
+
+    /// The files the client gets.
+    fn files(&self) -> Vec<&PackFile> {
+        match self {
+            Self::Modrinth(p) => p.client_files().collect(),
+            Self::CurseForge(c) => c.files().collect(),
+        }
+    }
+
+    fn override_hashes(&self) -> Result<Vec<OverrideRecord>> {
+        match self {
+            Self::Modrinth(p) => p.override_hashes(),
+            Self::CurseForge(c) => c.pack.override_hashes(),
+        }
+    }
+
+    fn extract_overrides_to(&self, wanted: &[(String, PathBuf)], control: &Control) -> Result<()> {
+        match self {
+            Self::Modrinth(p) => p.extract_overrides_to(wanted, control),
+            Self::CurseForge(c) => c.pack.extract_overrides_to(wanted, control),
+        }
+    }
+}
+
 /// An update worked out and ready to apply.
 pub struct Prepared {
     /// What it would do.
     pub changes: PackChanges,
     /// The new pack.
-    pub pack: Pack,
+    pub pack: NewPack,
     source: Option<PackSourceRecord>,
     ops: Vec<Op>,
     new_overrides: Vec<OverrideRecord>,
@@ -193,8 +276,18 @@ pub struct Prepared {
     known: HashSet<String>,
     removed: Vec<(ResourceKind, String)>,
     scratch: Scratch,
+    /// The baseline files of the installed pack.
+    baseline: Vec<PackFileRecord>,
+    /// Paths of new files that may fail to download and are then left to the user.
+    may_fail: HashSet<String>,
+    /// Project id of each new file, by path.
+    new_projects: HashMap<String, String>,
+    /// Project id of each baseline file, by path, when its origin is known.
+    old_projects: HashMap<String, String>,
     /// The new loader, as the pack names it: key and version.
     pub new_loader: Option<(String, String)>,
+    /// The new loader and its version.
+    pub loader: Option<(PackLoader, String)>,
     /// The new Minecraft version.
     pub new_game_version: String,
 }
@@ -281,9 +374,22 @@ struct Planner<'a> {
     ops: Vec<Op>,
     unchanged: u32,
     bytes: u64,
+    /// New paths that are added disabled (CurseForge files the pack does not require).
+    off: HashSet<String>,
+    /// Projects whose new file the user has to download by hand: their old file stays.
+    keep_projects: HashSet<String>,
 }
 
 impl Planner<'_> {
+    /// Where a new file goes when it is added: disabled when the pack does not require it.
+    fn add_target(&self, path: &str) -> (String, bool) {
+        if self.off.contains(path) {
+            (format!("{path}{DISABLED}"), true)
+        } else {
+            (path.to_owned(), false)
+        }
+    }
+
     fn put_download(&mut self, target: String, file: &PackFile) {
         self.bytes += file.size;
         self.ops.push(Op {
@@ -356,6 +462,20 @@ impl Planner<'_> {
             .filter(|r| !newmap.contains_key(r.path.as_str()))
         {
             let st = state(self.game, &r.path);
+            let blocked = self
+                .old_project
+                .get(&r.sha1)
+                .is_some_and(|p| self.keep_projects.contains(p));
+            if blocked && st != State::Missing {
+                let mut c = change(&r.path, PackAction::KeepModified, true);
+                c.note = Some(
+                    "the pack's new version of it has to be downloaded by hand; this one stays \
+                     until you replace it"
+                        .into(),
+                );
+                self.changes.push(c);
+                continue;
+            }
             let taken: HashSet<String> = succ.keys().cloned().collect();
             let next = self.successor(r, &added, &taken).map(|a| a.path.clone());
             match &st {
@@ -455,8 +575,11 @@ impl Planner<'_> {
             }
             None => match state(self.game, &f.path) {
                 State::Missing => {
-                    self.put_download(f.path.clone(), f);
-                    self.changes.push(change(&f.path, PackAction::Add, true));
+                    let (target, off) = self.add_target(&f.path);
+                    self.put_download(target, f);
+                    let mut c = change(&f.path, PackAction::Add, true);
+                    c.disabled = off;
+                    self.changes.push(c);
                 }
                 st if st.hash() == Some(&f.sha1.to_ascii_lowercase()) => self.unchanged += 1,
                 _ => {
@@ -508,8 +631,11 @@ impl Planner<'_> {
                     self.changes.push(change(&f.path, PackAction::Enable, true));
                 }
                 State::Missing => {
-                    self.put_download(f.path.clone(), f);
-                    self.changes.push(change(&f.path, PackAction::Add, true));
+                    let (target, off) = self.add_target(&f.path);
+                    self.put_download(target, f);
+                    let mut c = change(&f.path, PackAction::Add, true);
+                    c.disabled = off;
+                    self.changes.push(c);
                 }
                 st => {
                     if matches!(st, State::Disabled(_)) {
@@ -629,6 +755,80 @@ fn loader_text(l: Option<&(String, String)>) -> String {
     l.map_or_else(|| "none".to_owned(), |(k, v)| format!("{k} {v}"))
 }
 
+/// CurseForge, for a pack installed from it.
+fn curseforge<'a>(ctx: &Context<'a>) -> Result<&'a CurseForgeSource> {
+    ctx.curseforge
+        .ok_or_else(|| Error::unsupported("CurseForge is not available here"))
+}
+
+/// Fetches or opens the new pack in the format of the installed one. `None` when there is
+/// nothing newer and nothing else was asked.
+fn open_new(
+    ctx: &Context<'_>,
+    record: &PackRecord,
+    wanted: &Wanted<'_>,
+    dir: &Path,
+) -> Result<Option<(NewPack, Option<PackSourceRecord>)>> {
+    let from_curseforge = record.kind == PackKind::CurseForge;
+    let (file, source) = match (&record.source, wanted.file) {
+        (Some(src), None) => {
+            let version = match wanted.version {
+                Some(v) => v.to_owned(),
+                None => match check(ctx, record, wanted.min)?.latest {
+                    Some(l) => l.id,
+                    None if wanted.reset => src.version_id.clone(),
+                    None => return Ok(None),
+                },
+            };
+            let (file, source) = if from_curseforge {
+                cfpack::fetch(
+                    curseforge(ctx)?,
+                    ctx.client,
+                    &src.project_id,
+                    Some(&version),
+                    wanted.min,
+                    dir,
+                    ctx.control,
+                )?
+            } else {
+                fetch(
+                    ctx.source,
+                    ctx.client,
+                    &src.project_id,
+                    Some(&version),
+                    wanted.min,
+                    dir,
+                    ctx.control,
+                )?
+            };
+            (file, Some(source))
+        }
+        (Some(_), Some(_)) => {
+            return Err(Error::invalid_input(
+                "this pack comes from the catalog; give a version, not a file",
+            ));
+        }
+        (None, Some(file)) => (file.to_path_buf(), None),
+        (None, None) => {
+            return Err(Error::invalid_input(
+                "this pack was installed from a file; give the new pack file",
+            ));
+        }
+    };
+    if !from_curseforge {
+        return Ok(Some((NewPack::Modrinth(Pack::open(&file)?), source)));
+    }
+    if !is_curseforge_pack(&file)? {
+        return Err(Error::invalid_input(
+            "the instance was installed from a CurseForge modpack; give a CurseForge pack zip",
+        ));
+    }
+    let pack = CfPack::open(&file)?;
+    let resolved = cfpack::resolve(curseforge(ctx)?, &pack, ctx.control)?;
+    let new = CfNew::new(pack, resolved, record);
+    Ok(Some((NewPack::CurseForge(Box::new(new)), source)))
+}
+
 /// Fetches the new pack and works out what updating to it does.
 ///
 /// Returns `None` when there is nothing newer, no version was asked for and no reset was asked.
@@ -644,51 +844,20 @@ pub fn prepare(
 ) -> Result<Option<Prepared>> {
     let scratch = Scratch(ctx.meta_dir.join(SCRATCH_DIR));
     let _ = fs::remove_dir_all(&scratch.0);
-    let (pack, source) = match (&record.source, wanted.file) {
-        (Some(src), None) => {
-            let version = match wanted.version {
-                Some(v) => v.to_owned(),
-                None => match check(ctx, record, wanted.min)?.latest {
-                    Some(l) => l.id,
-                    None if wanted.reset => src.version_id.clone(),
-                    None => return Ok(None),
-                },
-            };
-            let (file, source) = fetch(
-                ctx.source,
-                ctx.client,
-                &src.project_id,
-                Some(&version),
-                wanted.min,
-                &scratch.0.join("pack"),
-                ctx.control,
-            )?;
-            (Pack::open(&file)?, Some(source))
-        }
-        (Some(_), Some(_)) => {
-            return Err(Error::invalid_input(
-                "this pack comes from the catalog; give a version, not a file",
-            ));
-        }
-        (None, Some(file)) => (Pack::open(file)?, None),
-        (None, None) => {
-            return Err(Error::invalid_input(
-                "this pack was installed from a file; give the new .mrpack file",
-            ));
-        }
+    let Some((pack, source)) = open_new(ctx, record, wanted, &scratch.0.join("pack"))? else {
+        return Ok(None);
     };
     check_cancel(ctx.control)?;
     let game_version = pack
-        .index
         .game_version()
         .ok_or_else(|| Error::invalid_input("the pack does not name a Minecraft version"))?
         .to_owned();
-    let new_loader = pack
-        .index
-        .loader()
-        .map(|(l, v)| (l.key().to_owned(), v.to_owned()));
+    let loader = pack.loader()?;
+    let new_loader = loader
+        .as_ref()
+        .map(|(l, v)| (l.key().to_owned(), v.clone()));
     let new_overrides = pack.override_hashes()?;
-    let new_files: Vec<&PackFile> = pack.client_files().collect();
+    let new_files: Vec<&PackFile> = pack.files();
 
     // Files the pack brings that the baseline did not have, or has changed: their projects are
     // looked up so a swapped mod can be matched with the file it replaces.
@@ -702,21 +871,31 @@ pub fn prepare(
         .filter(|f| old_hash.get(f.path.as_str()) != Some(&f.sha1.to_ascii_lowercase().as_str()))
         .map(|f| f.path.clone())
         .collect();
-    let resolved = resolve(
-        ctx.source,
-        &pack,
-        &Report {
-            installed: incoming.clone(),
-            ..Report::default()
+    let resolved = match &pack {
+        NewPack::Modrinth(p) => resolve(
+            ctx.source,
+            p,
+            &Report {
+                installed: incoming.clone(),
+                ..Report::default()
+            },
+            ctx.control,
+        )?,
+        // CurseForge names the project of every file: nothing to look up.
+        NewPack::CurseForge(c) => Resolved {
+            origins: c.origins(&incoming.iter().cloned().collect()),
+            ..Resolved::default()
         },
-        ctx.control,
-    )?;
+    };
     let loaded = OriginStore::new(ctx.meta_dir.join("resources.json")).load();
-    let new_project: HashMap<String, String> = resolved
-        .origins
-        .iter()
-        .map(|o| (format!("{}/{}", o.kind.dir(), o.file), o.project_id.clone()))
-        .collect();
+    let new_project: HashMap<String, String> = match &pack {
+        NewPack::CurseForge(c) => c.projects(),
+        NewPack::Modrinth(_) => resolved
+            .origins
+            .iter()
+            .map(|o| (format!("{}/{}", o.kind.dir(), o.file), o.project_id.clone()))
+            .collect(),
+    };
     let old_project: HashMap<String, String> = loaded
         .origins
         .iter()
@@ -732,11 +911,31 @@ pub fn prepare(
         ops: Vec::new(),
         unchanged: 0,
         bytes: 0,
+        off: match &pack {
+            NewPack::CurseForge(c) => c.optional(),
+            NewPack::Modrinth(_) => HashSet::new(),
+        },
+        keep_projects: match &pack {
+            NewPack::CurseForge(c) => c.blocked_projects(),
+            NewPack::Modrinth(_) => HashSet::new(),
+        },
     };
     planner.files(record, &new_files);
     planner.overrides(record, &new_overrides);
+    let old_projects: HashMap<String, String> = record
+        .files
+        .iter()
+        .filter_map(|f| {
+            let project = planner.old_project.get(&f.sha1)?;
+            Some((f.path.clone(), project.clone()))
+        })
+        .collect();
+    let new_projects = planner.new_project.clone();
 
     let mut warnings = Vec::new();
+    if let NewPack::CurseForge(c) = &pack {
+        warnings.extend(c.notes());
+    }
     if resolved.lookup_failed {
         warnings.push(
             "could not look up the new files in the catalog; replaced mods are matched by name"
@@ -764,15 +963,14 @@ pub fn prepare(
         to: loader_text(new_loader.as_ref()),
     });
     let changes = PackChanges {
-        name: pack.index.name.clone(),
+        name: pack.name().to_owned(),
         from: record
             .source
             .as_ref()
             .map_or_else(|| record.pack_version.clone(), |s| s.version_number.clone()),
-        to: source.as_ref().map_or_else(
-            || pack.index.version_id.clone(),
-            |s| s.version_number.clone(),
-        ),
+        to: source
+            .as_ref()
+            .map_or_else(|| pack.label().to_owned(), |s| s.version_number.clone()),
         game_version: game_version_change,
         loader: loader_change,
         changes: planner.changes,
@@ -804,17 +1002,27 @@ pub fn prepare(
         .filter(|c| c.action == PackAction::Remove && c.download)
         .filter_map(|c| kind_and_name(&c.path).map(|(k, n)| (k, n.to_owned())))
         .collect();
+    let may_fail = match &pack {
+        NewPack::CurseForge(c) => c.may_fail(),
+        NewPack::Modrinth(_) => HashSet::new(),
+    };
+    let ops = planner.ops;
     Ok(Some(Prepared {
         changes,
         pack,
         source,
-        ops: planner.ops,
+        ops,
         new_overrides,
         resolved,
         known,
         removed,
         scratch,
+        baseline: record.files.clone(),
+        may_fail,
+        new_projects,
+        old_projects,
         new_loader,
+        loader,
         new_game_version: game_version,
     }))
 }
@@ -824,6 +1032,8 @@ pub fn prepare(
 pub struct Applied {
     /// Where the previous versions of the touched files are.
     pub backup: PathBuf,
+    /// Files of a CurseForge pack the user has to download by hand (also kept in `pack.json`).
+    pub blocked: Vec<BlockedFile>,
 }
 
 /// `YYYYMMDD-HHMMSS` in UTC.
@@ -925,6 +1135,76 @@ fn roll_back(game: &Path, meta: &Path, backup: &Path, touched: &[String]) -> Vec
     failed
 }
 
+/// The hashes of the file at `base` (or its disabled copy) in the game directory.
+fn placed_hashes(game: &Path, base: &str) -> Option<crate::FileHashes> {
+    let on = game.join(base);
+    let path = if on.is_file() {
+        on
+    } else {
+        game.join(format!("{base}{DISABLED}"))
+    };
+    hash_file(&path).ok()
+}
+
+/// The record of an updated CurseForge pack: the new pack's files (the user's hand-downloads
+/// left out), with the hashes CurseForge gives, else those of the placed file, else the
+/// baseline's.
+fn curseforge_record(
+    new: &CfNew,
+    prepared: &Prepared,
+    failed: &HashSet<String>,
+    placed: &HashSet<String>,
+    game: &Path,
+    source: Option<PackSourceRecord>,
+) -> Result<PackRecord> {
+    let old: HashMap<&str, &PackFileRecord> = prepared
+        .baseline
+        .iter()
+        .map(|f| (f.path.as_str(), f))
+        .collect();
+    let files = new
+        .files()
+        .filter(|f| !failed.contains(&f.path))
+        .map(|f| {
+            let fresh = placed
+                .contains(&f.path)
+                .then(|| placed_hashes(game, &f.path))
+                .flatten();
+            let before = old
+                .get(f.path.as_str())
+                .filter(|o| f.sha1.is_empty() || o.sha1.eq_ignore_ascii_case(&f.sha1));
+            let (sha1, sha512, size) = match (&fresh, before) {
+                (Some(h), _) if f.sha1.is_empty() || h.sha1 == f.sha1 => {
+                    (h.sha1.clone(), h.sha512.clone(), h.size)
+                }
+                (_, Some(o)) => (o.sha1.clone(), o.sha512.clone(), o.size),
+                _ => (f.sha1.to_ascii_lowercase(), String::new(), f.size),
+            };
+            PackFileRecord {
+                path: f.path.clone(),
+                sha1,
+                sha512,
+                size,
+                optional: f.client == vl_modrinth::mrpack::Support::Optional,
+                origin_known: true,
+            }
+        })
+        .collect();
+    Ok(PackRecord {
+        format: RECORD_FORMAT,
+        name: new.pack.manifest.name.clone(),
+        pack_version: new.pack.manifest.version.clone(),
+        source,
+        game_version: prepared.new_game_version.clone(),
+        loader: prepared.new_loader.clone(),
+        installed_unix: crate::origin::now_unix(),
+        files,
+        overrides: Vec::new(),
+        kind: PackKind::CurseForge,
+        blocked: new.blocked(failed),
+    })
+}
+
 /// Downloads the new files, backs up what is about to change and makes the changes. `after`
 /// runs last, inside the same all-or-nothing scope, and changes what is not a file (the game
 /// version and loader of the instance).
@@ -948,6 +1228,9 @@ pub fn apply(
         known,
         removed,
         scratch,
+        may_fail,
+        new_projects,
+        old_projects,
         ..
     } = &prepared;
     // Everything is fetched and extracted before the first file is touched.
@@ -970,7 +1253,7 @@ pub fn apply(
         }
         staged_of.insert(i, dest);
     }
-    download_files(
+    let failed = download_files_allowing(
         &InstallInput {
             client: ctx.client,
             game_dir: ctx.game_dir,
@@ -979,9 +1262,37 @@ pub fn apply(
         },
         &files,
         &file_dests,
+        may_fail,
     )?;
     pack.extract_overrides_to(&extract, ctx.control)?;
     check_cancel(ctx.control)?;
+    // A file left to the user is not placed, and the old file of its project stays.
+    let blocked_projects: HashSet<&String> =
+        failed.iter().filter_map(|p| new_projects.get(p)).collect();
+    let base = |target: &str| target.strip_suffix(DISABLED).unwrap_or(target).to_owned();
+    let skipped: HashSet<usize> = ops
+        .iter()
+        .enumerate()
+        .filter(|(_, op)| match &op.kind {
+            OpKind::Put(Source::Download(f)) => failed.contains(&f.path),
+            OpKind::Delete => old_projects
+                .get(&base(&op.target))
+                .is_some_and(|p| blocked_projects.contains(p)),
+            _ => false,
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let kept: HashSet<String> = skipped
+        .iter()
+        .filter_map(|i| ops.get(*i))
+        .filter(|op| matches!(op.kind, OpKind::Delete))
+        .map(|op| base(&op.target))
+        .collect();
+    let removed: Vec<(ResourceKind, String)> = removed
+        .iter()
+        .filter(|(k, n)| !kept.contains(&format!("{}/{n}", k.dir())))
+        .cloned()
+        .collect();
 
     let backup = new_backup_dir(ctx.meta_dir)?;
     let mut touched: Vec<String> = Vec::new();
@@ -997,6 +1308,9 @@ pub fn apply(
         }
         for (i, op) in ops.iter().enumerate() {
             check_cancel(ctx.control)?;
+            if skipped.contains(&i) {
+                continue;
+            }
             let target = ctx.game_dir.join(&op.target);
             touched.push(op.target.clone());
             back_up(ctx.game_dir, &backup, &op.target)?;
@@ -1028,48 +1342,71 @@ pub fn apply(
         }
         let placed: HashSet<String> = ops
             .iter()
-            .filter(|o| matches!(&o.kind, OpKind::Put(Source::Download(_))))
-            .map(|o| {
-                o.target
-                    .strip_suffix(DISABLED)
-                    .unwrap_or(&o.target)
-                    .to_owned()
+            .enumerate()
+            .filter(|(i, o)| {
+                !skipped.contains(i) && matches!(&o.kind, OpKind::Put(Source::Download(_)))
             })
+            .map(|(_, o)| base(&o.target))
             .collect();
-        let added: Vec<Origin> = resolved
+        let game = ctx.game_dir;
+        let mut added: Vec<Origin> = resolved
             .origins
             .iter()
             .filter(|o| placed.contains(&format!("{}/{}", o.kind.dir(), o.file)))
             .cloned()
             .collect();
-        let game = ctx.game_dir;
+        if matches!(pack, NewPack::CurseForge(_)) {
+            // CurseForge may give no hash: the record takes the placed file's.
+            added.retain_mut(|o| {
+                let base = format!("{}/{}", o.kind.dir(), o.file);
+                let Some(hashes) = placed_hashes(game, &base) else {
+                    return false;
+                };
+                o.sha1 = hashes.sha1;
+                o.sha512 = Some(hashes.sha512);
+                o.size = hashes.size;
+                true
+            });
+        }
         OriginStore::new(ctx.meta_dir.join("resources.json")).record(
             added,
             |o| {
                 let base = format!("{}/{}", o.kind.dir(), o.file);
                 state(game, &base) != State::Missing
             },
-            removed,
+            &removed,
         )?;
-        let all: Vec<String> = pack.client_files().map(|f| f.path.clone()).collect();
         let known: HashSet<&str> = known.iter().map(String::as_str).collect();
-        PackRecord::new(
-            pack,
-            &Report {
-                installed: all,
-                ..Report::default()
-            },
-            source.clone(),
-        )
-        .with_known_origins(&known)
-        .with_overrides(new_overrides.clone())
-        .save(ctx.meta_dir)?;
+        let record = match pack {
+            NewPack::Modrinth(p) => {
+                let all: Vec<String> = p.client_files().map(|f| f.path.clone()).collect();
+                PackRecord::new(
+                    p,
+                    &Report {
+                        installed: all,
+                        ..Report::default()
+                    },
+                    source.clone(),
+                )
+            }
+            NewPack::CurseForge(c) => {
+                curseforge_record(c, &prepared, &failed, &placed, game, source.clone())?
+            }
+        };
+        record
+            .with_known_origins(&known)
+            .with_overrides(new_overrides.clone())
+            .save(ctx.meta_dir)?;
         after(&prepared)
     })();
     match run {
         Ok(()) => {
             prune_backups(ctx.meta_dir);
-            Ok(Applied { backup })
+            let blocked = match &prepared.pack {
+                NewPack::CurseForge(c) => c.blocked(&failed),
+                NewPack::Modrinth(_) => Vec::new(),
+            };
+            Ok(Applied { backup, blocked })
         }
         Err(e) => {
             let failed = roll_back(ctx.game_dir, ctx.meta_dir, &backup, &touched);

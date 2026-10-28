@@ -96,7 +96,7 @@ fn parse_request(pack: &str, flags: &[&str]) -> Result<PackInstallRequest, CliEr
     })
 }
 
-fn parse_provider(name: &str) -> Result<Provider, CliError> {
+pub(crate) fn parse_provider(name: &str) -> Result<Provider, CliError> {
     match name.to_ascii_lowercase().as_str() {
         "modrinth" => Ok(Provider::Modrinth),
         "curseforge" => Ok(Provider::CurseForge),
@@ -259,7 +259,7 @@ fn print_info(info: &PackUpdateInfo, out: Out<'_>) -> Result<(), CliError> {
         )?,
         None if info.from_file => writeln!(
             out,
-            "installed from a file; update it with `packs update <instance> --file <pack.mrpack>`"
+            "installed from a file; update it with `packs update <instance> --file <pack file>`"
         )?,
         None => writeln!(out, "up to date")?,
     }

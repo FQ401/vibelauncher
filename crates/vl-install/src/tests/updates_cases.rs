@@ -385,3 +385,184 @@ fn a_version_can_be_chosen_explicitly_even_an_older_one() {
     .unwrap_err();
     assert_eq!(err.kind, ErrorKind::NotFound);
 }
+
+/// A record of `file` with these bytes, installed from `provider`.
+fn recorded(file: &str, bytes: &[u8], provider: Provider, project: &str, version: &str) -> Origin {
+    Origin {
+        kind: ResourceKind::Mods,
+        file: file.to_owned(),
+        sha1: sha1(bytes),
+        sha512: None,
+        size: bytes.len() as u64,
+        provider,
+        project_id: project.to_owned(),
+        slug: None,
+        version_id: version.to_owned(),
+        version_number: None,
+        installed_unix: 0,
+        dependency: false,
+    }
+}
+
+#[test]
+fn curseforge_identifies_files_by_fingerprint_and_keeps_records_of_other_platforms() {
+    let a1 = ver("11", "100", "1");
+    let b1 = ver("21", "200", "1");
+    let catalog = Catalog::default()
+        .curseforge()
+        .project("100")
+        .project("200")
+        .version(a1.clone())
+        .version(b1.clone());
+    let w = World::new(catalog);
+    w.put_mod("a.jar", &a1.bytes);
+    w.put_mod("b.jar", &b1.bytes);
+    w.put_mod("mine.jar", &jar("mine", "1"));
+    // b.jar was installed from Modrinth: that record stays.
+    w.origins
+        .save(&[recorded(
+            "b.jar",
+            &b1.bytes,
+            Provider::Modrinth,
+            "mr-b",
+            "mr-b1",
+        )])
+        .unwrap();
+    let (target, meta) = (fabric(), meta(&w));
+    let report = identify(&input(&w, &target, &meta)).unwrap();
+    let identified: Vec<&str> = report.identified.iter().map(|f| f.file.as_str()).collect();
+    assert_eq!(identified, ["a.jar"]);
+    assert_eq!(report.already_known, 1);
+    assert_eq!(report.unknown.len(), 1);
+    let mut records = w.origins.load().origins;
+    records.sort_by(|x, y| x.file.cmp(&y.file));
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        (records[0].provider, records[0].project_id.as_str()),
+        (Provider::CurseForge, "100")
+    );
+    assert_eq!(records[0].version_id, "11");
+    assert_eq!(records[0].sha1, sha1(&a1.bytes));
+    assert_eq!(records[1].provider, Provider::Modrinth);
+    assert_eq!(w.catalog.lookup_calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn curseforge_updates_are_found_by_fingerprint_and_installed_with_their_origin() {
+    let a1 = ver("11", "100", "1");
+    let b1 = ver("21", "200", "1");
+    let catalog = Catalog::default()
+        .curseforge()
+        .project("100")
+        .project("200")
+        .version(a1.clone())
+        .version(ver("12", "100", "2").date("2025-02-01T00:00:00Z"))
+        .version(
+            ver("13", "100", "3-beta")
+                .channel(ReleaseChannel::Beta)
+                .date("2025-03-01T00:00:00Z"),
+        )
+        .version(b1.clone())
+        .version(ver("22", "200", "2").date("2025-02-01T00:00:00Z"));
+    let w = World::new(catalog);
+    w.put_mod("a-1.jar", &a1.bytes);
+    w.put_mod("b-1.jar.disabled", &b1.bytes);
+    let (target, meta) = (fabric(), meta(&w));
+    let report = check(&input(&w, &target, &meta), UpdateOptions::default()).unwrap();
+    let mut found: Vec<(&str, &str)> = report
+        .updates
+        .iter()
+        .map(|u| (u.file.as_str(), u.latest.id.as_str()))
+        .collect();
+    found.sort();
+    assert_eq!(found, [("a-1.jar", "12"), ("b-1.jar", "22")]);
+    let asks = w.catalog.update_asks.lock().unwrap();
+    assert_eq!(asks[0].1, [ReleaseChannel::Release]);
+    drop(asks);
+
+    // The channel setting lets the beta through.
+    let beta = UpdateOptions {
+        min: MinStability::Beta,
+        ..UpdateOptions::default()
+    };
+    let report = check(&input(&w, &target, &meta), beta).unwrap();
+    assert!(report.updates.iter().any(|u| u.latest.id == "13"));
+
+    let plan = plan_update(
+        &input(&w, &target, &meta),
+        UpdateOptions::default(),
+        Selection::All,
+        None,
+    )
+    .unwrap();
+    assert!(
+        plan.items
+            .iter()
+            .all(|i| i.provider == Provider::CurseForge)
+    );
+    w.install(&plan).unwrap();
+    assert_eq!(w.mod_files(), ["100-2.jar", "200-2.jar.disabled"]);
+    let records = w.origins.load().origins;
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|o| o.provider == Provider::CurseForge));
+    assert!(
+        records
+            .iter()
+            .any(|o| o.file == "100-2.jar" && o.version_id == "12")
+    );
+    let again = check(&input(&w, &target, &meta), UpdateOptions::default()).unwrap();
+    assert!(again.updates.is_empty());
+    assert_eq!(again.up_to_date, 2);
+}
+
+#[test]
+fn a_file_recorded_from_another_platform_is_not_checked_here() {
+    let (old, catalog) = two_versions();
+    let w = World::new(catalog);
+    w.put_mod("a-1.jar", &old.bytes);
+    w.origins
+        .save(&[recorded(
+            "a-1.jar",
+            &old.bytes,
+            Provider::CurseForge,
+            "100",
+            "11",
+        )])
+        .unwrap();
+    let (target, meta) = (fabric(), meta(&w));
+    let report = check(&input(&w, &target, &meta), UpdateOptions::default()).unwrap();
+    assert!(report.updates.is_empty());
+    assert_eq!(report.unchecked.len(), 1);
+    assert_eq!(report.unchecked[0].reason, UncheckedReason::OtherPlatform);
+    let identified = identify(&input(&w, &target, &meta)).unwrap();
+    assert!(identified.identified.is_empty());
+    assert_eq!(identified.already_known, 1);
+    assert_eq!(
+        w.origins.load().origins[0].provider,
+        Provider::CurseForge,
+        "the record is kept"
+    );
+}
+
+#[test]
+fn a_curseforge_pack_without_a_loader_is_updated_by_a_file_without_one() {
+    let old = ver("31", "300", "1").loaders(&[]).file_name("pack-1.zip");
+    let catalog = Catalog::default()
+        .curseforge()
+        .typed("300", ProjectType::ResourcePack)
+        .version(old.clone())
+        .version(
+            ver("32", "300", "2")
+                .loaders(&[])
+                .file_name("pack-2.zip")
+                .date("2025-02-01T00:00:00Z"),
+        );
+    let w = World::new(catalog);
+    let dir = w.resources.dir(ResourceKind::ResourcePacks);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pack-1.zip"), &old.bytes).unwrap();
+    let (target, meta) = (fabric(), meta(&w));
+    let report = check(&input(&w, &target, &meta), UpdateOptions::default()).unwrap();
+    assert_eq!(report.updates.len(), 1, "{report:?}");
+    assert_eq!(report.updates[0].latest.id, "32");
+}

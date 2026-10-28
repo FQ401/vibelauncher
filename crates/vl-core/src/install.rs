@@ -482,6 +482,8 @@ pub enum UncheckedReason {
     UnknownToPlatform,
     /// A mod in an instance without a mod loader.
     NoLoader,
+    /// The file's origin record names another platform; it is checked there.
+    OtherPlatform,
 }
 
 /// A file that could not be checked.
