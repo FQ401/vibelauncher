@@ -34,12 +34,19 @@ fn promotions() -> Promotions {
     .unwrap()
 }
 
-fn names(game: &str, promos: Option<&Promotions>) -> Vec<(String, bool)> {
+/// Version, recommended, latest.
+fn names(game: &str, promos: Option<&Promotions>) -> Vec<(String, bool, bool)> {
     versions_for_game(game, &all(), promos)
         .unwrap()
         .versions
         .into_iter()
-        .map(|v| (v.version, v.stable))
+        .map(|v| {
+            assert!(
+                v.stable,
+                "Forge versions are not divided into stable and not"
+            );
+            (v.version, v.recommended, v.latest)
+        })
         .collect()
 }
 
@@ -66,28 +73,29 @@ fn reads_the_promotions() {
 }
 
 #[test]
-fn lists_versions_newest_first_up_to_the_recommended_one_as_stable() {
+fn lists_versions_newest_first_with_recommended_and_latest_flags() {
     let p = promotions();
     assert_eq!(
         names("1.20.1", Some(&p)),
         [
-            ("47.10.2".to_owned(), false),
-            ("47.3.0".to_owned(), false),
-            ("47.2.0".to_owned(), true),
-            ("47.1.0".to_owned(), true),
+            ("47.10.2".to_owned(), false, true),
+            ("47.3.0".to_owned(), false, false),
+            ("47.2.0".to_owned(), true, false),
+            ("47.1.0".to_owned(), false, false),
         ]
     );
     let list = versions_for_game("1.20.1", &all(), Some(&p)).unwrap();
     assert_eq!(list.kind, ComponentKind::Forge);
     assert_eq!(list.recommended().unwrap().version, "47.2.0");
 
-    // No recommended build: nothing is stable, the newest is used.
+    // No recommended build: the latest is the default.
     let list = versions_for_game("1.21", &all(), Some(&p)).unwrap();
     assert_eq!(list.recommended().unwrap().version, "51.0.3");
-    assert!(!list.versions[0].stable);
+    assert!(list.versions.iter().all(|v| !v.recommended));
+    assert!(list.versions[0].latest);
 
-    // Without promotions every version counts as stable.
-    assert!(names("1.20.1", None).iter().all(|(_, stable)| *stable));
+    // Without promotions nothing is recommended and the latest is the default.
+    assert!(names("1.20.1", None).iter().all(|(_, rec, _)| !rec));
     let list = versions_for_game("1.20.1", &all(), None).unwrap();
     assert_eq!(list.recommended().unwrap().version, "47.10.2");
 

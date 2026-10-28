@@ -34,6 +34,8 @@ pub(crate) fn handle(backend: &Backend, command: VersionCommand, replier: Replie
                                     .map(|v| LoaderVersionInfo {
                                         version: v.version,
                                         stable: v.stable,
+                                        recommended: v.recommended,
+                                        latest: v.latest,
                                     })
                                     .collect(),
                             ))

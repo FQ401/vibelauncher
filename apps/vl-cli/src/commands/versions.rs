@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use vl_core::component::ComponentKind;
 use vl_core::instance::LoaderRequest;
 use vl_core::task::TaskOutcome;
 use vl_core::version::{VersionCommand, VersionFilter};
@@ -42,17 +43,28 @@ fn list(facade: &dyn Facade, flags: &[&str], out: Out<'_>) -> Result<(), CliErro
     }
 }
 
-/// Prints the versions of a loader for a game version, the stable ones marked.
+/// Prints the versions of a loader for a game version with their marks: `recommended` and
+/// `latest`, and `stable` for the loaders that divide their versions into stable and not.
 fn loaders(facade: &dyn Facade, loader: &str, game: &str, out: Out<'_>) -> Result<(), CliError> {
+    let loader = parse_loader(loader)?;
     let command = Command::Versions(VersionCommand::LoaderVersions {
-        loader: parse_loader(loader)?,
+        loader,
         game_version: game.to_owned(),
     });
     match call(facade, command)? {
         Response::LoaderVersions(versions) => {
             for v in versions {
-                let mark = if v.stable { "stable" } else { "" };
-                writeln!(out, "{:<24} {mark}", v.version)?;
+                let mut marks = Vec::new();
+                if v.recommended {
+                    marks.push("recommended");
+                }
+                if v.latest {
+                    marks.push("latest");
+                }
+                if v.stable && loader != ComponentKind::Forge {
+                    marks.push("stable");
+                }
+                writeln!(out, "{:<24} {}", v.version, marks.join(" "))?;
             }
             Ok(())
         }

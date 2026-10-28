@@ -581,12 +581,17 @@ mod tests {
             let forge = request
                 .url
                 .ends_with("/net/minecraftforge/forge/maven-metadata.xml");
-            let xml = if forge {
+            let legacy = request
+                .url
+                .ends_with("/net/neoforged/forge/maven-metadata.xml");
+            let xml = if legacy {
+                "<metadata><versioning><versions><version>1.20.1-47.1.5</version><version>1.20.1-47.1.106</version></versions></versioning></metadata>"
+            } else if forge {
                 "<metadata><versioning><versions><version>1.21.1-52.0.0</version><version>1.21.1-52.1.2</version><version>1.20.1-47.3.0</version></versions></versioning></metadata>"
             } else {
                 "<metadata><versioning><versions><version>21.1.2</version>                <version>21.1.7</version><version>21.4.1</version></versions></versioning></metadata>"
             };
-            let found = forge || request.url.ends_with("/neoforge/maven-metadata.xml");
+            let found = forge || legacy || request.url.ends_with("/neoforge/maven-metadata.xml");
             Ok(vl_net::HttpResponse {
                 status: if found { 200 } else { 404 },
                 headers: Vec::new(),
@@ -623,6 +628,25 @@ mod tests {
         let (result, instances) = run_pack_with(&root, &file, std::sync::Arc::new(Maven));
         assert!(result.is_err());
         assert_eq!(instances.list().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_neoforge_pack_for_1_20_1_uses_the_forge_artifact_versions() {
+        let root =
+            std::env::temp_dir().join(format!("vl-backend-neo-legacy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("p.mrpack");
+
+        pack(&file, r#""minecraft":"1.20.1","neoforge":"47.1.106""#, "");
+        let (result, _) = run_pack_with(&root, &file, std::sync::Arc::new(Maven));
+        let (summary, _) = result.unwrap();
+        assert!(
+            matches!(&summary.loader, Loader::NeoForge(v) if v == "47.1.106"),
+            "{:?}",
+            summary.loader
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
