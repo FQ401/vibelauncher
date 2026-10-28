@@ -550,6 +550,24 @@ mod tests {
     }
 
     #[test]
+    fn loader_without_java_version_keeps_the_vanilla_one() {
+        let vanilla = r#"{"id":"1.16.5","type":"release","mainClass":"net.minecraft.client.main.Main",
+            "javaVersion":{"component":"jre-legacy","majorVersion":8}}"#;
+        let forge = r#"{"id":"1.16.5-forge-36.2.39","inheritsFrom":"1.16.5",
+            "mainClass":"cpw.mods.modlauncher.Launcher"}"#;
+        let r = VersionJson::parse(forge.as_bytes())
+            .unwrap()
+            .resolve(|_| VersionJson::parse(vanilla.as_bytes()))
+            .unwrap();
+        assert_eq!(r.main_class, "cpw.mods.modlauncher.Launcher");
+        let java = r.java_version_or_default();
+        assert_eq!(
+            (java.component.as_str(), java.major_version),
+            ("jre-legacy", 8)
+        );
+    }
+
+    #[test]
     fn loader_profile_inherits_legacy() {
         let r = load("loader_legacy.json").resolve(loader).unwrap();
         assert_eq!(r.chain, ["1.12.2-forge-14.23.5.2860", "1.12.2"]);
