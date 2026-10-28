@@ -1,6 +1,6 @@
 [package]
 name = "vl-loaders"
-description = "Mod loader sources: Fabric, Quilt and NeoForge version lists, launch profiles and installers."
+description = "Mod loader sources: Fabric, Quilt, NeoForge and Forge version lists, launch profiles and installers."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

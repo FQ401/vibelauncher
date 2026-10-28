@@ -14,63 +14,17 @@
 //! versions and names that fit neither scheme (April Fools' builds) are left out.
 //!
 //! The launch profile is the installer's `version.json`, read with
-//! [`LoaderProfile::normalize`]. Its `-DignoreList` names the vanilla jar as `${version_name}.jar`,
-//! which is the file name the official launcher gives it; here the vanilla jar keeps the game's
-//! id, so the name is rewritten to that.
+//! [`launch_profile`].
 
 use std::cmp::Ordering;
 
 use vl_core::component::ComponentKind;
-use vl_core::error::{Error, ErrorKind, Result};
+use vl_core::error::{Error, Result};
 
-use crate::loader::{LoaderProfile, LoaderVersion, LoaderVersions, MAX_LOADER_VERSIONS};
+use crate::install_profile::launch_profile;
+use crate::loader::{LoaderProfile, LoaderVersion, LoaderVersions};
 
-/// The largest `maven-metadata.xml` accepted.
-pub const MAX_METADATA_BYTES: usize = 4 * 1024 * 1024;
-
-fn damaged(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::Integrity, message)
-}
-
-/// The `<version>` entries of a Maven `maven-metadata.xml`, in document order.
-///
-/// # Errors
-///
-/// `Integrity` for a document that is too large, not UTF-8, has no `<versions>` list or too many
-/// entries.
-pub fn parse_maven_versions(bytes: &[u8]) -> Result<Vec<String>> {
-    if bytes.len() > MAX_METADATA_BYTES {
-        return Err(damaged("maven metadata is too large"));
-    }
-    let text = std::str::from_utf8(bytes).map_err(|_| damaged("maven metadata is not UTF-8"))?;
-    let list =
-        section(text, "versions").ok_or_else(|| damaged("maven metadata has no versions"))?;
-    let mut out = Vec::new();
-    let mut rest = list;
-    while let Some(start) = rest.find("<version>") {
-        let after = &rest[start + "<version>".len()..];
-        let end = after
-            .find("</version>")
-            .ok_or_else(|| damaged("maven metadata has an unclosed version"))?;
-        let version = after[..end].trim();
-        if !version.is_empty() {
-            out.push(version.to_owned());
-        }
-        if out.len() > MAX_LOADER_VERSIONS {
-            return Err(damaged("maven metadata has too many versions"));
-        }
-        rest = &after[end + "</version>".len()..];
-    }
-    Ok(out)
-}
-
-fn section<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    let start = text.find(&open)? + open.len();
-    let end = text[start..].find(&close)? + start;
-    text.get(start..end)
-}
+pub use crate::maven::{MAX_METADATA_BYTES, parse_maven_versions};
 
 /// A NeoForge version split into its numbers and its suffix.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,17 +134,7 @@ pub fn installer_path(version: &str) -> Result<String> {
 ///
 /// `Integrity` for a damaged document or one for another game version.
 pub fn profile(game: &str, loader_version: &str, version_json: &[u8]) -> Result<LoaderProfile> {
-    let mut profile =
-        LoaderProfile::normalize(ComponentKind::NeoForge, game, loader_version, version_json)?;
-    let vanilla_jar = format!("{}.jar", profile.inherits_from);
-    for arg in &mut profile.arguments.jvm {
-        for value in &mut arg.values {
-            if value.starts_with("-DignoreList=") {
-                *value = value.replace("${version_name}.jar", &vanilla_jar);
-            }
-        }
-    }
-    Ok(profile)
+    launch_profile(ComponentKind::NeoForge, game, loader_version, version_json)
 }
 
 #[cfg(test)]

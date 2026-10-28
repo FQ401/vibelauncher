@@ -21,9 +21,9 @@ pub(crate) const USAGE: &str = "usage: vl-cli [--mock] [--dir <path>] <command>
 commands:
   info                                which backend answers
   instances list                      list instances
-  instances create <name> <version> [--loader <fabric|quilt|neoforge>] [--loader-version <v>]
+  instances create <name> <version> [--loader <fabric|quilt|neoforge|forge>] [--loader-version <v>]
                                       create an instance (newest stable loader by default)
-  instances set-loader <instance> <fabric|quilt|neoforge|none> [--loader-version <v>]
+  instances set-loader <instance> <fabric|quilt|neoforge|forge|none> [--loader-version <v>]
                                       change or remove an instance's loader
   instances mods list <instance> [--kind <k>]
   instances mods enable|disable|remove <instance> <file> [--kind <k>]
@@ -37,9 +37,9 @@ commands:
                                       manage mods (default) or --kind resourcepacks|shaderpacks|
                                       datapacks|global-datapacks; remove moves to the trash
   versions list [--snapshots] [--old] list game versions
-  versions install <version> [--loader <fabric|quilt|neoforge>] [--loader-version <v>]
+  versions install <version> [--loader <fabric|quilt|neoforge|forge>] [--loader-version <v>]
                                       download a version's files without starting it
-  versions loaders <fabric|quilt|neoforge> <version>
+  versions loaders <fabric|quilt|neoforge|forge> <version>
                                       list loader versions for a game version
   accounts list                       list accounts
   accounts login                      sign in with Microsoft (device code)
@@ -137,7 +137,7 @@ pub(crate) fn parse_loader(name: &str) -> Result<ComponentKind, CliError> {
         "neoforge" => Ok(ComponentKind::NeoForge),
         "forge" => Ok(ComponentKind::Forge),
         other => Err(CliError(format!(
-            "unknown loader {other:?} (fabric, quilt, neoforge)"
+            "unknown loader {other:?} (fabric, quilt, neoforge, forge)"
         ))),
     }
 }

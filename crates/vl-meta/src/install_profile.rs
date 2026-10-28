@@ -1,5 +1,5 @@
-//! Installer profiles (`install_profile.json`, spec 1) of loaders that ship an installer jar
-//! (NeoForge, and Forge since 1.13).
+//! Installer profiles (`install_profile.json`, spec 0 and 1) of loaders that ship an installer jar
+//! (NeoForge, and Forge since 1.13), and the launch profile those installers carry.
 //!
 //! An installer jar holds `install_profile.json`, the launch profile (`version.json`) and data
 //! files (`/data/client.lzma`). The install profile lists:
@@ -13,19 +13,28 @@
 //!
 //! [`InstallProfile::parse`] checks the document (hostile input: sizes and counts are capped,
 //! coordinates and in-jar paths must be safe). [`InstallProfile::plan`] resolves the processors
-//! of one side into ready argument lists: `{NAME}` is a data value or one of the built-in
+//! of one side into ready argument lists (the class path always holds the processor's jar):
+//! `{NAME}` is a data value or one of the built-in
 //! values of [`PlanContext`], `[coordinate]` is a path below the library directory. Running them
-//! is the native layer's job.
+//! is the native layer's job. Spec 0 (Forge 1.13–1.16) has the same shape; its processors have no
+//! `sides` and run for both.
+//!
+//! The launch profile is the installer's `version.json`, read by [`launch_profile`]. Its
+//! `-DignoreList` names the vanilla jar as `${version_name}.jar`, which is the file name the
+//! official launcher gives it; here the vanilla jar keeps the game's id, so the name is
+//! rewritten to that. Libraries of the launch profile without a download address
+//! ([`local_libraries`]) come from the installer's `maven/` directory or from the processors.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::Value;
+use vl_core::component::ComponentKind;
 use vl_core::error::{Error, ErrorKind, Result};
 
-use crate::loader::{check_coordinate, maven_path};
+use crate::loader::{LoaderProfile, check_coordinate, maven_path};
 use crate::manifest::is_sha1;
-use crate::version::LibraryEntry;
+use crate::version::{LibraryEntry, MAX_VERSION_BYTES};
 
 /// The largest `install_profile.json` accepted.
 pub const MAX_INSTALL_PROFILE_BYTES: usize = 8 * 1024 * 1024;
@@ -186,7 +195,7 @@ pub struct PlanContext {
 pub struct ProcessorStep {
     /// The jar whose manifest names the main class.
     pub jar: String,
-    /// The class path, the jar included.
+    /// The class path, the jar included (first, when the profile leaves it out).
     pub classpath: Vec<String>,
     /// The resolved arguments.
     pub args: Vec<String>,
@@ -336,13 +345,19 @@ impl InstallProfile {
                         Ok((file, hash))
                     })
                     .collect::<Result<Vec<_>>>()?;
+                let jar = library_file(ctx, &p.jar)?;
+                // Forge profiles leave the jar out of its class path; the installer adds it.
+                let mut classpath: Vec<String> = p
+                    .classpath
+                    .iter()
+                    .map(|c| library_file(ctx, c))
+                    .collect::<Result<_>>()?;
+                if !classpath.contains(&jar) {
+                    classpath.insert(0, jar.clone());
+                }
                 Ok(ProcessorStep {
-                    jar: library_file(ctx, &p.jar)?,
-                    classpath: p
-                        .classpath
-                        .iter()
-                        .map(|c| library_file(ctx, c))
-                        .collect::<Result<_>>()?,
+                    jar,
+                    classpath,
                     args,
                     outputs,
                 })
@@ -406,6 +421,89 @@ pub fn manifest_main_class(manifest: &str) -> Option<String> {
         }
     }
     value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
+}
+
+/// The launch profile of an installer-based loader from the installer's `version.json`, with the
+/// `-DignoreList` entry of the vanilla jar renamed to the jar of the game version.
+///
+/// # Errors
+///
+/// `Integrity` for a damaged document or one for another game version.
+pub fn launch_profile(
+    kind: ComponentKind,
+    game: &str,
+    loader_version: &str,
+    version_json: &[u8],
+) -> Result<LoaderProfile> {
+    let deduplicated = without_repeated_libraries(version_json)?;
+    let bytes = deduplicated.as_deref().unwrap_or(version_json);
+    let mut profile = LoaderProfile::normalize(kind, game, loader_version, bytes)?;
+    let vanilla_jar = format!("{}.jar", profile.inherits_from);
+    for arg in &mut profile.arguments.jvm {
+        for value in &mut arg.values {
+            if value.starts_with("-DignoreList=") {
+                *value = value.replace("${version_name}.jar", &vanilla_jar);
+            }
+        }
+    }
+    Ok(profile)
+}
+
+/// Some installers list a library twice with identical entries; the copy is dropped. Returns
+/// the rewritten document, or `None` when nothing repeats. Entries that differ are kept (and
+/// rejected later as duplicates).
+fn without_repeated_libraries(version_json: &[u8]) -> Result<Option<Vec<u8>>> {
+    if version_json.len() > MAX_VERSION_BYTES {
+        return Err(damaged("version JSON is too large"));
+    }
+    let Ok(mut doc) = serde_json::from_slice::<Value>(version_json) else {
+        // The normal parser reports the error.
+        return Ok(None);
+    };
+    let Some(libraries) = doc.get_mut("libraries").and_then(Value::as_array_mut) else {
+        return Ok(None);
+    };
+    let before = libraries.len();
+    let mut seen = HashSet::with_capacity(before);
+    let mut kept: Vec<Value> = Vec::with_capacity(before);
+    for lib in libraries.drain(..) {
+        if seen.insert(lib.to_string()) {
+            kept.push(lib);
+        }
+    }
+    let changed = kept.len() != before;
+    *libraries = kept;
+    if !changed {
+        return Ok(None);
+    }
+    serde_json::to_vec(&doc)
+        .map(Some)
+        .map_err(|e| damaged(format!("version JSON: {e}")))
+}
+
+/// The libraries of a launch profile that name a file but no download address: the installer
+/// carries them at `maven/<path>`, or a processor writes them. Entries without
+/// `downloads.artifact` are not such libraries.
+///
+/// # Errors
+///
+/// `Integrity` for an entry with an unsafe path or an invalid hash.
+pub fn local_libraries(libraries: &[LibraryEntry]) -> Result<Vec<ProfileLibrary>> {
+    let mut out = Vec::new();
+    for lib in libraries {
+        let has_artifact = lib
+            .rest
+            .get("downloads")
+            .and_then(|d| d.get("artifact"))
+            .is_some();
+        if has_artifact {
+            let found = profile_library(lib)?;
+            if found.url.is_none() {
+                out.push(found);
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn profile_library(lib: &LibraryEntry) -> Result<ProfileLibrary> {

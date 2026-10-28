@@ -5,9 +5,9 @@
 //! running. The instance then moves `Preparing → Running → Stopped` and the process end is
 //! published as `LaunchEvent::Exited`. `Stop` cancels a preparing launch or kills a running game.
 //!
-//! A loader that needs an installation step (NeoForge: its installer's processors patch the
-//! game jar with Java) gets it after the game files are installed and before the command line
-//! is built, with the Java the game would use.
+//! A loader that needs an installation step (NeoForge and Forge: their installer's processors
+//! patch the game jar with Java) gets it after the vanilla game files are installed and before
+//! the loader's libraries are, with the Java the game would use.
 //!
 //! The same module runs `VersionCommand::Install` (see `versions.rs`).
 
@@ -29,7 +29,7 @@ use vl_core::{Error, ErrorKind, Event, EventBus, InstanceId, Replier, Response};
 use vl_java::select::JavaRequirement;
 use vl_launch::process::{self, GameBatch, RunningGame, SpawnOptions};
 use vl_launch::{Installer, InstallerOptions, Job, Layout, PrepareInput};
-use vl_loaders::neoforge::{InstallContext, Installation};
+use vl_loaders::installer::{InstallContext, Installation};
 use vl_loaders::processors::JavaRunner;
 use vl_loaders::{Loaders, LoadersOptions};
 use vl_meta::loader::LoaderProfile;
@@ -340,9 +340,10 @@ fn ensure_java(
         .map(|_| ())
 }
 
-/// The installation step of a loader that needs one (see [`Loaders::needs_install`]): the game
-/// files with the loader's profile are installed first, then the loader's processors run on the
-/// Java the game would use (`fixed`, else the best of `runtimes`).
+/// The installation step of a loader that needs one (see [`Loaders::needs_install`]): the vanilla
+/// game files are installed first, then the loader's processors run on the Java the game would
+/// use (`fixed`, else the best of `runtimes`). The loader's own libraries are installed after
+/// this step (some of them are its output).
 fn install_loader(
     service: &Service,
     kind: ComponentKind,
@@ -352,10 +353,9 @@ fn install_loader(
     runtimes: &[JavaRuntime],
     job: &Job,
 ) -> vl_core::Result<Option<Installation>> {
-    let installed =
-        service
-            .installer
-            .install_with(&profile.inherits_from, Some(profile), game_dir, job)?;
+    let installed = service
+        .installer
+        .install_with(&profile.inherits_from, None, game_dir, job)?;
     job.check()?;
     let required = installed.version.java_version_or_default().major_version;
     let arch = installed.platform.arch;
@@ -487,7 +487,6 @@ pub(crate) fn install(
                     {
                         service.log(LogSource::Launcher, LogLevel::Info, describe(&done));
                     }
-                    return Ok(());
                 }
                 service
                     .installer
