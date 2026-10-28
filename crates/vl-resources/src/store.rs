@@ -7,8 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use vl_core::resources::{ResourceEntry, ResourceKind, WorldInfo};
 use vl_core::{Error, ErrorKind};
 
+use crate::cache::{self, FolderCache, Item, Stamp};
 use crate::index::ModClassIndex;
-use crate::jar::read_jar;
+use crate::jar::{JarInfo, read_jar};
 use crate::pack::read_pack;
 use crate::worlds::{list_worlds, world_dir};
 
@@ -22,7 +23,12 @@ pub struct Resources {
     trash_dir: PathBuf,
     /// Put before the names of trashed files (a world's name keeps worlds apart).
     trash_prefix: Option<String>,
+    /// Where the metadata caches live; `None` reads every file again on each listing.
+    cache_dir: Option<PathBuf>,
 }
+
+/// Name of the metadata folder inside an instance or a world.
+pub const META_DIR: &str = ".vibelauncher";
 
 fn io_err(path: &Path, e: std::io::Error) -> Error {
     Error::new(ErrorKind::Io, format!("{}: {e}", path.display()))
@@ -70,6 +76,33 @@ impl Resources {
             game_dir,
             trash_dir,
             trash_prefix: None,
+            cache_dir: None,
+        }
+    }
+
+    /// Keeps the metadata of listed files in `dir` (`<instance>/.vibelauncher`), one cache per
+    /// folder, so a file that did not change is not opened again. A world opened with
+    /// [`Resources::world`] keeps its own caches in `saves/<world>/.vibelauncher`.
+    #[must_use]
+    pub fn with_cache_dir(mut self, dir: PathBuf) -> Self {
+        self.cache_dir = Some(dir);
+        self
+    }
+
+    fn cache(&self, kind: ResourceKind) -> FolderCache {
+        FolderCache::open(
+            self.cache_dir
+                .as_ref()
+                .map(|d| d.join(cache::file_name(kind))),
+        )
+    }
+
+    /// Drops what the cache knows about `file`, after it was added or removed.
+    fn forget(&self, kind: ResourceKind, file: &str) {
+        if self.cache_dir.is_some() {
+            let mut cache = self.cache(kind);
+            cache.forget(file);
+            cache.finish(false);
         }
     }
 
@@ -90,6 +123,11 @@ impl Resources {
             game_dir: world_dir(&self.game_dir, name)?,
             trash_dir: self.trash_dir.clone(),
             trash_prefix: Some(format!("world-{name}")),
+            cache_dir: self
+                .cache_dir
+                .as_ref()
+                .map(|_| world_dir(&self.game_dir, name).map(|d| d.join(META_DIR)))
+                .transpose()?,
         })
     }
 
@@ -114,6 +152,7 @@ impl Resources {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(io_err(&dir, e)),
         };
+        let mut cache = self.cache(kind);
         let mut entries = Vec::new();
         for item in read.flatten() {
             let raw = item.file_name().to_string_lossy().into_owned();
@@ -139,11 +178,16 @@ impl Resources {
                 problem: None,
                 pack: None,
             };
+            let stamp = if meta.is_dir() {
+                None
+            } else {
+                Stamp::of(&meta)
+            };
             if kind == ResourceKind::Mods
                 && !meta.is_dir()
                 && file.to_ascii_lowercase().ends_with(".jar")
             {
-                let info = read_jar(&item.path());
+                let info = cached_jar(&mut cache, file, stamp, &item.path());
                 entry.mods = info.mods;
                 entry.nested_jars = info.nested_jars;
                 entry.problem = info.problem;
@@ -154,14 +198,25 @@ impl Resources {
                     | ResourceKind::DataPacks
                     | ResourceKind::GlobalDataPacks
             ) {
-                let on_disk = item.path();
-                match read_pack(&on_disk, meta.is_dir()) {
+                let hit = stamp.and_then(|s| cache.get(file, s));
+                let result = match hit {
+                    Some(i) => i.pack.ok_or_else(|| i.problem.unwrap_or_default()),
+                    None => {
+                        let result = read_pack(&item.path(), meta.is_dir());
+                        if let Some(s) = stamp {
+                            cache.put(file, Item::from_pack(s, result.clone()));
+                        }
+                        result
+                    }
+                };
+                match result {
                     Ok(pack) => entry.pack = Some(pack),
                     Err(problem) => entry.problem = Some(problem),
                 }
             }
             entries.push(entry);
         }
+        cache.finish(true);
         entries.sort_by_key(|e| (e.file.to_lowercase(), e.file.clone()));
         Ok(entries)
     }
@@ -229,6 +284,9 @@ impl Resources {
         if copied.is_err() {
             let _ = fs::remove_file(&temp);
         }
+        if copied.is_ok() {
+            self.forget(kind, &name);
+        }
         copied.map(|()| name)
     }
 
@@ -261,6 +319,7 @@ impl Resources {
             let target = self.trash_dir.join(name);
             if fs::symlink_metadata(&target).is_err() {
                 fs::rename(&found, &target).map_err(|e| io_err(&target, e))?;
+                self.forget(kind, file);
                 return Ok(target);
             }
             n += 1;
@@ -287,13 +346,35 @@ impl Resources {
             })
             .collect();
         jars.sort();
+        let mut cache = self.cache(ResourceKind::Mods);
         for path in jars {
             let stem = path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            index.add_jar(&stem, &read_jar(&path));
+            let name = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let stamp = fs::metadata(&path).ok().and_then(|m| Stamp::of(&m));
+            index.add_jar(&stem, &cached_jar(&mut cache, &name, stamp, &path));
         }
+        // Disabled jars are not asked for here, so their entries stay.
+        cache.finish(false);
         Ok(index)
     }
+}
+
+/// The jar's metadata from the cache, or read from the jar and remembered.
+fn cached_jar(cache: &mut FolderCache, name: &str, stamp: Option<Stamp>, path: &Path) -> JarInfo {
+    if let Some(s) = stamp
+        && let Some(item) = cache.get(name, s)
+    {
+        return item.into_jar();
+    }
+    let info = read_jar(path);
+    if let Some(s) = stamp {
+        cache.put(name, Item::from_jar(s, info.clone()));
+    }
+    info
 }

@@ -4289,6 +4289,7 @@ dependencies = [
  "vl-core",
  "vl-crash",
  "vl-mods",
+ "vl-store",
  "zip",
 ]
 

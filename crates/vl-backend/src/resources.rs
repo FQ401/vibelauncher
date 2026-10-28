@@ -21,7 +21,8 @@ pub(crate) fn open(backend: &Backend, id: &InstanceId) -> vl_core::Result<Resour
     Ok(Resources::new(
         backend.instances.game_dir(id)?,
         instance_dir.join(TRASH_DIR),
-    ))
+    )
+    .with_cache_dir(instance_dir.join(vl_resources::META_DIR)))
 }
 
 pub(crate) fn handle(backend: &Backend, command: ResourceCommand, replier: Replier) {
