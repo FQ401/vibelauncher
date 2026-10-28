@@ -3,6 +3,7 @@
 mod accounts;
 mod bisect;
 mod catalog;
+mod datapacks;
 mod diagnose;
 mod info;
 mod instances;
@@ -31,21 +32,28 @@ commands:
   instances mods list <instance> [--kind <k>]
   instances mods enable|disable|remove <instance> <file> [--kind <k>]
   instances mods add <instance> <path> [--kind <k>]
+                                      manage mods (default) or --kind resourcepacks|shaderpacks|
+                                      datapacks|global-datapacks; remove moves to the trash
   instances mods identify <instance>  find where hand-added files come from (by hash)
   instances mods updates <instance> [--channel <c>] [--include-pack-files]
                                       list newer versions of mods, packs and shaders
   instances mods update <instance> [<mod>...|--all] [--version <id>] [--channel <c>]
                         [--include-pack-files] [--yes]
                                       update, or switch one mod to a version (older only by id)
-                                      manage mods (default) or --kind resourcepacks|shaderpacks|
-                                      datapacks  instances bisect start <instance> [--suspect <mod id>]...
+  instances worlds list <instance>    list the worlds in the instance's saves folder
+  instances datapacks <instance> <world> list
+  instances datapacks <instance> <world> enable|disable|remove <file>
+  instances datapacks <instance> <world> add <path.zip>
+  instances datapacks <instance> <world> identify
+  instances datapacks <instance> <world> updates|update [<pack>...|--all] [--channel <c>] [--yes]
+                                      data packs of one world (saves/<world>/datapacks)
+  instances bisect start <instance> [--suspect <mod id>]...
                                       find the mod that crashes the game: switches halves of
                                       the enabled mods off and on
   instances bisect good|bad|skip <instance>
                                       report how the game ran with the current mods
   instances bisect status|stop <instance>
                                       show the step; stop restores every mod
-|global-datapacks; remove moves to the trash
   versions list [--snapshots] [--old] list game versions
   versions install <version> [--loader <fabric|quilt|neoforge|forge>] [--loader-version <v>]
                                       download a version's files without starting it
@@ -67,9 +75,11 @@ commands:
   catalog versions <slug> [--version <v>] [--loader <l>]
                                       list a project's versions
   catalog lookup <sha1>...            find which versions own files with these hashes
-  catalog install <slug|id> --instance <id> [--version <id>] [--channel <release|beta|alpha>] [--yes]
+  catalog install <slug|id> --instance <id> [--world <name>] [--version <id>]
+                  [--channel <release|beta|alpha>] [--yes]
                                       install a project and its required dependencies into an
-                                      instance; prints the plan first, --yes skips the question
+                                      instance; prints the plan first, --yes skips the question.
+                                      Data packs need --world (the world's folder name)
   packs install <file.mrpack|slug> [--name <n>] [--version <id>] [--group <g>] [--channel <c>]
                                       install a Modrinth modpack as a new instance (name, Minecraft
                                       version and loader come from the pack)

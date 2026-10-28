@@ -124,6 +124,36 @@ pub struct ModMetadata {
     pub game_versions: Option<String>,
 }
 
+/// What a resource pack or data pack declares in its `pack.mcmeta`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PackMetadata {
+    /// `pack_format`, when declared.
+    pub pack_format: Option<u32>,
+    /// `min_format` (or the low end of `supported_formats`), when declared.
+    pub min_format: Option<u32>,
+    /// `max_format` (or the high end of `supported_formats`), when declared.
+    pub max_format: Option<u32>,
+    /// The description as plain text, when declared.
+    pub description: Option<String>,
+}
+
+/// A world in an instance's `saves/` folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldInfo {
+    /// The folder name; this is what commands take.
+    pub name: String,
+    /// The name shown in the game (`LevelName`), when it differs from the folder name or could
+    /// be read.
+    pub display_name: Option<String>,
+    /// The game version that last saved the world, when `level.dat` says one.
+    pub version: Option<String>,
+    /// When the world was last played, seconds since the Unix epoch (`level.dat`, else the file's
+    /// modification time).
+    pub last_played: Option<i64>,
+    /// How many data packs are in the world (enabled or not).
+    pub datapacks: u32,
+}
+
 /// One file or folder in a resource folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceEntry {
@@ -143,6 +173,9 @@ pub struct ResourceEntry {
     pub nested_jars: Vec<String>,
     /// Why the metadata could not be read, when it could not.
     pub problem: Option<String>,
+    /// The `pack.mcmeta` of a resource pack or data pack, when it could be read.
+    #[serde(default)]
+    pub pack: Option<PackMetadata>,
 }
 
 /// Commands on instance resources.
@@ -183,6 +216,47 @@ pub enum ResourceCommand {
         instance: InstanceId,
         /// The folder.
         kind: ResourceKind,
+        /// The entry's `file`.
+        file: String,
+    },
+    /// Lists the worlds in `saves/` → `Response::Worlds`.
+    Worlds {
+        /// The instance.
+        instance: InstanceId,
+    },
+    /// Lists the data packs of a world (`saves/<world>/datapacks`) → `Response::Resources`.
+    WorldList {
+        /// The instance.
+        instance: InstanceId,
+        /// The world's folder name.
+        world: String,
+    },
+    /// Enables or disables a data pack of a world → `Response::Done`.
+    WorldSetEnabled {
+        /// The instance.
+        instance: InstanceId,
+        /// The world's folder name.
+        world: String,
+        /// The entry's `file`.
+        file: String,
+        /// The wanted state.
+        enabled: bool,
+    },
+    /// Copies a local `.zip` into a world's data packs → `Response::Done`. Refuses to replace.
+    WorldAdd {
+        /// The instance.
+        instance: InstanceId,
+        /// The world's folder name.
+        world: String,
+        /// Path of the file to copy.
+        source: String,
+    },
+    /// Moves a data pack of a world into the instance's trash → `Response::Done`.
+    WorldRemove {
+        /// The instance.
+        instance: InstanceId,
+        /// The world's folder name.
+        world: String,
         /// The entry's `file`.
         file: String,
     },

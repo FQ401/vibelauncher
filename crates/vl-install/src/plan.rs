@@ -33,6 +33,9 @@ pub struct Target {
     pub game_version: String,
     /// The mod loader (`fabric`, `quilt`, `forge`, `neoforge`), when the instance has one.
     pub loader: Option<String>,
+    /// The install goes into one world's `datapacks` folder (the resources are those of the
+    /// world): only data packs are installed, whatever the instance's loader is.
+    pub world: bool,
 }
 
 impl Target {
@@ -68,6 +71,22 @@ pub fn resource_kind(project_type: ProjectType) -> Option<ResourceKind> {
         ProjectType::Shader => Some(ResourceKind::ShaderPacks),
         ProjectType::DataPack => Some(ResourceKind::DataPacks),
         _ => None,
+    }
+}
+
+/// The folder a project goes to in this install.
+///
+/// In an instance, data packs are not installed (a world takes them). In a world, a data pack
+/// project goes to its `datapacks` folder, and so does the requested project of another type
+/// when it is a mod: the project type is the platform's, the context decides what is wanted
+/// (its versions are then filtered by the `datapack` loader). A dependency is a data pack or it
+/// is not installed.
+fn kind_for(target: &Target, project_type: ProjectType, requested: bool) -> Option<ResourceKind> {
+    match (target.world, project_type) {
+        (true, ProjectType::DataPack) => Some(ResourceKind::DataPacks),
+        (true, ProjectType::Mod) if requested => Some(ResourceKind::DataPacks),
+        (true, _) | (false, ProjectType::DataPack) => None,
+        (false, other) => resource_kind(other),
     }
 }
 
@@ -202,12 +221,26 @@ impl<'a> Planner<'a> {
                 ),
             ));
         }
-        let kind = resource_kind(project.project_type).ok_or_else(|| {
-            Error::unsupported(format!(
-                "{} is a {} project, which cannot be installed into an instance folder",
-                project.title,
-                project.project_type.name()
-            ))
+        let target = self.input.target;
+        let kind = kind_for(target, project.project_type, depth == 0).ok_or_else(|| {
+            if project.project_type == ProjectType::DataPack {
+                Error::unsupported(format!(
+                    "{} is a data pack; data packs are installed into a world, so choose one (create a \n                     world in the game first if the instance has none)",
+                    project.title
+                ))
+            } else if target.world {
+                Error::unsupported(format!(
+                    "{} is a {} project; only data packs are installed into a world",
+                    project.title,
+                    project.project_type.name()
+                ))
+            } else {
+                Error::unsupported(format!(
+                    "{} is a {} project, which cannot be installed into an instance folder",
+                    project.title,
+                    project.project_type.name()
+                ))
+            }
         })?;
         let is_dependency = matches!(role, PlanRole::Dependency { .. });
 
@@ -257,7 +290,7 @@ impl<'a> Planner<'a> {
                         continue;
                     }
                     let wanted = self.input.source.project(id, self.input.control)?;
-                    if resource_kind(wanted.project_type).is_none() {
+                    if kind_for(self.input.target, wanted.project_type, false).is_none() {
                         self.warnings.push(format!(
                             "{required_by} needs {}, a {} project that is not installed",
                             wanted.title,
@@ -326,7 +359,9 @@ impl<'a> Planner<'a> {
         pinned: Option<&str>,
     ) -> Result<ProjectVersion> {
         let target = self.input.target;
-        let loaders = if kind == ResourceKind::Mods {
+        let loaders = if target.world {
+            vec!["datapack".to_owned()]
+        } else if kind == ResourceKind::Mods {
             if target.loader.is_none() {
                 return Err(Error::invalid_input(
                     "the instance has no mod loader; add Fabric, Quilt, Forge or NeoForge first",
@@ -365,12 +400,16 @@ impl<'a> Planner<'a> {
             .filter(|v| loaders.is_empty() || v.loaders.iter().any(|l| loaders.contains(l)))
             .collect();
         let what = || {
-            let loader = target
-                .loader
-                .as_deref()
-                .filter(|_| kind == ResourceKind::Mods)
-                .map(|l| format!(" on {l}"))
-                .unwrap_or_default();
+            let loader = if target.world {
+                " as a data pack".to_owned()
+            } else {
+                target
+                    .loader
+                    .as_deref()
+                    .filter(|_| kind == ResourceKind::Mods)
+                    .map(|l| format!(" on {l}"))
+                    .unwrap_or_default()
+            };
             format!(
                 "{} for Minecraft {}{loader}",
                 project.title, target.game_version

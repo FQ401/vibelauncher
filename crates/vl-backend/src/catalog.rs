@@ -73,8 +73,12 @@ pub(crate) fn handle(backend: &Backend, command: CatalogCommand, replier: Replie
         }
         CatalogCommand::PlanUpdate(request) => return updates::plan(backend, request, replier),
         CatalogCommand::Update(request) => return replier.send(updates::update(backend, request)),
-        CatalogCommand::IdentifyMods { instance, provider } => {
-            return updates::identify(backend, &instance, provider, replier);
+        CatalogCommand::IdentifyMods {
+            instance,
+            provider,
+            world,
+        } => {
+            return updates::identify(backend, &instance, provider, world.as_deref(), replier);
         }
         _ => {}
     }
@@ -100,13 +104,21 @@ pub(crate) struct Job {
 
 fn job(backend: &Backend, request: InstallRequest) -> Result<(Job, String)> {
     let id = request.instance.clone();
-    let (mut job, name) = context(backend, &id)?;
+    let (mut job, name) = context(backend, &id, request.world.as_deref())?;
     job.request = request;
     Ok((job, name))
 }
 
 /// What work on the instance `id` needs; `request` is filled in by the caller that has one.
-pub(crate) fn context(backend: &Backend, id: &vl_core::InstanceId) -> Result<(Job, String)> {
+///
+/// With a `world` the work is on that world's data packs: the resources are the world's, and so
+/// are the origin records (`saves/<world>/.vibelauncher/resources.json`), so they stay with the
+/// world when it is copied or backed up.
+pub(crate) fn context(
+    backend: &Backend,
+    id: &vl_core::InstanceId,
+    world: Option<&str>,
+) -> Result<(Job, String)> {
     let config = backend.instances.load(id)?;
     if backend.launch.is_active(id) {
         return Err(Error::conflict(format!("instance {id} is running")));
@@ -123,16 +135,24 @@ pub(crate) fn context(backend: &Backend, id: &vl_core::InstanceId) -> Result<(Jo
         _ => None,
     };
     let meta = backend.instances.dir(id)?.join(META_DIR);
+    let mut resources = crate::resources::open(backend, id)?;
+    let staging = meta.join("staging");
+    let mut records = meta;
+    if let Some(world) = world {
+        resources = resources.world(world)?;
+        records = resources.root().join(META_DIR);
+    }
     let job = Job {
         platforms: Arc::clone(&backend.catalog.platforms),
         client: backend.catalog.client.clone(),
-        resources: crate::resources::open(backend, id)?,
-        origins: OriginStore::new(meta.join("resources.json")),
-        staging: meta.join("staging"),
-        meta: meta.clone(),
+        origins: OriginStore::new(records.join("resources.json")),
+        resources,
+        staging,
+        meta: records,
         target: Target {
             game_version,
             loader: loader.map(str::to_owned),
+            world: world.is_some(),
         },
         request: InstallRequest {
             instance: id.clone(),
@@ -140,6 +160,7 @@ pub(crate) fn context(backend: &Backend, id: &vl_core::InstanceId) -> Result<(Jo
             project: String::new(),
             version: None,
             min_stability: Default::default(),
+            world: world.map(str::to_owned),
         },
     };
     Ok((job, config.name))
@@ -442,6 +463,7 @@ mod tests {
             project: "sodium".into(),
             version: None,
             min_stability: Default::default(),
+            world: None,
         };
         for command in [
             CatalogCommand::PlanInstall(request.clone()),

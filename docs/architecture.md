@@ -85,7 +85,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth 
 | `vl-java` | native | Java runtimes: discovery on each OS, probing with a timeout, managed downloads, choosing a runtime for a game version. |
 | `vl-instance` | native | Instances on disk: format, create, list, rename, delete; damaged instances are listed with a problem. |
 | `vl-loaders` | native | Mod loader sources: version lists per game version and launch profiles of Fabric, Quilt, NeoForge and Forge through `vl-net`, the on-disk store of the profiles in use, and the installation of NeoForge and Forge (installer, its libraries, processors run with Java behind the `ProcessorRunner` trait). |
-| `vl-resources` | native | Instance resource folders (`mods`, `resourcepacks`, `shaderpacks`, `datapacks`, `global_packs/required_data`): listing with mod metadata read from jars (capped entries and sizes, bundled jars listed not opened, damaged jars reported as a problem), enable and disable by renaming to `<name>.disabled`, add by copy without replacing, remove into `<instance>/.trash/`, and the `ClassIndex` of `vl-crash` built from the packages of the enabled jars. `Bisect` runs a `vl-bisect` session on the mods folder: the session file `<instance>/.vibelauncher/bisect.json` is saved before any file is renamed, and ending the session in any way (finish, stop, a failed step) re-enables every file it started with. The game is run by the user between steps. |
+| `vl-resources` | native | Instance resource folders (`mods`, `resourcepacks`, `shaderpacks`, `datapacks`, `global_packs/required_data`): listing with mod metadata read from jars (capped entries and sizes, bundled jars listed not opened, damaged jars reported as a problem) and `pack.mcmeta` of packs (formats and description, capped), the worlds of `saves/` (`level.dat` read for name, version and time) with `Resources::world` opening one world's `datapacks` as a resource view (names are plain folder names; a missing world is `NotFound`, "create a world first"), enable and disable by renaming to `<name>.disabled`, add by copy without replacing, remove into `<instance>/.trash/`, and the `ClassIndex` of `vl-crash` built from the packages of the enabled jars. `Bisect` runs a `vl-bisect` session on the mods folder: the session file `<instance>/.vibelauncher/bisect.json` is saved before any file is renamed, and ending the session in any way (finish, stop, a failed step) re-enables every file it started with. The game is run by the user between steps. |
 | `vl-launch` | native | Preparing game files, building the command line, running and stopping the game process, streaming its log, detecting crashes. |
 | `vl-backend` | backend | The real facade: routes each command domain to its module, converts native errors into `vl_core::Error`, publishes events. |
 | `vl-mock` | backend | The facade on synthetic in-memory data, with simulated tasks, launches and game logs. No files, network or processes. |
@@ -319,6 +319,26 @@ The data directory holds:
   execution (all or nothing, disabled files stay disabled, the dependency flag of a record is
   kept). `UpdateRequest::version` switches exactly one file to a given version id, older ones
   included; a downgrade happens only that way;
+- data packs per world (`vl-resources`, `vl-install`): resource packs and shaders belong to the
+  whole instance, data packs to a world (`saves/<world>/datapacks`; the game reads no other
+  folder). `ResourceCommand::Worlds` lists `saves/*` folders that hold a `level.dat` (name,
+  display name, version, last played, data pack count; the NBT is read with caps and a damaged
+  file leaves the fields empty). `WorldList`, `WorldSetEnabled`, `WorldAdd` and `WorldRemove`
+  work as the instance commands do (rename to `.disabled`, copy without replacing, move to the
+  instance trash named after the world) and list `pack.mcmeta` data (`pack_format`,
+  `min_format`/`max_format`, `supported_formats`, description). A world name is one path segment:
+  empty, `.`, `..`, separators, a drive colon, control characters and a trailing dot or space are
+  refused, the folder must be a real directory (a link is not followed) with a `level.dat`, and
+  names may hold spaces and any script. Catalog installs and update checks take an optional
+  `world`: the planner then works on that world's `datapacks` (`Target::world`) with the
+  `datapack` loader, whatever the instance's loader. A data pack project without a world is
+  `Unsupported`; a mod that also publishes a `datapack` version installs as a data pack when
+  asked for in a world (the context decides the type), a dependency that is not a data pack is
+  left out with a warning, and a resource pack or shader is refused in a world. The origin
+  records of a world are `saves/<world>/.vibelauncher/resources.json` (same format, same hash
+  check), so they travel with the world; update checks, plans, updates and origin discovery run
+  on the world's folder only. Installing into the instance-level `datapacks/` no longer happens;
+  the folder stays listable and checkable, and export and modpacks still carry it as before;
 - modpack updates (`vl-install::mrpack_update`): `CheckPackUpdate` lists the pack project's
   versions and reports the first one newer than the installed version in an allowed channel
   (releases only by default); a pack installed from a file has no source and is updated with

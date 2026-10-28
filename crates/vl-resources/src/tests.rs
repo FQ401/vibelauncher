@@ -310,3 +310,139 @@ fn class_index_attributes_classes_to_enabled_mods() {
     assert!(index.owners("java.lang.String").is_empty());
     assert_eq!(index.mods().len(), 2);
 }
+
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+}
+
+fn make_world(game: &Path, name: &str, level: &[u8]) {
+    write(&game.join("saves").join(name).join("level.dat"), level);
+}
+
+#[test]
+fn lists_worlds_with_version_and_time_and_skips_folders_that_are_not_worlds() {
+    let t = Temp::new("worlds");
+    let game = t.0.join("minecraft");
+    let nbt = crate::worlds::tests::level_nbt("Shown", "1.21.4", 1_700_000_000_000);
+    make_world(&game, "Test World", &gzip(&nbt));
+    make_world(&game, "\u{41c}\u{438}\u{440}", b"stub");
+    write(&game.join("saves/not a world/readme.txt"), b"x");
+    write(
+        &game.join("saves/\u{41c}\u{438}\u{440}/datapacks/a.zip"),
+        b"x",
+    );
+    let r = fixture(&t);
+
+    let worlds = r.worlds().unwrap();
+    let names: Vec<_> = worlds.iter().map(|w| w.name.as_str()).collect();
+    assert_eq!(names, ["Test World", "\u{41c}\u{438}\u{440}"]);
+    assert_eq!(worlds[0].display_name.as_deref(), Some("Shown"));
+    assert_eq!(worlds[0].version.as_deref(), Some("1.21.4"));
+    assert_eq!(worlds[0].last_played, Some(1_700_000_000));
+    // A stub level.dat is still a world; the time falls back to the file's.
+    assert_eq!(worlds[1].version, None);
+    assert!(worlds[1].last_played.is_some());
+    assert_eq!(worlds[1].datapacks, 1);
+
+    // No saves folder: no worlds.
+    let empty = Temp::new("worlds-none");
+    let none = Resources::new(empty.0.join("minecraft"), empty.0.join(".trash"));
+    assert!(none.worlds().unwrap().is_empty());
+}
+
+#[test]
+fn a_world_name_cannot_leave_saves_or_name_a_missing_world() {
+    let t = Temp::new("world-names");
+    let game = t.0.join("minecraft");
+    make_world(&game, "W", b"stub");
+    write(&game.join("level.dat"), b"outside");
+    write(&t.0.join("secret/level.dat"), b"outside");
+    let r = fixture(&t);
+    for bad in [
+        "..",
+        ".",
+        "",
+        "../minecraft",
+        r"..\secret",
+        "W/..",
+        "a:b",
+        "W\0",
+    ] {
+        let err = r.world(bad).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidInput, "{bad:?}");
+    }
+    let err = r.world("Missing").unwrap_err();
+    assert_eq!(err.kind, ErrorKind::NotFound);
+    assert!(err.message.contains("create a world first"), "{err}");
+    assert!(r.world("W").is_ok());
+}
+
+#[test]
+fn manages_data_packs_of_a_world_and_trashes_removed_ones() {
+    let t = Temp::new("world-packs");
+    let game = t.0.join("minecraft");
+    make_world(
+        &game,
+        "\u{41c}\u{438}\u{440} \u{441} \u{43f}\u{440}\u{43e}\u{431}\u{435}\u{43b}\u{43e}\u{43c}",
+        b"stub",
+    );
+    let other = Resources::new(game.clone(), t.0.join(".trash"));
+    let world = other.world("\u{41c}\u{438}\u{440} \u{441} \u{43f}\u{440}\u{43e}\u{431}\u{435}\u{43b}\u{43e}\u{43c}").unwrap();
+    let pack = zip_bytes(&[(
+        "pack.mcmeta",
+        br#"{"pack":{"pack_format":48,"description":"Hi"}}"#,
+    )]);
+    let source = t.0.join("incoming/caves.zip");
+    write(&source, &pack);
+
+    assert_eq!(
+        world.add(ResourceKind::DataPacks, &source).unwrap(),
+        "caves.zip"
+    );
+    assert!(
+        game.join("saves/\u{41c}\u{438}\u{440} \u{441} \u{43f}\u{440}\u{43e}\u{431}\u{435}\u{43b}\u{43e}\u{43c}/datapacks/caves.zip")
+            .is_file()
+    );
+    assert!(!game.join("datapacks").exists());
+    let err = world.add(ResourceKind::DataPacks, &source).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Conflict);
+
+    world
+        .set_enabled(ResourceKind::DataPacks, "caves.zip", false)
+        .unwrap();
+    let listed = world.list(ResourceKind::DataPacks).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].enabled);
+    let meta = listed[0].pack.as_ref().unwrap();
+    assert_eq!(meta.pack_format, Some(48));
+    assert_eq!(meta.description.as_deref(), Some("Hi"));
+
+    let trashed = world.remove(ResourceKind::DataPacks, "caves.zip").unwrap();
+    assert!(trashed.starts_with(t.0.join(".trash")));
+    assert!(world.list(ResourceKind::DataPacks).unwrap().is_empty());
+    // Names that are not plain file names are refused.
+    assert!(
+        world
+            .remove(ResourceKind::DataPacks, "../level.dat")
+            .is_err()
+    );
+}
+
+#[test]
+fn a_pack_without_readable_metadata_stays_listed_with_a_problem() {
+    let t = Temp::new("bad-packs");
+    let game = t.0.join("minecraft");
+    make_world(&game, "W", b"stub");
+    write(&game.join("saves/W/datapacks/broken.zip"), b"not a zip");
+    write(
+        &game.join("saves/W/datapacks/folder/pack.mcmeta"),
+        br#"{"pack":{"pack_format":10}}"#,
+    );
+    let world = fixture(&t).world("W").unwrap();
+    let listed = world.list(ResourceKind::DataPacks).unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(listed[0].problem.is_some() && listed[0].pack.is_none());
+    assert!(listed[1].is_dir && listed[1].pack.as_ref().unwrap().pack_format == Some(10));
+}

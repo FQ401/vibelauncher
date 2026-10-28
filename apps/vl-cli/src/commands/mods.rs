@@ -76,11 +76,17 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
                 other => Err(unexpected(&other)),
             }
         }
-        ["identify", instance] => {
+        ["identify", instance, flags @ ..] => {
             let instance = InstanceId::new(instance).ok_or(CliError::from(USAGE))?;
+            let world = match flags {
+                [] => None,
+                ["--world", name] => Some((*name).to_owned()),
+                _ => return Err(USAGE.into()),
+            };
             let command = Command::Catalog(CatalogCommand::IdentifyMods {
                 instance,
                 provider: Default::default(),
+                world,
             });
             match call(facade, command)? {
                 Response::Identified(report) => print_identified(&report, out),
@@ -148,7 +154,8 @@ fn update(
     )
 }
 
-/// The instance and the check flags (`--channel`, `--include-pack-files`); the rest is returned.
+/// The instance and the check flags (`--channel`, `--include-pack-files`, `--world`); the rest is
+/// returned.
 fn check_request<'a>(
     instance: &str,
     flags: &[&'a str],
@@ -160,6 +167,10 @@ fn check_request<'a>(
     while let Some(flag) = it.next() {
         match *flag {
             "--include-pack-files" => check.include_pack_files = true,
+            "--world" => {
+                let v = it.next().ok_or(CliError::from(USAGE))?;
+                check.world = Some((*v).to_owned());
+            }
             "--channel" => {
                 let v = it.next().ok_or(CliError::from(USAGE))?;
                 check.min_stability = MinStability::parse(v)

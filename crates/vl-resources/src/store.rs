@@ -4,11 +4,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use vl_core::resources::{ResourceEntry, ResourceKind};
+use vl_core::resources::{ResourceEntry, ResourceKind, WorldInfo};
 use vl_core::{Error, ErrorKind};
 
 use crate::index::ModClassIndex;
 use crate::jar::read_jar;
+use crate::pack::read_pack;
+use crate::worlds::{list_worlds, world_dir};
 
 /// Appended to a file name while the file is disabled.
 pub const DISABLED_SUFFIX: &str = ".disabled";
@@ -18,6 +20,8 @@ pub const DISABLED_SUFFIX: &str = ".disabled";
 pub struct Resources {
     game_dir: PathBuf,
     trash_dir: PathBuf,
+    /// Put before the names of trashed files (a world's name keeps worlds apart).
+    trash_prefix: Option<String>,
 }
 
 fn io_err(path: &Path, e: std::io::Error) -> Error {
@@ -65,7 +69,33 @@ impl Resources {
         Self {
             game_dir,
             trash_dir,
+            trash_prefix: None,
         }
+    }
+
+    /// The worlds in `saves/`, sorted by name.
+    pub fn worlds(&self) -> vl_core::Result<Vec<WorldInfo>> {
+        list_worlds(&self.game_dir)
+    }
+
+    /// The resources of the world `name`, for [`ResourceKind::DataPacks`]
+    /// (`saves/<name>/datapacks`). Removed files go to the same trash as the instance's.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` when `name` is not a plain folder name (separators, `..`, ...) and
+    /// `NotFound` when the instance has no such world.
+    pub fn world(&self, name: &str) -> vl_core::Result<Resources> {
+        Ok(Resources {
+            game_dir: world_dir(&self.game_dir, name)?,
+            trash_dir: self.trash_dir.clone(),
+            trash_prefix: Some(format!("world-{name}")),
+        })
+    }
+
+    /// The directory the folders are relative to: the game directory, or a world's folder.
+    pub fn root(&self) -> &Path {
+        &self.game_dir
     }
 
     /// The folder of `kind`.
@@ -107,6 +137,7 @@ impl Resources {
                 mods: Vec::new(),
                 nested_jars: Vec::new(),
                 problem: None,
+                pack: None,
             };
             if kind == ResourceKind::Mods
                 && !meta.is_dir()
@@ -116,6 +147,18 @@ impl Resources {
                 entry.mods = info.mods;
                 entry.nested_jars = info.nested_jars;
                 entry.problem = info.problem;
+            }
+            if matches!(
+                kind,
+                ResourceKind::ResourcePacks
+                    | ResourceKind::DataPacks
+                    | ResourceKind::GlobalDataPacks
+            ) {
+                let on_disk = item.path();
+                match read_pack(&on_disk, meta.is_dir()) {
+                    Ok(pack) => entry.pack = Some(pack),
+                    Err(problem) => entry.problem = Some(problem),
+                }
             }
             entries.push(entry);
         }
@@ -199,7 +242,10 @@ impl Resources {
             .find(|p| fs::symlink_metadata(p).is_ok())
             .ok_or_else(|| Error::not_found(format!("{} {file}", kind.name())))?;
         fs::create_dir_all(&self.trash_dir).map_err(|e| io_err(&self.trash_dir, e))?;
-        let stem = kind.dir().replace('/', "-");
+        let mut stem = kind.dir().replace('/', "-");
+        if let Some(prefix) = &self.trash_prefix {
+            stem = format!("{prefix}-{stem}");
+        }
         let leaf = found
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
