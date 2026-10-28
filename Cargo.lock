@@ -4097,6 +4097,7 @@ dependencies = [
  "vl-loaders",
  "vl-meta",
  "vl-net",
+ "vl-resources",
  "vl-settings",
  "vl-store",
  "vl-tasks",
@@ -4201,6 +4202,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vl-mods"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "toml",
+ "vl-core",
+]
+
+[[package]]
 name = "vl-net"
 version = "0.0.0"
 dependencies = [
@@ -4210,6 +4220,17 @@ dependencies = [
  "sha2",
  "ureq",
  "vl-core",
+]
+
+[[package]]
+name = "vl-resources"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "vl-core",
+ "vl-crash",
+ "vl-mods",
+ "zip",
 ]
 
 [[package]]

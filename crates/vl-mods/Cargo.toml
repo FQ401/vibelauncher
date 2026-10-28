@@ -1,0 +1,18 @@
+[package]
+name = "vl-mods"
+description = "Mod metadata: parsing loader metadata files from bytes. Pure, builds for wasm32."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "core"
+
+[dependencies]
+vl-core.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

@@ -3,10 +3,12 @@
 use vl_core::instance::{InstanceCommand, LoaderRequest, NewInstance};
 use vl_core::{Command, Facade, InstanceId, Response};
 
+use super::mods;
 use super::{CliError, Out, USAGE, call, loader_flags, parse_loader, unexpected};
 
 pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<(), CliError> {
     match args {
+        ["mods", rest @ ..] => mods::run(facade, rest, out),
         ["list"] => match call(facade, Command::Instances(InstanceCommand::List))? {
             Response::Instances(instances) => {
                 for i in instances {

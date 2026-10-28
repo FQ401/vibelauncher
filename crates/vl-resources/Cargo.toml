@@ -1,0 +1,21 @@
+[package]
+name = "vl-resources"
+description = "Instance resources on disk: mods, packs and shaders; mod jars and the class index."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-mods.workspace = true
+vl-crash.workspace = true
+zip.workspace = true
+# Selects the pure-Rust deflate backend that `zip` needs.
+flate2.workspace = true
+
+[lints]
+workspace = true

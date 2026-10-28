@@ -22,6 +22,7 @@ use crate::instance::{InstanceCommand, InstanceEvent, InstanceSummary};
 use crate::java::{JavaCommand, JavaEvent, JavaRuntime};
 use crate::launch::{LaunchCommand, LaunchEvent};
 use crate::log::{LogBatch, LogLine};
+use crate::resources::{ResourceCommand, ResourceEntry};
 use crate::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
 use crate::task::{TaskCommand, TaskEvent, TaskSnapshot};
 use crate::version::{GameVersion, LoaderVersionInfo, VersionCommand, VersionEvent};
@@ -58,6 +59,8 @@ pub enum Command {
     Launch(LaunchCommand),
     /// Tasks.
     Tasks(TaskCommand),
+    /// Mods, packs and other instance resources.
+    Resources(ResourceCommand),
 }
 
 /// The answer to a [`Command`]; each command documents which variant it answers.
@@ -98,6 +101,8 @@ pub enum Response {
     },
     /// Running tasks.
     Tasks(Vec<TaskSnapshot>),
+    /// The entries of a resource folder.
+    Resources(Vec<ResourceEntry>),
 }
 
 /// Something that happened in the launcher.

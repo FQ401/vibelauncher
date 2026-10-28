@@ -5,6 +5,7 @@ mod info;
 mod instances;
 mod java;
 mod launch;
+mod mods;
 mod versions;
 
 use std::fmt;
@@ -22,6 +23,11 @@ commands:
                                       create an instance (newest stable loader by default)
   instances set-loader <instance> <fabric|quilt|none> [--loader-version <v>]
                                       change or remove an instance's loader
+  instances mods list <instance> [--kind <k>]
+  instances mods enable|disable|remove <instance> <file> [--kind <k>]
+  instances mods add <instance> <path> [--kind <k>]
+                                      manage mods (default) or --kind resourcepacks|shaderpacks|
+                                      datapacks|global-datapacks; remove moves to the trash
   versions list [--snapshots] [--old] list game versions
   versions install <version> [--loader <fabric|quilt>] [--loader-version <v>]
                                       download a version's files without starting it
