@@ -5,11 +5,11 @@
 //! version is `<game>-<forge>` (`1.20.1-47.3.0`); the launcher calls the version by its Forge
 //! part (`47.3.0`) and accepts the full form as input too.
 //!
-//! The promotions document (`promotions_slim.json`) names a `<game>-recommended` and a
-//! `<game>-latest` build. A version counts as stable when it is not newer than the recommended
-//! build of its game version, so [`LoaderVersions::recommended`] is the promoted build; a game
-//! version without a recommended build has no stable versions and its newest build is used. When
-//! the promotions are not known, every version counts as stable.
+//! Forge versions are not divided into stable and unstable ones: every version counts as stable.
+//! The promotions document (`promotions_slim.json`) names a `<game>-recommended` build, which
+//! gets the `recommended` flag; the newest version of a game version gets the `latest` flag. The
+//! default choice ([`LoaderVersions::recommended`]) is the recommended build, else the latest.
+//! When the promotions are not known, no version is recommended.
 //!
 //! Forge for Minecraft 1.13 and newer ships an installer with an `install_profile.json` (spec 0
 //! up to 1.16, spec 1 since 1.17), handled by [`crate::install_profile`]. Older game versions use
@@ -177,8 +177,8 @@ pub fn parse_promotions(bytes: &[u8]) -> Result<Promotions> {
     Ok(out)
 }
 
-/// The Forge versions for `game` out of the full Maven list, newest first. See the module
-/// documentation for what counts as stable.
+/// The Forge versions for `game` out of the full Maven list, newest first, with the
+/// `recommended` and `latest` flags (see the module documentation).
 ///
 /// # Errors
 ///
@@ -196,16 +196,16 @@ pub fn versions_for_game(
         .filter_map(|(_, forge)| numbers(forge).map(|n| (n, forge)))
         .collect();
     found.sort_by(|a, b| b.0.cmp(&a.0));
-    let recommended = promotions.map(|p| p.recommended.get(game).and_then(|v| numbers(v)));
+    let recommended = promotions.and_then(|p| p.recommended.get(game).and_then(|v| numbers(v)));
     let versions = found
         .into_iter()
         .map(|(n, forge)| LoaderVersion {
             version: forge.to_owned(),
-            stable: match &recommended {
-                None => true,
-                Some(None) => false,
-                Some(Some(r)) => n.cmp(r) != Ordering::Greater,
-            },
+            stable: true,
+            recommended: recommended
+                .as_ref()
+                .is_some_and(|r| n.cmp(r) == Ordering::Equal),
+            latest: false,
         })
         .collect();
     LoaderVersions::new(ComponentKind::Forge, game, versions)

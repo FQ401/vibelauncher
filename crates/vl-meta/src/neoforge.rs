@@ -13,6 +13,11 @@
 //! metadata suffix (`26.1.0.0-alpha.1+snapshot-1`) marks a build for a game snapshot, and such
 //! versions and names that fit neither scheme (April Fools' builds) are left out.
 //!
+//! Minecraft 1.20.1 is the exception: NeoForge's builds for it were published as
+//! `net.neoforged:forge`, versions `1.20.1-47.1.<build>`, with the same installer format. They
+//! are listed as NeoForge versions of 1.20.1 in the short form (`47.1.106`), merged with the
+//! `net.neoforged:neoforge` list ([`versions_for_game_with_legacy`]).
+//!
 //! The launch profile is the installer's `version.json`, read with
 //! [`launch_profile`].
 
@@ -25,6 +30,40 @@ use crate::install_profile::launch_profile;
 use crate::loader::{LoaderProfile, LoaderVersion, LoaderVersions};
 
 pub use crate::maven::{MAX_METADATA_BYTES, parse_maven_versions};
+
+/// The only game version whose NeoForge builds are published as `net.neoforged:forge`.
+pub const LEGACY_GAME: &str = "1.20.1";
+
+/// Whether `game` has NeoForge builds in the `net.neoforged:forge` artifact.
+pub fn is_legacy_game(game: &str) -> bool {
+    game == LEGACY_GAME
+}
+
+/// The NeoForge version of `game` without the game prefix: `1.20.1-47.1.106` gives `47.1.106`.
+/// Any other text is returned as it is.
+pub fn short_version<'a>(game: &str, version: &'a str) -> &'a str {
+    if is_legacy_game(game)
+        && let Some(rest) = version.strip_prefix(game).and_then(|r| r.strip_prefix('-'))
+    {
+        return rest;
+    }
+    version
+}
+
+/// The versions of the `net.neoforged:forge` list (`1.20.1-47.1.106`) for `game`, in the short
+/// form. Empty for a game version other than [`LEGACY_GAME`].
+fn legacy_parsed(game: &str, all: &[String]) -> Vec<(Parsed, String)> {
+    if !is_legacy_game(game) {
+        return Vec::new();
+    }
+    all.iter()
+        .filter_map(|v| {
+            let short = v.strip_prefix(game)?.strip_prefix('-')?;
+            let p = parse(short)?;
+            (p.numbers.len() == 3 && p.numbers[0] == 47).then(|| (p, short.to_owned()))
+        })
+        .collect()
+}
 
 /// A NeoForge version split into its numbers and its suffix.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,17 +135,33 @@ fn compare(a: &Parsed, b: &Parsed) -> Ordering {
 ///
 /// `Integrity` for a repeated version.
 pub fn versions_for_game(game: &str, all: &[String]) -> Result<LoaderVersions> {
-    let mut found: Vec<(Parsed, &String)> = all
+    versions_for_game_with_legacy(game, all, &[])
+}
+
+/// Like [`versions_for_game`], with the `net.neoforged:forge` list (`legacy`, full Maven
+/// versions) merged in for 1.20.1 (see the module documentation).
+///
+/// # Errors
+///
+/// `Integrity` for a repeated version.
+pub fn versions_for_game_with_legacy(
+    game: &str,
+    all: &[String],
+    legacy: &[String],
+) -> Result<LoaderVersions> {
+    let mut found: Vec<(Parsed, String)> = all
         .iter()
         .filter(|v| game_version(v).as_deref() == Some(game))
-        .filter_map(|v| parse(v).map(|p| (p, v)))
+        .filter_map(|v| parse(v).map(|p| (p, v.clone())))
         .collect();
+    found.extend(legacy_parsed(game, legacy));
     found.sort_by(|a, b| compare(&b.0, &a.0));
     let versions = found
         .into_iter()
-        .map(|(p, v)| LoaderVersion {
-            version: v.clone(),
+        .map(|(p, version)| LoaderVersion {
+            version,
             stable: p.stable,
+            ..LoaderVersion::default()
         })
         .collect();
     LoaderVersions::new(ComponentKind::NeoForge, game, versions)
@@ -125,6 +180,29 @@ pub fn installer_path(version: &str) -> Result<String> {
     }
     Ok(format!(
         "net/neoforged/neoforge/{version}/neoforge-{version}-installer.jar"
+    ))
+}
+
+/// The repository path of the installer of NeoForge `version` for `game`: the
+/// `net.neoforged:forge` artifact for 1.20.1 (`version` in either form), else
+/// [`installer_path`].
+///
+/// # Errors
+///
+/// `InvalidInput` for a version that cannot be a path part.
+pub fn installer_path_for(game: &str, version: &str) -> Result<String> {
+    if !is_legacy_game(game) {
+        return installer_path(version);
+    }
+    let short = short_version(game, version);
+    if parse(short).is_none_or(|p| p.numbers.len() != 3) {
+        return Err(Error::invalid_input(format!(
+            "invalid NeoForge version {version:?}"
+        )));
+    }
+    let full = format!("{game}-{short}");
+    Ok(format!(
+        "net/neoforged/forge/{full}/forge-{full}-installer.jar"
     ))
 }
 
@@ -161,6 +239,40 @@ mod tests {
         for (v, game) in cases {
             assert_eq!(game_version(v).as_deref(), game, "{v}");
         }
+    }
+
+    #[test]
+    fn merges_the_legacy_artifact_for_1_20_1() {
+        let legacy: Vec<String> = [
+            "1.20.1-47.1.9",
+            "1.20.1-47.1.106",
+            "1.20.1-47.1.5",
+            "47.1.82",
+        ]
+        .map(String::from)
+        .into();
+        let list = versions_for_game_with_legacy("1.20.1", &[], &legacy).unwrap();
+        let names: Vec<_> = list.versions.iter().map(|v| v.version.as_str()).collect();
+        assert_eq!(names, ["47.1.106", "47.1.9", "47.1.5"]);
+        assert!(list.versions.iter().all(|v| v.stable));
+        let other = versions_for_game_with_legacy("1.21.1", &[], &legacy).unwrap();
+        assert!(other.versions.is_empty());
+        assert_eq!(short_version("1.20.1", "1.20.1-47.1.9"), "47.1.9");
+        assert_eq!(short_version("1.21.1", "1.20.1-47.1.9"), "1.20.1-47.1.9");
+        assert_eq!(
+            installer_path_for("1.20.1", "47.1.9").unwrap(),
+            "net/neoforged/forge/1.20.1-47.1.9/forge-1.20.1-47.1.9-installer.jar"
+        );
+        assert_eq!(
+            installer_path_for("1.20.1", "1.20.1-47.1.9").unwrap(),
+            installer_path_for("1.20.1", "47.1.9").unwrap()
+        );
+        assert!(installer_path_for("1.20.1", "../x").is_err());
+        assert!(installer_path_for("1.20.1", "47.1.9/../../x").is_err());
+        assert_eq!(
+            installer_path_for("1.21.1", "21.1.77").unwrap(),
+            installer_path("21.1.77").unwrap()
+        );
     }
 
     #[test]

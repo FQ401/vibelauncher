@@ -45,12 +45,19 @@ fn damaged(message: impl Into<String>) -> Error {
 }
 
 /// One loader version offered for a game version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoaderVersion {
     /// The loader's version string.
     pub version: String,
-    /// Whether it is a stable release (not a beta, alpha or snapshot).
+    /// Whether it is a stable release (not a beta, alpha or snapshot). Forge has no such
+    /// division: all its versions count as stable.
     pub stable: bool,
+    /// Whether the loader's authors promote it as the recommended build for the game version.
+    #[serde(default)]
+    pub recommended: bool,
+    /// Whether it is the newest version for the game version.
+    #[serde(default)]
+    pub latest: bool,
 }
 
 /// The loader versions available for one game version, newest first (as the source orders them).
@@ -96,6 +103,13 @@ impl LoaderVersions {
                 return Err(damaged(format!("duplicate loader version {}", v.version)));
             }
         }
+        let mut versions = versions;
+        if let Some(first) = versions.first_mut()
+            && !first.latest
+        {
+            // Lists are newest first.
+            first.latest = true;
+        }
         Ok(Self {
             kind,
             game_version: game_version.to_owned(),
@@ -123,6 +137,7 @@ impl LoaderVersions {
             .map(|r| LoaderVersion {
                 stable: r.stable.unwrap_or_else(|| looks_stable(&r.version)),
                 version: r.version,
+                ..LoaderVersion::default()
             })
             .collect();
         Self::new(kind, game_version, versions)
@@ -156,6 +171,7 @@ impl LoaderVersions {
                     .stable
                     .unwrap_or_else(|| looks_stable(&e.loader.version)),
                 version: e.loader.version,
+                ..LoaderVersion::default()
             })
             .collect();
         Self::new(kind, game_version, versions)
@@ -169,11 +185,14 @@ impl LoaderVersions {
             .collect()
     }
 
-    /// The newest stable version, else the newest of any kind.
+    /// The version to use when none is asked for: the one marked recommended, else the newest
+    /// stable one, else the newest of any kind. For Forge, whose versions are all stable, that is
+    /// the recommended build, or the latest when the game version has none.
     pub fn recommended(&self) -> Option<&LoaderVersion> {
         self.versions
             .iter()
-            .find(|v| v.stable)
+            .find(|v| v.recommended)
+            .or_else(|| self.versions.iter().find(|v| v.stable))
             .or(self.versions.first())
     }
 

@@ -337,14 +337,18 @@ fn library_file(s: &Setup, path: &str) -> PathBuf {
 fn lists_versions_and_picks_the_recommended_one() {
     let s = setup();
     let list = s.loaders.versions(Forge, GAME, &control()).unwrap();
-    let names: Vec<(&str, bool)> = list
+    let names: Vec<(&str, bool, bool)> = list
         .versions
         .iter()
-        .map(|v| (v.version.as_str(), v.stable))
+        .map(|v| (v.version.as_str(), v.recommended, v.latest))
         .collect();
     assert_eq!(
         names,
-        [("36.2.5", false), ("36.2.0", true), ("36.1.0", true)]
+        [
+            ("36.2.5", false, true),
+            ("36.2.0", true, false),
+            ("36.1.0", false, false)
+        ]
     );
     let pick = |requested| s.loaders.pick(Forge, GAME, requested, &control());
     assert_eq!(pick(None).unwrap().version, "36.2.0");

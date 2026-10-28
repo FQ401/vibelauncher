@@ -264,6 +264,7 @@ fn version_lists() {
         vec![vl_meta::loader::LoaderVersion {
             version: "1.0-beta".into(),
             stable: false,
+            ..Default::default()
         }],
     )
     .unwrap();

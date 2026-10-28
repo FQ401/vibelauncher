@@ -554,3 +554,74 @@ fn a_missing_java_is_a_java_error() {
         .unwrap_err();
     assert_eq!(e.kind, ErrorKind::Java);
 }
+
+#[test]
+fn minecraft_1_20_1_uses_the_forge_artifact_of_neoforge() {
+    const LEGACY: &str = "1.20.1";
+    let s = setup(&sha1_hex(PATCHED_BYTES));
+    let xml = |versions: &str| {
+        format!("<metadata><versioning><versions>{versions}</versions></versioning></metadata>")
+            .into_bytes()
+    };
+    s.server.add(
+        &format!("{MAVEN}/net/neoforged/neoforge/maven-metadata.xml"),
+        xml("<version>21.1.7</version>"),
+    );
+    // Without the second list the first still answers (and 1.20.1 is unsupported).
+    assert_eq!(
+        s.loaders
+            .pick(NeoForge, LEGACY, None, &control())
+            .unwrap_err()
+            .kind,
+        ErrorKind::Unsupported
+    );
+    s.server.add(
+        &format!("{MAVEN}/net/neoforged/forge/maven-metadata.xml"),
+        xml("<version>1.20.1-47.1.9</version><version>1.20.1-47.1.106</version>"),
+    );
+    let list = s.loaders.versions(NeoForge, LEGACY, &control()).unwrap();
+    let names: Vec<&str> = list.versions.iter().map(|v| v.version.as_str()).collect();
+    assert_eq!(names, ["47.1.106", "47.1.9"]);
+    let pick = |requested| s.loaders.pick(NeoForge, LEGACY, requested, &control());
+    assert_eq!(pick(None).unwrap().version, "47.1.106");
+    assert_eq!(pick(Some("1.20.1-47.1.9")).unwrap().version, "47.1.9");
+    assert_eq!(pick(Some("47.1.5")).unwrap_err().kind, ErrorKind::NotFound);
+
+    let profile = serde_json::to_vec(&json!({
+        "spec": 1,
+        "version": "1.20.1-forge-47.1.9",
+        "minecraft": LEGACY,
+        "json": "/version.json",
+        "data": {},
+        "processors": [],
+        "libraries": []
+    }))
+    .unwrap();
+    let version = serde_json::to_vec(&json!({
+        "id": "1.20.1-forge-47.1.9",
+        "inheritsFrom": LEGACY,
+        "type": "release",
+        "releaseTime": "2023-01-01T00:00:00",
+        "mainClass": "org.example.Bootstrap",
+        "arguments": {"game": [], "jvm": []},
+        "libraries": []
+    }))
+    .unwrap();
+    let jar = zip(&[
+        ("install_profile.json", &profile),
+        ("version.json", &version),
+    ]);
+    let url =
+        format!("{MAVEN}/net/neoforged/forge/1.20.1-47.1.9/forge-1.20.1-47.1.9-installer.jar");
+    s.server
+        .add(&format!("{url}.sha1"), sha1_hex(&jar).into_bytes());
+    s.server.add(&url, jar);
+    for requested in ["47.1.9", "1.20.1-47.1.9"] {
+        let p = s
+            .loaders
+            .profile(NeoForge, LEGACY, requested, &control())
+            .unwrap();
+        assert_eq!(p.loader_version, "47.1.9");
+        assert_eq!(p.inherits_from, LEGACY);
+    }
+}

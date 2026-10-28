@@ -10,7 +10,7 @@
 //! be reached the old one is used. Hashes of the loader's libraries come from the profile; the
 //! files are downloaded and verified by `vl-launch` like any other library.
 //!
-//! NeoForge ([`neoforge`]) and Forge for Minecraft 1.13+ ([`forge`]) are published as installer
+//! NeoForge ([`neoforge`], for 1.20.1 also its `net.neoforged:forge` builds) and Forge for Minecraft 1.13+ ([`forge`]) are published as installer
 //! jars in a Maven repository: the version list is the repository's metadata (for Forge, with its
 //! promotions), the profile is the installer's `version.json`, and [`Loaders::install`] runs the
 //! installer's processors (Java programs that patch the game jar) through a
@@ -136,8 +136,10 @@ impl Loaders {
         }
     }
 
-    /// Picks the loader version to use: `requested` when given and available, else the newest
-    /// stable one. A Forge version may be given in its Maven form (`1.20.1-47.3.0`).
+    /// Picks the loader version to use: `requested` when given and available, else the default
+    /// one ([`LoaderVersions::recommended`]: the recommended build, else the newest stable one).
+    /// A Forge version may be given in its Maven form (`1.20.1-47.3.0`), and so may a NeoForge
+    /// version of 1.20.1.
     ///
     /// # Errors
     ///
@@ -154,6 +156,9 @@ impl Loaders {
         let requested = match requested {
             Some(v) if kind == ComponentKind::Forge => {
                 Some(vl_meta::forge::short_version(game_version, v))
+            }
+            Some(v) if kind == ComponentKind::NeoForge => {
+                Some(vl_meta::neoforge::short_version(game_version, v))
             }
             other => other,
         };

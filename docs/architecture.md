@@ -362,7 +362,10 @@ The data directory holds:
   (`maven.neoforged.net/releases`, `net.neoforged:neoforge`) has no meta server: the version list
   is the artifact's `maven-metadata.xml`, mapped to game versions by the version scheme
   (`21.1.x` is 1.21.1, `21.0.x` is 1.21, `26.1.2.x` is 26.1.2, `26.1.0.x` is 26.1; `-beta` builds
-  are unstable, snapshot builds are left out). A version is installed from
+  are unstable, snapshot builds are left out). Minecraft 1.20.1 is the exception: its builds are
+  published as `net.neoforged:forge` (`1.20.1-47.1.x`) and listed, merged with the list above, by
+  the short version (`47.1.106`, the full form is accepted as input) with installer
+  `forge-1.20.1-<v>-installer.jar` and the same installer format. A version is installed from
   `neoforge-<v>-installer.jar` (checked against the repository's `.sha1`) kept with its
   `install_profile.json`, `version.json` and data files in `loaders/neoforge/<v>/`; the profile is
   the normalized `version.json` (its `-DignoreList` names the vanilla jar by the game's id). After
@@ -375,15 +378,16 @@ The data directory holds:
   while they match, the processors do not run again. Forge for Minecraft 1.13 and newer
   (`maven.minecraftforge.net`, `net.minecraftforge:forge`) works the same way: Maven versions are
   `<game>-<forge>` (`1.20.1-47.3.0`), the launcher names a version by its Forge part, and
-  `promotions_slim.json` marks the recommended build (versions newer than it count as unstable;
-  a game version without one has no stable versions; without the promotions all count as
-  stable). Its installers use install profile spec 0 (1.13–1.16, `cpw.mods.modlauncher.Launcher`)
+  `promotions_slim.json` marks the recommended build. Forge versions are not divided into stable
+  and unstable ones: each loader version carries `recommended` and `latest` flags (latest is the
+  newest version of the game version), and the default choice is the recommended build, else the
+  latest; `versions loaders <loader> <game>` in the CLI prints the marks. Its installers use install profile spec 0 (1.13–1.16, `cpw.mods.modlauncher.Launcher`)
   or spec 1 (1.17+, the module-path bootstrap) and are kept in `loaders/forge/<game>-<forge>/`.
   Launch-profile libraries without a download address are taken from the installer's `maven/`
   directory or are made by the processors, so the installation step runs after the vanilla
   files and before the loader's libraries are installed. Forge for older game versions is
   `Unsupported`. An instance created with a
-  loader without a version gets the newest stable one (`InstanceCommand::Create` with
+  loader without a version gets the default one (the recommended build, else the newest stable) (`InstanceCommand::Create` with
   `LoaderRequest`); `InstanceCommand::SetLoader` replaces or removes the loader of a stopped
   instance and the next launch rebuilds the class path from the new profile;
 - shared game files (libraries, assets, version files) used by all instances;

@@ -111,8 +111,14 @@ pub enum VersionCommand {
 pub struct LoaderVersionInfo {
     /// The loader's version string.
     pub version: String,
-    /// Whether it is a stable release.
+    /// Whether it is a stable release. Forge has no such division: all its versions are stable.
     pub stable: bool,
+    /// Whether it is the build the loader's authors recommend for the game version.
+    #[serde(default)]
+    pub recommended: bool,
+    /// Whether it is the newest version for the game version.
+    #[serde(default)]
+    pub latest: bool,
 }
 
 /// Changes to the version list.
