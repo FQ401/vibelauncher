@@ -73,7 +73,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
 | Package | Layer | Responsibility |
 |---|---|---|
 | `vl-core` | core | Domain types and the facade contract: ids, errors, platform, instances, versions, accounts, Java runtimes, settings model and override rules, tasks and progress, log lines; `Command`, `Response`, `Event`, the `Facade` trait, replies and the event bus. One module per domain. |
-| `vl-meta` | core | Game metadata: parsing and normalizing upstream documents (version manifest, version JSON, rules, arguments, libraries and natives, asset indexes) from bytes into the launcher's own types. Platform rules take a `Platform` argument, so every OS is testable on any host. |
+| `vl-meta` | core | Game metadata: parsing and normalizing upstream documents (version manifest, version JSON, rules, arguments, libraries and natives, asset indexes, loader profiles, installer profiles with their processor plans, the NeoForge version list) from bytes into the launcher's own types. Platform rules take a `Platform` argument, so every OS is testable on any host. |
 | `vl-mods` | core | Mod metadata: parsing `fabric.mod.json`, `quilt.mod.json`, `META-INF/mods.toml`, `META-INF/neoforge.mods.toml` and `mcmod.info` from bytes into `ModMetadata` (id, name, version, authors, description, icon path, dependencies, loader, game versions). |
 | `vl-crash` | core | Crash diagnosis: text of `latest.log`, a crash report or `hs_err` plus a class-to-mod index in, a `Diagnosis` out (confidence level, signature, suspect mods, localization keys, evidence lines). Signatures are data (`signatures.toml`); a mod is named with certainty only when a signature matched. |
 | `vl-store` | native | Data, cache and log directories by OS convention or one portable directory; the on-disk format version and migrations; the lock against a second launcher process; atomic writes. |
@@ -83,7 +83,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
 | `vl-auth` | native | Accounts: Microsoft sign-in (device code, Xbox Live, XSTS, Minecraft services), token refresh, offline accounts, secrets in the OS keyring. |
 | `vl-java` | native | Java runtimes: discovery on each OS, probing with a timeout, managed downloads, choosing a runtime for a game version. |
 | `vl-instance` | native | Instances on disk: format, create, list, rename, delete; damaged instances are listed with a problem. |
-| `vl-loaders` | native | Mod loader sources: version lists per game version and launch profiles of Fabric and Quilt through `vl-net`, and the on-disk store of the profiles in use. |
+| `vl-loaders` | native | Mod loader sources: version lists per game version and launch profiles of Fabric, Quilt and NeoForge through `vl-net`, the on-disk store of the profiles in use, and the NeoForge installation (installer, its libraries, processors run with Java behind the `ProcessorRunner` trait). |
 | `vl-resources` | native | Instance resource folders (`mods`, `resourcepacks`, `shaderpacks`, `datapacks`, `global_packs/required_data`): listing with mod metadata read from jars (capped entries and sizes, bundled jars listed not opened, damaged jars reported as a problem), enable and disable by renaming to `<name>.disabled`, add by copy without replacing, remove into `<instance>/.trash/`, and the `ClassIndex` of `vl-crash` built from the packages of the enabled jars. |
 | `vl-launch` | native | Preparing game files, building the command line, running and stopping the game process, streaming its log, detecting crashes. |
 | `vl-backend` | backend | The real facade: routes each command domain to its module, converts native errors into `vl_core::Error`, publishes events. |
@@ -295,7 +295,21 @@ The data directory holds:
   ready launch profile). The version list goes through the HTTP cache. A profile is normalized
   and stored at `loaders/loader/<uid>/<game>/<loader>.json` in the data directory: a young entry
   is used as is, an old one is renewed, and an unreachable source falls back to the stored one,
-  so an instance launches offline once it was launched or installed. An instance created with a
+  so an instance launches offline once it was launched or installed. NeoForge
+  (`maven.neoforged.net/releases`, `net.neoforged:neoforge`) has no meta server: the version list
+  is the artifact's `maven-metadata.xml`, mapped to game versions by the version scheme
+  (`21.1.x` is 1.21.1, `21.0.x` is 1.21, `26.1.2.x` is 26.1.2, `26.1.0.x` is 26.1; `-beta` builds
+  are unstable, snapshot builds are left out). A version is installed from
+  `neoforge-<v>-installer.jar` (checked against the repository's `.sha1`) kept with its
+  `install_profile.json`, `version.json` and data files in `loaders/neoforge/<v>/`; the profile is
+  the normalized `version.json` (its `-DignoreList` names the vanilla jar by the game's id). After
+  the game files are installed, `Loaders::install` downloads the installer's libraries and runs
+  its client processors (`java -cp <jar and class path> <Main-Class> <args>`, `{NAME}` and
+  `[coordinate]` references resolved by `vl_meta::install_profile`) with the Java the game uses,
+  as part of the launch or install task: progress per processor, cancellation kills the process,
+  the output goes to `processors.log`, declared outputs are checked against their SHA-1. A record
+  (`installed.json`) holds the SHA-1 of the vanilla jar and of every file the data values name;
+  while they match, the processors do not run again. An instance created with a
   loader without a version gets the newest stable one (`InstanceCommand::Create` with
   `LoaderRequest`); `InstanceCommand::SetLoader` replaces or removes the loader of a stopped
   instance and the next launch rebuilds the class path from the new profile;

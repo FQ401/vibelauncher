@@ -4197,11 +4197,15 @@ dependencies = [
 name = "vl-loaders"
 version = "0.0.0"
 dependencies = [
+ "flate2",
+ "serde",
  "serde_json",
+ "sha1",
  "vl-core",
  "vl-meta",
  "vl-net",
  "vl-store",
+ "zip",
 ]
 
 [[package]]

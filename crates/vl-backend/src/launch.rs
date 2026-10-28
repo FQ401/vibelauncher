@@ -5,6 +5,10 @@
 //! running. The instance then moves `Preparing → Running → Stopped` and the process end is
 //! published as `LaunchEvent::Exited`. `Stop` cancels a preparing launch or kills a running game.
 //!
+//! A loader that needs an installation step (NeoForge: its installer's processors patch the
+//! game jar with Java) gets it after the game files are installed and before the command line
+//! is built, with the Java the game would use.
+//!
 //! The same module runs `VersionCommand::Install` (see `versions.rs`).
 
 use std::collections::HashMap;
@@ -14,8 +18,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use vl_core::component::ComponentSet;
+use vl_core::component::{ComponentKind, ComponentSet};
 use vl_core::instance::{InstanceState, LoaderRequest};
+use vl_core::java::JavaRuntime;
 use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
 use vl_core::log::{LogBatch, LogLevel, LogLine, LogSource};
 use vl_core::settings::Settings;
@@ -24,7 +29,10 @@ use vl_core::{Error, ErrorKind, Event, EventBus, InstanceId, Replier, Response};
 use vl_java::select::JavaRequirement;
 use vl_launch::process::{self, GameBatch, RunningGame, SpawnOptions};
 use vl_launch::{Installer, InstallerOptions, Job, Layout, PrepareInput};
+use vl_loaders::neoforge::{InstallContext, Installation};
+use vl_loaders::processors::JavaRunner;
 use vl_loaders::{Loaders, LoadersOptions};
+use vl_meta::loader::LoaderProfile;
 use vl_net::{CancelToken, Client, Control, NetConfig};
 use vl_store::Store;
 use vl_tasks::{TaskContext, TaskHandle, TaskSpec};
@@ -195,7 +203,13 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
             .launch_session(plan.request.account.as_ref(), plan.request.offline)?;
         job.check()?;
         if plan.settings.java.path.is_none() {
-            ensure_java(service, plan, job)?;
+            ensure_java(
+                &service.installer,
+                &plan.java,
+                plan.components.game_version(),
+                Some(&plan.game_dir),
+                job,
+            )?;
         }
         let runtimes = plan.java.runtimes();
         let fixed = match &plan.settings.java.path {
@@ -215,6 +229,22 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
             }
             None => None,
         };
+        if let (Some(kind), Some(profile)) = (plan.components.loader().map(|l| l.kind), &loader)
+            && Loaders::needs_install(kind)
+        {
+            let done = install_loader(
+                service,
+                kind,
+                profile,
+                Some(&plan.game_dir),
+                fixed.as_ref(),
+                &runtimes,
+                job,
+            )?;
+            if let Some(done) = done {
+                service.log(LogSource::Launcher, LogLevel::Info, describe(&done));
+            }
+        }
         job.check()?;
         let input = PrepareInput {
             version: plan.components.game_version(),
@@ -291,21 +321,82 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
 
 /// Downloads a managed Java when no installed one runs the version, so the launch never stops
 /// at "no Java found". A Java fixed in the settings is never replaced.
-fn ensure_java(service: &Service, plan: &Plan, job: &Job) -> vl_core::Result<()> {
-    let installed =
-        service
-            .installer
-            .install(plan.components.game_version(), Some(&plan.game_dir), job)?;
+fn ensure_java(
+    installer: &Installer,
+    java: &crate::java::JavaService,
+    game: &str,
+    game_dir: Option<&std::path::Path>,
+    job: &Job,
+) -> vl_core::Result<()> {
+    let installed = installer.install(game, game_dir, job)?;
     let wanted = installed.version.java_version_or_default();
     let arch = installed.platform.arch;
-    if vl_launch::java::choose(&plan.java.runtimes(), wanted.major_version, None, arch).is_ok() {
+    if vl_launch::java::choose(&java.runtimes(), wanted.major_version, None, arch).is_ok() {
         return Ok(());
     }
     job.report("java", 0, None, ProgressUnit::Bytes);
     let requirement = JavaRequirement::new(wanted.component, wanted.major_version);
-    plan.java
-        .ensure(&requirement, None, &crate::java::job_control(job))
+    java.ensure(&requirement, None, &crate::java::job_control(job))
         .map(|_| ())
+}
+
+/// The installation step of a loader that needs one (see [`Loaders::needs_install`]): the game
+/// files with the loader's profile are installed first, then the loader's processors run on the
+/// Java the game would use (`fixed`, else the best of `runtimes`).
+fn install_loader(
+    service: &Service,
+    kind: ComponentKind,
+    profile: &LoaderProfile,
+    game_dir: Option<&std::path::Path>,
+    fixed: Option<&JavaRuntime>,
+    runtimes: &[JavaRuntime],
+    job: &Job,
+) -> vl_core::Result<Option<Installation>> {
+    let installed =
+        service
+            .installer
+            .install_with(&profile.inherits_from, Some(profile), game_dir, job)?;
+    job.check()?;
+    let required = installed.version.java_version_or_default().major_version;
+    let arch = installed.platform.arch;
+    let java = match fixed {
+        Some(runtime) => vl_launch::java::check_fixed(runtime, required, arch)?,
+        None => vl_launch::java::choose(runtimes, required, None, arch)?,
+    };
+    let progress_job = job.clone();
+    let control = Control::with_cancel(job.cancel_token().clone()).on_progress(move |p| {
+        progress_job.report("loader", p.done, p.total, ProgressUnit::Bytes);
+    });
+    let on_step = |i: usize, n: usize| {
+        job.report("processors", i as u64, Some(n as u64), ProgressUnit::Steps);
+    };
+    let layout = service.installer.layout();
+    let libraries_dir = layout.libraries_dir();
+    let ctx = InstallContext {
+        java: &java.runtime.path,
+        minecraft_jar: &installed.client_jar,
+        root: layout.root(),
+        libraries_dir: &libraries_dir,
+        runner: &JavaRunner::default(),
+        control: &control,
+        on_step: &on_step,
+    };
+    service
+        .loaders
+        .install(kind, &profile.inherits_from, &profile.loader_version, &ctx)
+}
+
+fn describe(done: &Installation) -> String {
+    if done.reused {
+        "loader files are installed".to_owned()
+    } else {
+        format!(
+            "loader processors: {} ran, {} skipped (log: {})",
+            done.ran,
+            done.skipped,
+            done.log_file.display()
+        )
+    }
 }
 
 /// Runs `work` with a [`Job`] wired to the task: the task's cancellation stops the job's
@@ -367,8 +458,8 @@ pub(crate) fn install(
     if loader.as_ref().is_some_and(|l| !l.kind.is_loader()) {
         return Err(Error::invalid_input("the game is not a loader"));
     }
-    let installer = Arc::clone(&backend.launch.installer);
-    let loaders = Arc::clone(&backend.launch.loaders);
+    let service = backend.launch.clone();
+    let java = backend.java.clone();
     let version = version.to_owned();
     let subject = match &loader {
         Some(l) => format!("{version} + {}", l.kind.display_name()),
@@ -378,6 +469,7 @@ pub(crate) fn install(
         TaskSpec::new(TaskKind::InstallVersion).subject(&subject),
         move |ctx| {
             with_job(ctx, |job| {
+                let loaders = &service.loaders;
                 let profile = match &loader {
                     Some(l) => {
                         let control = Control::with_cancel(job.cancel_token().clone());
@@ -387,7 +479,18 @@ pub(crate) fn install(
                     }
                     None => None,
                 };
-                installer
+                if let Some(profile) = profile.as_ref().filter(|p| Loaders::needs_install(p.kind)) {
+                    ensure_java(&service.installer, &java, &version, None, job)?;
+                    let runtimes = java.runtimes();
+                    if let Some(done) =
+                        install_loader(&service, profile.kind, profile, None, None, &runtimes, job)?
+                    {
+                        service.log(LogSource::Launcher, LogLevel::Info, describe(&done));
+                    }
+                    return Ok(());
+                }
+                service
+                    .installer
                     .install_with(&version, profile.as_ref(), None, job)
                     .map(|_| ())
             })

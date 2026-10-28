@@ -10,11 +10,17 @@
 //! be reached the old one is used. Hashes of the loader's libraries come from the profile; the
 //! files are downloaded and verified by `vl-launch` like any other library.
 //!
-//! Loaders that need an installer (Forge, NeoForge) are not sources of this kind yet: asking for
-//! them is `Unsupported`.
+//! NeoForge ([`neoforge`]) is published as installer jars in a Maven repository: its version list
+//! is the repository's metadata, its profile is the installer's `version.json`, and
+//! [`Loaders::install`] runs the installer's processors (Java programs that patch the game jar)
+//! through a [`processors::ProcessorRunner`]. [`Loaders::needs_install`] tells which loaders need
+//! that step after the game files are installed. Forge is not a source yet: asking for it is
+//! `Unsupported`.
 
 pub mod fabric;
 pub mod meta;
+pub mod neoforge;
+pub mod processors;
 pub mod quilt;
 
 use std::fs;
@@ -39,6 +45,8 @@ pub struct LoadersOptions {
     pub fabric: Endpoints,
     /// The Quilt meta server.
     pub quilt: Endpoints,
+    /// The NeoForge repository.
+    pub neoforge: neoforge::Maven,
     /// How long a fetched version list is used without asking the server again.
     pub versions_max_age: Duration,
     /// How long a stored profile is used without asking the server again.
@@ -50,6 +58,7 @@ impl Default for LoadersOptions {
         Self {
             fabric: fabric::endpoints(),
             quilt: quilt::endpoints(),
+            neoforge: neoforge::Maven::default(),
             versions_max_age: Duration::from_secs(10 * 60),
             profile_max_age: Duration::from_secs(24 * 60 * 60),
         }
@@ -100,6 +109,9 @@ impl Loaders {
         game_version: &str,
         control: &Control,
     ) -> Result<LoaderVersions> {
+        if kind == ComponentKind::NeoForge {
+            return neoforge::versions(self, game_version, control);
+        }
         let url = self.endpoints(kind)?.versions_url(game_version);
         let options = GetOptions {
             max_bytes: Some(MAX_VERSION_BYTES as u64),
@@ -174,6 +186,9 @@ impl Loaders {
         control: &Control,
         now: i64,
     ) -> Result<LoaderProfile> {
+        if kind == ComponentKind::NeoForge {
+            return neoforge::profile(self, game_version, loader_version, control, now);
+        }
         let endpoints = self.endpoints(kind)?;
         let key = profile_cache_key(kind, game_version, loader_version)?;
         let path = key
@@ -216,6 +231,36 @@ impl Loaders {
             let _ = vl_store::write_atomic(&path, &bytes);
         }
         Ok(resolved.profile)
+    }
+}
+
+impl Loaders {
+    /// Whether loader `kind` needs [`install`](Self::install) after the game files of its
+    /// profile are installed.
+    pub fn needs_install(kind: ComponentKind) -> bool {
+        kind == ComponentKind::NeoForge
+    }
+
+    /// Finishes the installation of a loader version: for NeoForge, downloads the installer's
+    /// libraries and runs its client processors (skipped when an earlier run left matching
+    /// files). Loaders that need no such step return at once with `None`.
+    ///
+    /// # Errors
+    ///
+    /// `Network` / `NotFound` / `Integrity` for the installer and its libraries, `Java` when a
+    /// processor cannot start or fails, `Integrity` when its outputs do not match, `Io`,
+    /// `Cancelled`.
+    pub fn install(
+        &self,
+        kind: ComponentKind,
+        game_version: &str,
+        loader_version: &str,
+        ctx: &neoforge::InstallContext<'_>,
+    ) -> Result<Option<neoforge::Installation>> {
+        if !Self::needs_install(kind) {
+            return Ok(None);
+        }
+        neoforge::install(self, game_version, loader_version, ctx).map(Some)
     }
 }
 

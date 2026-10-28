@@ -461,7 +461,7 @@ fn safe_part(s: &str) -> bool {
         && !s.chars().any(char::is_control)
 }
 
-fn check_coordinate(name: &str) -> Result<()> {
+pub(crate) fn check_coordinate(name: &str) -> Result<()> {
     let base = name.split('@').next().unwrap_or(name);
     let parts: Vec<&str> = base.split(':').collect();
     if parts.len() < 3 || parts.len() > 4 || !parts.iter().all(|p| safe_part(p)) {
@@ -471,7 +471,11 @@ fn check_coordinate(name: &str) -> Result<()> {
 }
 
 /// The repository path of a `group:artifact:version[:classifier][@ext]` coordinate.
-fn maven_path(name: &str) -> Result<String> {
+///
+/// # Errors
+///
+/// `Integrity` for a coordinate that is malformed or unsafe as a path.
+pub fn maven_path(name: &str) -> Result<String> {
     check_coordinate(name)?;
     let (base, ext) = name.split_once('@').unwrap_or((name, "jar"));
     let p: Vec<&str> = base.split(':').collect();
