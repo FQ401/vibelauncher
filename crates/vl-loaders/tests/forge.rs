@@ -319,6 +319,8 @@ fn install(
         minecraft_jar: &jar,
         root,
         libraries_dir: &libraries,
+        versions_dir: &root.join("versions"),
+        game_dir: None,
         runner,
         control: &control,
         on_step: &|_, _| {},
@@ -371,17 +373,17 @@ fn lists_versions_and_picks_the_recommended_one() {
 }
 
 #[test]
-fn older_game_versions_are_unsupported() {
+fn game_versions_without_an_installer_are_unsupported() {
     let s = setup();
     let before = s.server.requests();
     for e in [
-        s.loaders.versions(Forge, "1.12.2", &control()).unwrap_err(),
+        s.loaders.versions(Forge, "1.4.7", &control()).unwrap_err(),
         s.loaders
-            .profile(Forge, "1.12.2", "14.23.5.2860", &control())
+            .profile(Forge, "1.5.1", "7.7.2.682", &control())
             .unwrap_err(),
     ] {
         assert_eq!(e.kind, ErrorKind::Unsupported);
-        assert!(e.message.contains("1.13"), "{}", e.message);
+        assert!(e.message.contains("1.5.2"), "{}", e.message);
     }
     assert_eq!(s.server.requests(), before);
 }

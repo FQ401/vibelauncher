@@ -55,6 +55,12 @@ pub struct InstallContext<'a> {
     pub root: &'a Path,
     /// The shared library directory.
     pub libraries_dir: &'a Path,
+    /// The directory of version files (`<id>/<id>.jar`), where a loader that runs the game from
+    /// its own copy of the vanilla jar writes it.
+    pub versions_dir: &'a Path,
+    /// The game directory of the instance, when the installation is for one: files the loader
+    /// expects there are put in place.
+    pub game_dir: Option<&'a Path>,
     /// What runs the processors.
     pub runner: &'a dyn ProcessorRunner,
     /// Cancellation, and byte progress of the downloads.
@@ -114,11 +120,22 @@ pub(crate) fn profile(
     control: &Control,
     now: i64,
 ) -> Result<LoaderProfile> {
-    let key = profile_cache_key(source.kind, game, &source.version)?;
-    let path = key
-        .split('/')
-        .fold(loaders.profiles_dir.clone(), |p, part| p.join(part));
-    if let Some(cached) = fs::read(&path)
+    if let Some(stored) = stored_profile(loaders, source, game)? {
+        return Ok(stored);
+    }
+    let profile = read_launch_profile(loaders, source, game, control)?;
+    store_profile(loaders, source, game, &profile, now)?;
+    Ok(profile)
+}
+
+/// The stored launch profile of `source` for `game`, if there is a valid one.
+pub(crate) fn stored_profile(
+    loaders: &Loaders,
+    source: &Source,
+    game: &str,
+) -> Result<Option<LoaderProfile>> {
+    let path = profile_path(loaders, source, game)?;
+    Ok(fs::read(&path)
         .ok()
         .and_then(|bytes| CachedProfile::decode(&bytes).ok())
         .filter(|c| {
@@ -126,15 +143,30 @@ pub(crate) fn profile(
                 && c.profile.loader_version == source.version
                 && c.profile.inherits_from == game
         })
-    {
-        return Ok(cached.profile);
-    }
-    let profile = read_launch_profile(loaders, source, game, control)?;
-    // The store is best effort: a profile that cannot be saved is still used.
+        .map(|c| c.profile))
+}
+
+/// Stores the launch profile of `source` for `game`. The store is best effort: a profile that
+/// cannot be saved is still used.
+pub(crate) fn store_profile(
+    loaders: &Loaders,
+    source: &Source,
+    game: &str,
+    profile: &LoaderProfile,
+    now: i64,
+) -> Result<()> {
+    let path = profile_path(loaders, source, game)?;
     if let Ok(bytes) = CachedProfile::new(profile.clone(), None, now).encode() {
         let _ = vl_store::write_atomic(&path, &bytes);
     }
-    Ok(profile)
+    Ok(())
+}
+
+fn profile_path(loaders: &Loaders, source: &Source, game: &str) -> Result<PathBuf> {
+    let key = profile_cache_key(source.kind, game, &source.version)?;
+    Ok(key
+        .split('/')
+        .fold(loaders.profiles_dir.clone(), |p, part| p.join(part)))
 }
 
 fn read_launch_profile(
@@ -332,6 +364,30 @@ fn fetch_installer(loaders: &Loaders, source: &Source, control: &Control) -> Res
     if jar.is_file() && profile_file.is_file() {
         return Ok(());
     }
+    download_installer(loaders, source, control)?;
+    let mut zip = open_zip(&jar)?;
+    let profile_bytes = read_entry(
+        &mut zip,
+        &jar,
+        "install_profile.json",
+        MAX_INSTALL_PROFILE_BYTES as u64,
+    )?;
+    let profile = InstallProfile::parse(&profile_bytes)?;
+    let json_name = file_part(&profile.json);
+    let json = read_entry(&mut zip, &jar, json_name, MAX_VERSION_BYTES as u64)?;
+    write(&dir.join(json_name), &json)?;
+    write(&profile_file, &profile_bytes)?;
+    Ok(())
+}
+
+/// Downloads the installer jar of `source` to `<dir>/installer.jar`, checked against the
+/// repository's SHA-1, unless it is there. Returns its path.
+pub(crate) fn download_installer(
+    loaders: &Loaders,
+    source: &Source,
+    control: &Control,
+) -> Result<PathBuf> {
+    let jar = source.dir.join("installer.jar");
     let url = &source.installer_url;
     if !jar.is_file() {
         let options = GetOptions {
@@ -376,19 +432,7 @@ fn fetch_installer(loaders: &Loaders, source: &Source, control: &Control) -> Res
             .download(&spec, control)
             .map_err(Error::from)?;
     }
-    let mut zip = open_zip(&jar)?;
-    let profile_bytes = read_entry(
-        &mut zip,
-        &jar,
-        "install_profile.json",
-        MAX_INSTALL_PROFILE_BYTES as u64,
-    )?;
-    let profile = InstallProfile::parse(&profile_bytes)?;
-    let json_name = file_part(&profile.json);
-    let json = read_entry(&mut zip, &jar, json_name, MAX_VERSION_BYTES as u64)?;
-    write(&dir.join(json_name), &json)?;
-    write(&profile_file, &profile_bytes)?;
-    Ok(())
+    Ok(jar)
 }
 
 fn read_install_profile(source: &Source, game: &str) -> Result<InstallProfile> {
@@ -520,7 +564,7 @@ fn extract_bundled(
     Ok(())
 }
 
-fn open_zip(jar: &Path) -> Result<ZipArchive<fs::File>> {
+pub(crate) fn open_zip(jar: &Path) -> Result<ZipArchive<fs::File>> {
     let file = fs::File::open(jar).map_err(|e| io_error(jar, &e))?;
     ZipArchive::new(file).map_err(|e| {
         // A damaged installer is fetched again next time.
@@ -529,7 +573,12 @@ fn open_zip(jar: &Path) -> Result<ZipArchive<fs::File>> {
     })
 }
 
-fn read_entry(zip: &mut ZipArchive<fs::File>, jar: &Path, name: &str, cap: u64) -> Result<Vec<u8>> {
+pub(crate) fn read_entry(
+    zip: &mut ZipArchive<fs::File>,
+    jar: &Path,
+    name: &str,
+    cap: u64,
+) -> Result<Vec<u8>> {
     let mut entry = zip.by_name(name).map_err(|_| {
         Error::new(
             ErrorKind::Integrity,
@@ -556,7 +605,7 @@ fn read_entry(zip: &mut ZipArchive<fs::File>, jar: &Path, name: &str, cap: u64) 
     Ok(bytes)
 }
 
-fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
+pub(crate) fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
     let meta = fs::metadata(path).map_err(|e| io_error(path, &e))?;
     if meta.len() > cap {
         return Err(Error::new(
@@ -567,7 +616,7 @@ fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
     fs::read(path).map_err(|e| io_error(path, &e))
 }
 
-fn write(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write(path: &Path, bytes: &[u8]) -> Result<()> {
     vl_store::write_atomic(path, bytes)
         .map_err(|e| Error::new(ErrorKind::Io, format!("{}: {e}", path.display())))
 }
@@ -577,7 +626,7 @@ fn file_part(inner: &str) -> &str {
     inner.trim_start_matches('/')
 }
 
-fn join(base: &Path, relative: &str) -> PathBuf {
+pub(crate) fn join(base: &Path, relative: &str) -> PathBuf {
     relative
         .split('/')
         .fold(base.to_path_buf(), |p, part| p.join(part))

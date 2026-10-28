@@ -282,3 +282,41 @@ fn a_version_inheriting_another_uses_its_jar_and_libraries() {
             .contains(&"com/example/lib/1.0/lib-1.0.jar".to_owned())
     );
 }
+
+#[test]
+fn a_loader_with_its_own_copy_of_the_game_jar_runs_from_it() {
+    let server = Arc::new(FakeServer::default());
+    add_version(&server, "1.0", "1.0", json!({}), json!({}));
+    let dir = TempDir::new();
+    let child = json!({
+        "id": "1.0-legacy",
+        "inheritsFrom": "1.0",
+        "jar": "1.0-legacy",
+        "type": "release",
+        "mainClass": "net.example.LoaderMain",
+        "libraries": [],
+    });
+    let installer = installer(&server, dir.path());
+    let layout = installer.layout();
+    let path = layout.version_json("1.0-legacy");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&child).unwrap()).unwrap();
+
+    // The copy is made by the loader's installation; without it the version cannot run.
+    let e = installer
+        .install("1.0-legacy", None, &Job::new())
+        .unwrap_err();
+    assert_eq!(e.kind, ErrorKind::NotFound, "{e:?}");
+
+    std::fs::write(layout.client_jar("1.0-legacy"), b"stripped").unwrap();
+    let installed = installer
+        .install("1.0-legacy", None, &Job::new())
+        .expect("install");
+    assert_eq!(installed.client_jar, layout.client_jar("1.0-legacy"));
+    assert_eq!(
+        std::fs::read(layout.client_jar("1.0-legacy")).unwrap(),
+        b"stripped"
+    );
+    // The vanilla jar is downloaded to its own place.
+    assert!(layout.client_jar("1.0").is_file());
+}

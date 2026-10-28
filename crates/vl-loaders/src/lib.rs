@@ -10,16 +10,20 @@
 //! be reached the old one is used. Hashes of the loader's libraries come from the profile; the
 //! files are downloaded and verified by `vl-launch` like any other library.
 //!
-//! NeoForge ([`neoforge`], for 1.20.1 also its `net.neoforged:forge` builds) and Forge for Minecraft 1.13+ ([`forge`]) are published as installer
+//! NeoForge ([`neoforge`], for 1.20.1 also its `net.neoforged:forge` builds) and Forge ([`forge`]) are published as installer
 //! jars in a Maven repository: the version list is the repository's metadata (for Forge, with its
 //! promotions), the profile is the installer's `version.json`, and [`Loaders::install`] runs the
 //! installer's processors (Java programs that patch the game jar) through a
 //! [`processors::ProcessorRunner`]; [`installer`] holds what both share.
 //! [`Loaders::needs_install`] tells which loaders need that step after the game files are
-//! installed. Forge for older game versions is `Unsupported`.
+//! installed. Legacy Forge installers (most builds before Minecraft 1.13) have no processors:
+//! their installation puts the carried Forge jar, the game's copy of the vanilla jar without
+//! `META-INF/` (1.5.2) and the FML files in place. Forge before Minecraft 1.5.2 is
+//! `Unsupported`.
 
 pub mod fabric;
 pub mod forge;
+mod forge_legacy;
 pub mod installer;
 pub mod meta;
 pub mod neoforge;
@@ -268,7 +272,8 @@ impl Loaders {
 
     /// Finishes the installation of a loader version: for NeoForge and Forge, puts the libraries
     /// the installer carries in place, downloads the processors' libraries and runs the client
-    /// processors (skipped when an earlier run left matching files). Call it after the vanilla
+    /// processors (skipped when an earlier run left matching files); for a legacy Forge
+    /// installer, puts its files in place (see [`forge`]). Call it after the vanilla
     /// game is installed and before the libraries of the loader profile are: some of them are
     /// made here. Loaders that need no such step return at once with `None`.
     ///

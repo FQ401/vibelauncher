@@ -11,6 +11,7 @@
 pub mod arguments;
 pub mod assets;
 pub mod forge;
+pub mod forge_legacy;
 pub mod install_profile;
 pub mod libraries;
 pub mod loader;

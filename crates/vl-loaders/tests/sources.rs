@@ -231,10 +231,10 @@ fn loaders_without_a_source_are_unsupported() {
         .versions(LiteLoader, "1.12.2", &control())
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::Unsupported);
-    // Forge before Minecraft 1.13 has a legacy installer.
-    let err = loaders.versions(Forge, "1.12.2", &control()).unwrap_err();
+    // Forge before Minecraft 1.5.2 has no installer.
+    let err = loaders.versions(Forge, "1.4.7", &control()).unwrap_err();
     assert_eq!(err.kind, ErrorKind::Unsupported);
-    assert!(err.message.contains("1.13"), "{err}");
+    assert!(err.message.contains("1.5.2"), "{err}");
     assert_eq!(server.requests(), 0);
 }
 

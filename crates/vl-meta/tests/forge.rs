@@ -105,11 +105,20 @@ fn lists_versions_newest_first_with_recommended_and_latest_flags() {
 }
 
 #[test]
-fn game_versions_before_1_13_are_unsupported() {
-    for game in ["1.12.2", "1.7.10"] {
+fn lists_legacy_game_versions_without_their_branch() {
+    assert_eq!(
+        names("1.12.2", None),
+        [("14.23.5.2860".to_owned(), false, true)]
+    );
+    assert_eq!(
+        names("1.7.10", None),
+        [("10.13.4.1614".to_owned(), false, true)]
+    );
+    // Forge before Minecraft 1.5.2 has no installer.
+    for game in ["1.5.1", "1.4.7"] {
         let e = versions_for_game(game, &all(), None).unwrap_err();
         assert_eq!(e.kind, ErrorKind::Unsupported, "{game}");
-        assert!(e.message.contains("1.13"), "{}", e.message);
+        assert!(e.message.contains("1.5.2"), "{}", e.message);
     }
 }
 
