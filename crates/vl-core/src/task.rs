@@ -37,6 +37,8 @@ pub enum TaskKind {
     MoveStorage,
     /// Checking an instance's game files and repairing them.
     VerifyFiles,
+    /// Searching the mods for the cause of a crash, launching the game for each step.
+    Bisect,
 }
 
 /// A task as announced when it starts.

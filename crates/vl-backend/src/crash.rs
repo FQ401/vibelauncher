@@ -120,6 +120,16 @@ fn describe(d: &CrashDiagnosis) -> String {
 
 /// Reads the logs and diagnoses them with the class index of the instance's mods.
 pub(crate) fn diagnose(sources: &Sources) -> vl_core::Result<CrashDiagnosis> {
+    diagnose_with_text(sources, true).map(|(d, _)| d)
+}
+
+/// Like [`diagnose`], plus the text the crash is best described by (the crash report, else the
+/// output log). With `newest` false only the files named in `sources` are read: a run that left
+/// no crash report is not judged by an older one.
+pub(crate) fn diagnose_with_text(
+    sources: &Sources,
+    newest: bool,
+) -> vl_core::Result<(CrashDiagnosis, String)> {
     let mut files = Vec::new();
     let mut take = |path: Option<PathBuf>, head: bool| -> String {
         let Some(path) = path else {
@@ -138,10 +148,11 @@ pub(crate) fn diagnose(sources: &Sources) -> vl_core::Result<CrashDiagnosis> {
             None => String::new(),
         }
     };
-    let run_log = sources
-        .run_log
-        .clone()
-        .or_else(|| newest_in(&sources.log_dir, |n| n.starts_with(RUN_LOG_PREFIX)));
+    let run_log = sources.run_log.clone().or_else(|| {
+        newest
+            .then(|| newest_in(&sources.log_dir, |n| n.starts_with(RUN_LOG_PREFIX)))
+            .flatten()
+    });
     let latest = sources.game_dir.join("logs").join("latest.log");
     let mut log = take(run_log, false);
     if log.is_empty() {
@@ -149,17 +160,25 @@ pub(crate) fn diagnose(sources: &Sources) -> vl_core::Result<CrashDiagnosis> {
     }
     let report = take(
         sources.crash_report.clone().or_else(|| {
-            newest_in(&sources.game_dir.join("crash-reports"), |n| {
-                n.ends_with(".txt")
-            })
+            newest
+                .then(|| {
+                    newest_in(&sources.game_dir.join("crash-reports"), |n| {
+                        n.ends_with(".txt")
+                    })
+                })
+                .flatten()
         }),
         true,
     );
     let hs_err = take(
         sources.hs_err.clone().or_else(|| {
-            newest_in(&sources.game_dir, |n| {
-                n.starts_with("hs_err_pid") && n.ends_with(".log")
-            })
+            newest
+                .then(|| {
+                    newest_in(&sources.game_dir, |n| {
+                        n.starts_with("hs_err_pid") && n.ends_with(".log")
+                    })
+                })
+                .flatten()
         }),
         true,
     );
@@ -174,7 +193,9 @@ pub(crate) fn diagnose(sources: &Sources) -> vl_core::Result<CrashDiagnosis> {
         crash_report: &report,
         hs_err: &hs_err,
     };
-    Ok(convert(vl_crash::diagnose(&input, &index), files))
+    let diagnosis = convert(vl_crash::diagnose(&input, &index), files);
+    let text = if report.is_empty() { log } else { report };
+    Ok((diagnosis, text))
 }
 
 fn convert(d: vl_crash::Diagnosis, files: Vec<String>) -> CrashDiagnosis {

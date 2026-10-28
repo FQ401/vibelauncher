@@ -9,6 +9,7 @@
 //! yet answers [`vl_core::ErrorKind::Unsupported`].
 
 mod accounts;
+pub mod auto_bisect;
 mod bisect;
 mod catalog;
 mod crash;
@@ -67,6 +68,7 @@ pub struct Backend {
     launch: launch::Service,
     catalog: catalog::Service,
     storage: storage::Gate,
+    bisect: bisect::Running,
 }
 
 impl Backend {
@@ -90,6 +92,7 @@ impl Backend {
                 Arc::clone(&events),
             ),
             storage: storage::Gate::default(),
+            bisect: bisect::Running::default(),
             config,
             store,
             instances,

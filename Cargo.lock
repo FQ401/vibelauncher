@@ -4090,7 +4090,9 @@ name = "vl-backend"
 version = "0.0.0"
 dependencies = [
  "flate2",
+ "serde_json",
  "vl-auth",
+ "vl-bisect",
  "vl-core",
  "vl-crash",
  "vl-install",

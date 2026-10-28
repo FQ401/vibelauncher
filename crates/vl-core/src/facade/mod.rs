@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 pub use channel::{EventBus, EventStream, Replier, Reply, reply_channel};
 
 use crate::account::{Account, AccountCommand, AccountEvent};
-use crate::bisect::{BisectCommand, BisectStatus};
+use crate::bisect::{AutoBisectReport, BisectCommand, BisectEvent, BisectStatus};
 use crate::catalog::{CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage};
 use crate::crash::CrashDiagnosis;
 use crate::ids::TaskId;
@@ -120,6 +120,8 @@ pub enum Response {
     Worlds(Vec<WorldInfo>),
     /// A bisection session.
     Bisect(BisectStatus),
+    /// The report of an automatic bisection.
+    BisectReport(AutoBisectReport),
     /// A page of catalog search results.
     CatalogSearch(SearchPage),
     /// One catalog project.
@@ -175,6 +177,8 @@ pub enum Event {
     Java(JavaEvent),
     /// Settings changes.
     Settings(SettingsEvent),
+    /// Automatic bisection progress.
+    Bisect(BisectEvent),
     /// This stream fell behind and `missed` events were dropped; state shown from events should
     /// be re-read with commands.
     Lagged {

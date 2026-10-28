@@ -257,3 +257,59 @@ fn a_session_needs_two_mods_and_a_readable_file() {
     );
     assert_eq!(t.enabled().len(), 1);
 }
+
+#[test]
+fn sets_outside_the_steps_are_restored_by_stop() {
+    let t = fixture("sets");
+    let bisect = t.bisect();
+    assert_eq!(bisect.enabled_count().unwrap(), 7);
+    assert_eq!(
+        bisect.apply_set(&[]).unwrap_err().kind,
+        ErrorKind::NotFound,
+        "a set needs a session"
+    );
+    bisect.start(&[]).unwrap();
+    bisect.apply_set(&[]).unwrap();
+    assert!(t.enabled().is_empty());
+    let without = bisect.without(&["fabric-api.jar".to_owned()]).unwrap();
+    assert_eq!(without, ["mod1.jar", "mod3.jar", "mod5.jar"]);
+    bisect.apply_set(&without).unwrap();
+    assert_eq!(t.enabled().len(), 3);
+    bisect.stop().unwrap();
+    assert_eq!(t.enabled().len(), 7);
+}
+
+#[test]
+fn a_bundled_module_counts_as_provided_by_its_jar() {
+    let t = Temp::new("bundled");
+    // `api.jar` bundles `screen-api`; `menu` requires the module, not the api.
+    let module = {
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        w.start_file("fabric.mod.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        w.write_all(br#"{"id":"screen-api","version":"1"}"#)
+            .unwrap();
+        w.finish().unwrap().into_inner()
+    };
+    let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    w.start_file("fabric.mod.json", options).unwrap();
+    w.write_all(br#"{"id":"api","version":"1","jars":[{"file":"META-INF/jars/screen-api.jar"}]}"#)
+        .unwrap();
+    w.start_file("META-INF/jars/screen-api.jar", options)
+        .unwrap();
+    w.write_all(&module).unwrap();
+    fs::write(t.mods().join("api.jar"), w.finish().unwrap().into_inner()).unwrap();
+    t.jar("menu", &["screen-api"]);
+    t.jar("other", &[]);
+    let bisect = t.bisect();
+    let mut status = bisect.start(&[]).unwrap();
+    while status.state == BisectState::Running {
+        let on = t.enabled();
+        if on.contains("menu.jar") {
+            assert!(on.contains("api.jar"), "menu lost the jar of its module");
+        }
+        status = bisect.report(BisectOutcome::Bad).unwrap();
+    }
+    bisect.stop().unwrap();
+}

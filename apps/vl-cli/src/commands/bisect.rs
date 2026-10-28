@@ -22,6 +22,8 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
                 _ => BisectOutcome::Skipped,
             },
         },
+        ["auto", rest @ ..] => return super::bisect_auto::run(facade, rest, out),
+        ["report", instance] => return super::bisect_auto::report(facade, instance, out),
         ["stop", instance] => {
             let instance = id(instance)?;
             let stop = BisectCommand::Stop { instance };
