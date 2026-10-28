@@ -81,6 +81,26 @@ impl InstanceConfig {
         }
     }
 
+    /// Changes the game version. The loader is not checked here; set it afterwards with
+    /// [`Self::set_loader`], which validates the pair.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` for an empty version or an instance without a game component.
+    pub fn set_game_version(&mut self, version: &str) -> Result<()> {
+        let version = version.trim();
+        if version.is_empty() {
+            return Err(Error::invalid_input("the game version is empty"));
+        }
+        let game = self
+            .components
+            .iter_mut()
+            .find(|c| c.uid == GAME_UID)
+            .ok_or_else(|| Error::invalid_input("the instance has no game version"))?;
+        version.clone_into(&mut game.version);
+        Ok(())
+    }
+
     /// The game version, if the instance has one.
     pub fn game_version(&self) -> Option<&str> {
         self.component(GAME_UID)

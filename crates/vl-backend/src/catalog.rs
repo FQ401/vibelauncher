@@ -25,6 +25,7 @@ use vl_platforms::Platforms;
 use vl_tasks::TaskSpec;
 
 use crate::Backend;
+use crate::pack_update;
 use crate::updates;
 
 /// Folder of the launcher's own files inside an instance.
@@ -32,8 +33,8 @@ const META_DIR: &str = ".vibelauncher";
 
 /// The platforms behind the catalog commands.
 pub(crate) struct Service {
-    platforms: Arc<Platforms>,
-    client: Client,
+    pub(crate) platforms: Arc<Platforms>,
+    pub(crate) client: Client,
 }
 
 impl Service {
@@ -57,6 +58,15 @@ pub(crate) fn handle(backend: &Backend, command: CatalogCommand, replier: Replie
         CatalogCommand::Install(request) => return replier.send(install(backend, request)),
         CatalogCommand::InstallPack(request) => {
             return replier.send(install_pack(backend, request));
+        }
+        CatalogCommand::CheckPackUpdate(request) => {
+            return pack_update::check(backend, request, replier);
+        }
+        CatalogCommand::PlanPackUpdate(request) => {
+            return pack_update::plan(backend, request, replier);
+        }
+        CatalogCommand::UpdatePack(request) => {
+            return replier.send(pack_update::update(backend, request));
         }
         CatalogCommand::CheckUpdates(request) => {
             return updates::check(backend, request, replier);
@@ -257,6 +267,16 @@ impl Drop for Cleanup {
     }
 }
 
+/// The loader component a pack's loader needs.
+pub(crate) fn component_of(kind: PackLoader) -> Result<ComponentKind> {
+    match kind {
+        PackLoader::Fabric => Ok(ComponentKind::Fabric),
+        PackLoader::Quilt => Ok(ComponentKind::Quilt),
+        PackLoader::NeoForge => Ok(ComponentKind::NeoForge),
+        PackLoader::Forge => Err(Error::unsupported("Forge is not supported yet")),
+    }
+}
+
 fn run_pack(
     work: &PackWork<'_>,
     request: &PackInstallRequest,
@@ -300,14 +320,7 @@ fn run_pack(
     let loader = match pack.index.loader() {
         None => None,
         Some((kind, version)) => {
-            let component = match kind {
-                PackLoader::Fabric => ComponentKind::Fabric,
-                PackLoader::Quilt => ComponentKind::Quilt,
-                PackLoader::NeoForge => ComponentKind::NeoForge,
-                PackLoader::Forge => {
-                    return Err(Error::unsupported("Forge is not supported yet"));
-                }
-            };
+            let component = component_of(kind)?;
             let chosen =
                 work.loaders
                     .pick(component, &game_version, Some(version), work.control)?;
@@ -367,6 +380,7 @@ fn run_pack(
     }
     vl_install::mrpack::PackRecord::new(&pack, &report, source)
         .with_known_origins(&known)
+        .with_overrides(pack.override_hashes()?)
         .save(&meta)?;
     // The instance is complete: keep it.
     undo.1 = true;

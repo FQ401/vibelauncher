@@ -190,6 +190,7 @@ fn pack_files_are_skipped_unless_asked_for() {
             optional: false,
             origin_known: false,
         }],
+        overrides: Vec::new(),
     };
     record.save(&meta).unwrap();
     let target = fabric();

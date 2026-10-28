@@ -30,7 +30,7 @@ pub struct Resolved {
 }
 
 /// The folder kind and file name of a path that sits directly in a resource folder.
-fn kind_and_name(path: &str) -> Option<(ResourceKind, &str)> {
+pub(crate) fn kind_and_name(path: &str) -> Option<(ResourceKind, &str)> {
     ResourceKind::ALL.into_iter().find_map(|kind| {
         let rest = path.strip_prefix(kind.dir())?.strip_prefix('/')?;
         (!rest.is_empty() && !rest.contains('/')).then_some((kind, rest))

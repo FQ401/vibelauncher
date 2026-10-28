@@ -13,6 +13,7 @@ mod catalog;
 mod instances;
 mod java;
 mod launch;
+mod pack_update;
 mod resources;
 mod settings;
 mod tasks;

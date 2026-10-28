@@ -16,12 +16,16 @@
 //!
 //! [`mrpack`] installs a Modrinth modpack (`.mrpack`) into a fresh game directory.
 //!
+//! [`mrpack_update`] updates an installed modpack to another version, keeping what the user
+//! deleted, disabled, changed or added.
+//!
 //! Plans and execution are blocking and are meant to run inside a task.
 
 mod apply;
 mod hashing;
 pub mod mrpack;
 pub mod mrpack_origins;
+pub mod mrpack_update;
 pub mod origin;
 mod plan;
 mod scan;
@@ -38,3 +42,6 @@ mod tests;
 
 #[cfg(test)]
 mod mrpack_tests;
+
+#[cfg(test)]
+mod mrpack_update_tests;

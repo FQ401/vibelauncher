@@ -316,11 +316,16 @@ pub(crate) fn run_task(
 
 /// Asks on a terminal; anything else is a plan only.
 pub(crate) fn confirmed(out: Out<'_>) -> Result<bool, CliError> {
+    confirmed_with(out, "install?")
+}
+
+/// [`confirmed`] with another question.
+pub(crate) fn confirmed_with(out: Out<'_>, question: &str) -> Result<bool, CliError> {
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
         return Ok(false);
     }
-    write!(out, "install? [y/N] ")?;
+    write!(out, "{question} [y/N] ")?;
     out.flush()?;
     let mut answer = String::new();
     stdin.lock().read_line(&mut answer)?;
