@@ -1,6 +1,7 @@
 //! Command groups; each group lives in its own module.
 
 mod accounts;
+mod api_key;
 mod bisect;
 mod bisect_auto;
 mod catalog;
@@ -43,11 +44,14 @@ commands:
                                       then CurseForge by fingerprint; a file both know is
                                       recorded as Modrinth's)
   instances mods updates <instance> [--channel <c>] [--include-pack-files] [--provider <p>]
-                                      list newer versions of mods, packs and shaders
-                                      (Modrinth by default)
+                                      list newer versions of mods, packs and shaders; without
+                                      --provider both platforms: a file goes to the platform it
+                                      was installed from, else to the first that knows it
+                                      (Modrinth, then CurseForge when a key is set)
   instances mods update <instance> [<mod>...|--all] [--version <id>] [--channel <c>]
                         [--include-pack-files] [--provider <p>] [--yes]
-                                      update, or switch one mod to a version (older only by id)
+                                      update, or switch one mod to a version (older only by id);
+                                      each file from the platform the check names
   instances worlds list <instance>    list the worlds in the instance's saves folder
   instances datapacks <instance> <world> list
   instances datapacks <instance> <world> enable|disable|remove <file>
@@ -96,6 +100,11 @@ commands:
   catalog versions <slug> [--version <v>] [--loader <l>]
                                       list a project's versions
   catalog lookup <sha1>...            find which versions own files with these hashes
+  catalog key set|remove|status [curseforge]
+                                      your CurseForge API key in the OS keyring: set reads it
+                                      from a prompt that does not show it (or the first line of
+                                      piped input), never from the command line; status tries
+                                      the key and says whether VL_CURSEFORGE_API_KEY overrides it
   catalog install <slug|id> --instance <id> [--world <name>] [--version <id>]
                   [--channel <release|beta|alpha>] [--yes]
                                       install a project and its required dependencies into an

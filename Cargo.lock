@@ -4258,6 +4258,7 @@ dependencies = [
  "vl-bisect",
  "vl-core",
  "vl-crash",
+ "vl-curseforge",
  "vl-install",
  "vl-instance",
  "vl-java",
@@ -4288,6 +4289,7 @@ name = "vl-cli"
 version = "0.0.0"
 dependencies = [
  "ctrlc",
+ "rpassword",
  "vl-backend",
  "vl-core",
  "vl-mock",

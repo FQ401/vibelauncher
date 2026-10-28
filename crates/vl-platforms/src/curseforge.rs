@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use vl_auth::{AuthError, OsVault, SecretVault};
 use vl_core::catalog::{
-    HashAlgorithm, HashMatch, Project, ProjectType, ProjectVersion, Provider, ReleaseChannel,
-    SearchPage, SearchQuery, VersionFilter,
+    ApiKeyState, HashAlgorithm, HashMatch, Project, ProjectType, ProjectVersion, Provider,
+    ReleaseChannel, SearchPage, SearchQuery, VersionFilter,
 };
 use vl_core::{Error, ErrorKind, Result};
 use vl_curseforge::parse::{
@@ -30,14 +30,15 @@ use vl_curseforge::parse::{
     MAX_FINGERPRINTS_BYTES, MAX_PROJECT_BYTES, MAX_SEARCH_BYTES, ModFile, ModSummary,
 };
 use vl_curseforge::{
-    API_KEY_ENV, API_KEY_HEADER, ApiKey, Endpoints, MAX_FINGERPRINTS_PER_REQUEST,
-    MAX_IDS_PER_REQUEST, MAX_PAGE_SIZE, MAX_RESULT_WINDOW, Page, numeric_id, rejected_api_key,
-    unsent_filter,
+    API_KEY_ENV, API_KEY_HEADER, Endpoints, MAX_FINGERPRINTS_PER_REQUEST, MAX_IDS_PER_REQUEST,
+    MAX_PAGE_SIZE, MAX_RESULT_WINDOW, Page, numeric_id, rejected_api_key, unsent_filter,
 };
 use vl_net::{Client, Control, GetOptions, NetError, RequestHooks};
 
 use crate::CatalogSource;
 use crate::rate::{RateConfig, RateLimiter};
+
+pub use vl_curseforge::ApiKey;
 
 /// The keyring entry (under the launcher's service name) that holds the user's key.
 pub const KEYRING_ENTRY: &str = "api-key:curseforge";
@@ -200,6 +201,65 @@ pub fn default_api_keys(keyring: Arc<KeyringApiKey>) -> ApiKeys {
     ApiKeys::new(vec![Arc::new(EnvApiKey::default()), keyring])
 }
 
+/// The keys the launcher knows of: the environment variable (read only) and the user's key in
+/// the keyring (set and removed here). The environment variable wins when both hold a key.
+#[derive(Clone)]
+pub struct CurseForgeKeys {
+    env: Arc<EnvApiKey>,
+    keyring: Arc<KeyringApiKey>,
+}
+
+/// Which places hold a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyPlaces {
+    /// The environment variable holds a key.
+    pub environment: bool,
+    /// The keyring holds a key.
+    pub keyring: bool,
+}
+
+impl CurseForgeKeys {
+    /// [`API_KEY_ENV`] and the OS keyring.
+    pub fn os() -> Self {
+        Self::new(EnvApiKey::default(), Arc::new(KeyringApiKey::os()))
+    }
+
+    /// A given variable and keyring (tests use a variable that is never set and a memory vault).
+    pub fn new(env: EnvApiKey, keyring: Arc<KeyringApiKey>) -> Self {
+        Self {
+            env: Arc::new(env),
+            keyring,
+        }
+    }
+
+    /// The source a [`CurseForgeSource`] reads: the variable, then the keyring.
+    pub fn source(&self) -> Arc<dyn ApiKeySource> {
+        Arc::new(ApiKeys::new(vec![
+            self.env.clone() as Arc<dyn ApiKeySource>,
+            self.keyring.clone(),
+        ]))
+    }
+
+    /// Stores the user's key in the keyring.
+    pub fn set(&self, key: &ApiKey) -> Result<()> {
+        self.keyring.set(key)
+    }
+
+    /// Removes the user's key from the keyring; no key is not an error.
+    pub fn remove(&self) -> Result<()> {
+        self.keyring.remove()
+    }
+
+    /// Which places hold a key. A variable that holds something that is not a key counts as
+    /// holding one: it is what CurseForge requests would fail on.
+    pub fn places(&self) -> Result<KeyPlaces> {
+        Ok(KeyPlaces {
+            environment: !matches!(self.env.api_key(), Ok(None)),
+            keyring: self.keyring.api_key()?.is_some(),
+        })
+    }
+}
+
 /// How a [`CurseForgeSource`] works.
 #[derive(Debug, Clone)]
 pub struct CurseForgeOptions {
@@ -288,6 +348,35 @@ impl CurseForgeSource {
 
     fn key(&self) -> Result<ApiKey> {
         self.keys.api_key()?.ok_or_else(vl_curseforge::no_api_key)
+    }
+
+    /// Tries the key in use with one small request that bypasses the HTTP cache
+    /// (`GET /v1/games/432`). `Missing` without a key (nothing is sent), `Rejected` on `401` or
+    /// `403`, `Unreachable` on any other failure. Only cancellation is an error.
+    pub fn check_key(&self, control: &Control) -> Result<ApiKeyState> {
+        let Some(key) = self.keys.api_key()? else {
+            return Ok(ApiKeyState::Missing);
+        };
+        let options = GetOptions {
+            max_bytes: Some(MAX_PROJECT_BYTES as u64),
+            max_age: None,
+            use_cache: false,
+        };
+        let hooks = Hooks {
+            limiter: &self.limiter,
+            key: &key,
+        };
+        let url = self.options.endpoints.game();
+        match self
+            .client
+            .get_bytes_with(&url, &options, control, Some(&hooks))
+            .map_err(convert)
+        {
+            Ok(_) => Ok(ApiKeyState::Valid),
+            Err(e) if e.kind == ErrorKind::Auth => Ok(ApiKeyState::Rejected),
+            Err(e) if e.kind == ErrorKind::Cancelled => Err(e),
+            Err(e) => Ok(ApiKeyState::Unreachable { detail: e.message }),
+        }
     }
 
     fn get(

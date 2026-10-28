@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use vl_core::resources::{ResourceEntry, ResourceKind, WorldInfo};
 use vl_core::{Error, ErrorKind};
 
-use crate::cache::{self, FolderCache, Item, Stamp};
+use crate::cache::{self, Digests, FolderCache, Item, Stamp};
 use crate::index::ModClassIndex;
 use crate::jar::{JarInfo, read_jar};
 use crate::pack::read_pack;
@@ -163,6 +163,7 @@ impl Resources {
                 continue;
             };
             let (file, disabled) = split_disabled(&raw);
+            cache.touch(file);
             let mut entry = ResourceEntry {
                 file: file.to_owned(),
                 enabled: !disabled,
@@ -324,6 +325,46 @@ impl Resources {
             }
             n += 1;
         }
+    }
+
+    /// The digests of files of `kind`, each named as [`list`](Self::list) names it (without
+    /// `.disabled`) with whether it is enabled. What the cache remembers for an unchanged file
+    /// (same name, size and modification time) is passed to `compute` with the file's path;
+    /// `compute` returns the digests the caller needs (adding the missing ones, without reading
+    /// the file when nothing is missing), and they are remembered. Without a cache folder
+    /// `compute` gets nothing known. One result per file, in order.
+    pub fn digests<F>(
+        &self,
+        kind: ResourceKind,
+        files: &[(String, bool)],
+        mut compute: F,
+    ) -> Vec<std::io::Result<Digests>>
+    where
+        F: FnMut(&Path, &Digests) -> std::io::Result<Digests>,
+    {
+        let dir = self.dir(kind);
+        let mut cache = self.cache(kind);
+        let mut out = Vec::with_capacity(files.len());
+        for (file, enabled) in files {
+            let path = if *enabled {
+                dir.join(file)
+            } else {
+                dir.join(format!("{file}{DISABLED_SUFFIX}"))
+            };
+            let stamp = fs::metadata(&path).ok().and_then(|m| Stamp::of(&m));
+            let known = stamp
+                .and_then(|s| cache.get_digests(file, s))
+                .unwrap_or_default();
+            let result = compute(&path, &known);
+            if let (Ok(digests), Some(s)) = (&result, stamp)
+                && *digests != known
+            {
+                cache.put_digests(file, s, digests.clone());
+            }
+            out.push(result);
+        }
+        cache.finish(false);
+        out
     }
 
     /// Builds the class index of the enabled mod jars.

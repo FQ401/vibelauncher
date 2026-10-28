@@ -9,7 +9,7 @@ use vl_core::install::MatchedBy;
 use vl_core::resources::ResourceKind;
 use vl_net::Control;
 use vl_platforms::CatalogSource;
-use vl_resources::{DISABLED_SUFFIX, Resources};
+use vl_resources::{Digests, Resources};
 
 use crate::hashing::{FileHashes, fingerprint_file, hash_file};
 use crate::origin::Origin;
@@ -127,37 +127,58 @@ pub(crate) fn scan_many(
     Ok(all)
 }
 
-/// The key of a file for `algorithm`.
-fn key(path: &Path, hashes: &FileHashes, algorithm: HashAlgorithm) -> std::io::Result<String> {
-    Ok(match algorithm {
-        HashAlgorithm::Fingerprint => fingerprint_file(path)?.to_string(),
-        HashAlgorithm::Sha512 => hashes.sha512.clone(),
-        _ => hashes.sha1.clone(),
-    })
+/// `known` with what is missing for `algorithm` computed from the file: the SHA digests and the
+/// size always, the CurseForge fingerprint when it is the key. Nothing is read when nothing is
+/// missing.
+fn complete(path: &Path, known: &Digests, algorithm: HashAlgorithm) -> std::io::Result<Digests> {
+    let mut digests = known.clone();
+    if digests.sha1.is_none() || digests.sha512.is_none() || digests.size.is_none() {
+        let hashes = hash_file(path)?;
+        digests.sha1 = Some(hashes.sha1);
+        digests.sha512 = Some(hashes.sha512);
+        digests.size = Some(hashes.size);
+    }
+    if algorithm == HashAlgorithm::Fingerprint && digests.fingerprint.is_none() {
+        digests.fingerprint = Some(fingerprint_file(path)?);
+    }
+    Ok(digests)
 }
 
-/// The readable files of a folder, without identities.
+/// The hashes and the key of a file for `algorithm`, when all are known.
+fn hashes_and_key(digests: Digests, algorithm: HashAlgorithm) -> Option<(FileHashes, String)> {
+    let hashes = FileHashes {
+        sha1: digests.sha1?,
+        sha512: digests.sha512?,
+        size: digests.size?,
+    };
+    let key = match algorithm {
+        HashAlgorithm::Fingerprint => digests.fingerprint?.to_string(),
+        HashAlgorithm::Sha512 => hashes.sha512.clone(),
+        _ => hashes.sha1.clone(),
+    };
+    Some((hashes, key))
+}
+
+/// The readable files of a folder, without identities. Their digests come from the folder's
+/// metadata cache while a file is unchanged, so a repeated scan reads no file.
 fn list(
     resources: &Resources,
     kind: ResourceKind,
     algorithm: HashAlgorithm,
 ) -> Result<Vec<InstalledFile>> {
-    let dir = resources.dir(kind);
+    let entries: Vec<_> = resources
+        .list(kind)?
+        .into_iter()
+        .filter(|e| !e.is_dir)
+        .collect();
+    let names: Vec<(String, bool)> = entries
+        .iter()
+        .map(|e| (e.file.clone(), e.enabled))
+        .collect();
+    let digests = resources.digests(kind, &names, |path, known| complete(path, known, algorithm));
     let mut files = Vec::new();
-    for entry in resources.list(kind)? {
-        if entry.is_dir {
-            continue;
-        }
-        let on_disk = if entry.enabled {
-            entry.file.clone()
-        } else {
-            format!("{}{DISABLED_SUFFIX}", entry.file)
-        };
-        let path = dir.join(&on_disk);
-        let Ok(hashes) = hash_file(&path) else {
-            continue;
-        };
-        let Ok(key) = key(&path, &hashes, algorithm) else {
+    for (entry, digests) in entries.into_iter().zip(digests) {
+        let Some((hashes, key)) = digests.ok().and_then(|d| hashes_and_key(d, algorithm)) else {
             continue;
         };
         files.push(InstalledFile {

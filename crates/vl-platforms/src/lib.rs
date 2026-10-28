@@ -17,8 +17,6 @@ pub mod curseforge;
 pub mod modrinth;
 pub mod rate;
 
-use std::sync::Arc;
-
 use vl_core::catalog::{
     HashAlgorithm, HashMatch, Project, ProjectVersion, Provider, ReleaseChannel, SearchPage,
     SearchQuery, VersionFilter,
@@ -26,7 +24,7 @@ use vl_core::catalog::{
 use vl_core::{Error, Result};
 use vl_net::{Client, Control};
 
-pub use curseforge::{CurseForgeOptions, CurseForgeSource, KeyringApiKey};
+pub use curseforge::{CurseForgeKeys, CurseForgeOptions, CurseForgeSource, KeyringApiKey};
 pub use modrinth::{ModrinthOptions, ModrinthSource};
 pub use rate::{Clock, RateConfig, RateLimiter, SystemClock};
 
@@ -87,25 +85,50 @@ pub trait CatalogSource: Send + Sync {
 pub struct Platforms {
     modrinth: ModrinthSource,
     curseforge: CurseForgeSource,
+    keys: Option<CurseForgeKeys>,
 }
 
 impl Platforms {
     /// All platforms over one network client. CurseForge reads its key from the environment
     /// variable, then from the OS keyring (opened on first use).
     pub fn new(client: Client) -> Self {
-        let keys = curseforge::default_api_keys(Arc::new(KeyringApiKey::os()));
-        Self::with_sources(
+        let keys = CurseForgeKeys::os();
+        Self::with_keys(
             ModrinthSource::new(client.clone(), ModrinthOptions::default()),
-            CurseForgeSource::new(client, CurseForgeOptions::default(), Arc::new(keys)),
+            CurseForgeSource::new(client, CurseForgeOptions::default(), keys.source()),
+            keys,
         )
     }
 
-    /// All platforms with prepared sources (tests point them at another server).
+    /// All platforms with prepared sources (tests point them at another server); the keys
+    /// cannot be changed.
     pub fn with_sources(modrinth: ModrinthSource, curseforge: CurseForgeSource) -> Self {
         Self {
             modrinth,
             curseforge,
+            keys: None,
         }
+    }
+
+    /// All platforms with prepared sources and the CurseForge keys `curseforge` reads (built
+    /// with [`CurseForgeKeys::source`]).
+    pub fn with_keys(
+        modrinth: ModrinthSource,
+        curseforge: CurseForgeSource,
+        keys: CurseForgeKeys,
+    ) -> Self {
+        Self {
+            modrinth,
+            curseforge,
+            keys: Some(keys),
+        }
+    }
+
+    /// The CurseForge keys the user can change; `Unsupported` when the keys are fixed.
+    pub fn curseforge_keys(&self) -> Result<&CurseForgeKeys> {
+        self.keys
+            .as_ref()
+            .ok_or_else(|| Error::unsupported("the CurseForge key cannot be changed here"))
     }
 
     /// The source of `provider`.

@@ -23,6 +23,7 @@ pub mod launch;
 pub mod log;
 pub mod platform;
 pub mod resources;
+pub mod secret;
 pub mod settings;
 pub mod storage;
 pub mod task;

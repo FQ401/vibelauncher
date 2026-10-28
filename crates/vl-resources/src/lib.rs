@@ -23,6 +23,7 @@ mod store;
 mod worlds;
 
 pub use bisect::Bisect;
+pub use cache::Digests;
 pub use index::ModClassIndex;
 pub use store::{DISABLED_SUFFIX, META_DIR, Resources};
 pub use worlds::SAVES_DIR;

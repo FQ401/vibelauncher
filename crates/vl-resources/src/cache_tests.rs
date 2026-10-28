@@ -328,3 +328,105 @@ fn timing_of_300_mods() {
     let second = second.elapsed();
     println!("300 mods: first list {first:?}, second list {second:?}");
 }
+
+/// Digests made from the first byte of a file, counting how often the file is read.
+fn digest_all(r: &Resources, files: &[(&str, bool)], reads: &mut u32) -> Vec<crate::Digests> {
+    let names: Vec<(String, bool)> = files.iter().map(|(n, e)| ((*n).to_owned(), *e)).collect();
+    r.digests(ResourceKind::Mods, &names, |path, known| {
+        if known.fingerprint.is_some() {
+            return Ok(known.clone());
+        }
+        *reads += 1;
+        let bytes = fs::read(path)?;
+        Ok(crate::Digests {
+            size: Some(bytes.len() as u64),
+            sha1: Some(format!("{:02x}", bytes.first().copied().unwrap_or(0))),
+            sha512: None,
+            fingerprint: Some(u32::from(bytes.first().copied().unwrap_or(0))),
+        })
+    })
+    .into_iter()
+    .map(Result::unwrap)
+    .collect()
+}
+
+#[test]
+fn digests_are_remembered_while_the_file_is_unchanged() {
+    let t = Temp::new("digests");
+    let r = t.resources();
+    let path = t.mods().join("a.jar");
+    put(&path, b"A-file");
+    let mut reads = 0;
+    let first = digest_all(&r, &[("a.jar", true)], &mut reads);
+    assert_eq!(first[0].fingerprint, Some(u32::from(b'A')));
+    assert_eq!(reads, 1);
+
+    // Same name, size and time: the file is not read again.
+    swap_keeping_stamp(&path, b"B-file");
+    let again = digest_all(&r, &[("a.jar", true)], &mut reads);
+    assert_eq!(again, first);
+    assert_eq!(reads, 1);
+
+    // A listing keeps them, and so do disabling and the metadata of the jar.
+    versions(&r);
+    r.set_enabled(ResourceKind::Mods, "a.jar", false).unwrap();
+    assert_eq!(digest_all(&r, &[("a.jar", false)], &mut reads), first);
+    assert_eq!(reads, 1);
+    r.set_enabled(ResourceKind::Mods, "a.jar", true).unwrap();
+
+    // A later modification time: read again.
+    let later = mtime(&path) + Duration::from_secs(5);
+    set_mtime(&path, later);
+    let changed = digest_all(&r, &[("a.jar", true)], &mut reads);
+    assert_eq!(changed[0].fingerprint, Some(u32::from(b'B')));
+    assert_eq!(reads, 2);
+
+    // A missing file is an error and nothing is remembered for it.
+    let names = vec![("gone.jar".to_owned(), true)];
+    let results = r.digests(ResourceKind::Mods, &names, |p, _| {
+        fs::read(p).map(|_| crate::Digests::default())
+    });
+    assert!(results[0].is_err());
+}
+
+#[test]
+fn digests_of_removed_files_leave_the_cache() {
+    let t = Temp::new("digests-gone");
+    let r = t.resources();
+    put(&t.mods().join("a.jar"), b"A");
+    put(&t.mods().join("b.jar"), b"B");
+    let mut reads = 0;
+    digest_all(&r, &[("a.jar", true), ("b.jar", true)], &mut reads);
+    let cache = t.cache_file(ResourceKind::Mods);
+    let text = fs::read_to_string(&cache).unwrap();
+    assert!(
+        text.contains("\"digests\"") && text.contains("\"b.jar\""),
+        "{text}"
+    );
+
+    r.remove(ResourceKind::Mods, "a.jar").unwrap();
+    fs::remove_file(t.mods().join("b.jar")).unwrap();
+    r.list(ResourceKind::Mods).unwrap();
+    let text = fs::read_to_string(&cache).unwrap();
+    assert!(!text.contains("a.jar") && !text.contains("b.jar"), "{text}");
+
+    // A file that is not a jar keeps its digests through a listing.
+    put(&t.mods().join("notes.txt"), b"N");
+    digest_all(&r, &[("notes.txt", true)], &mut reads);
+    r.list(ResourceKind::Mods).unwrap();
+    let before = reads;
+    digest_all(&r, &[("notes.txt", true)], &mut reads);
+    assert_eq!(reads, before);
+}
+
+#[test]
+fn without_a_cache_folder_every_digest_is_computed() {
+    let t = Temp::new("digests-nocache");
+    let r = Resources::new(t.0.join("minecraft"), t.0.join(".trash"));
+    put(&t.mods().join("a.jar"), b"A");
+    let mut reads = 0;
+    digest_all(&r, &[("a.jar", true)], &mut reads);
+    digest_all(&r, &[("a.jar", true)], &mut reads);
+    assert_eq!(reads, 2);
+    assert!(!t.meta().exists());
+}

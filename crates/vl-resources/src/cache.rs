@@ -2,7 +2,9 @@
 //!
 //! Reading a mod jar or a pack opens an archive, so the result is kept in
 //! `<meta>/cache-<folder>.json` and reused while the file's name, size and modification time
-//! are unchanged. The cache is only a shortcut: a missing, damaged, oversized or foreign-format
+//! are unchanged. The digests of a file (SHA-1, SHA-512, the CurseForge fingerprint) are kept
+//! the same way, so a repeated update check does not read the files again. The cache is only a
+//! shortcut: a missing, damaged, oversized or foreign-format
 //! file is ignored and rebuilt, and a failed write is silently dropped.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +32,43 @@ pub(crate) fn file_name(kind: ResourceKind) -> String {
 struct CacheFile {
     format: u32,
     entries: BTreeMap<String, Item>,
+    /// The digests of files, kept apart from the metadata so either can be known alone.
+    #[serde(default)]
+    digests: BTreeMap<String, DigestItem>,
+}
+
+/// The digests of a file, as far as they were computed: what the catalog platforms find files
+/// by. They are remembered with the file's size and modification time, like the metadata.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Digests {
+    /// The size in bytes that was hashed.
+    #[serde(default, rename = "bytes", skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Lowercase hex SHA-1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha1: Option<String>,
+    /// Lowercase hex SHA-512.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha512: Option<String>,
+    /// The CurseForge fingerprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<u32>,
+}
+
+/// Digests with the stamp they belong to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DigestItem {
+    size: u64,
+    secs: i64,
+    nanos: u32,
+    #[serde(flatten)]
+    digests: Digests,
+}
+
+impl DigestItem {
+    fn matches(&self, stamp: Stamp) -> bool {
+        self.size == stamp.size && self.secs == stamp.secs && self.nanos == stamp.nanos
+    }
 }
 
 /// What is remembered about one file.
@@ -119,6 +158,7 @@ impl Item {
 pub(crate) struct FolderCache {
     path: Option<PathBuf>,
     items: BTreeMap<String, Item>,
+    digests: BTreeMap<String, DigestItem>,
     seen: BTreeSet<String>,
     dirty: bool,
 }
@@ -126,42 +166,72 @@ pub(crate) struct FolderCache {
 impl FolderCache {
     /// Loads the cache file at `path`; without a path nothing is kept.
     pub(crate) fn open(path: Option<PathBuf>) -> Self {
-        let items = path.as_deref().map(load).unwrap_or_default();
+        let (items, digests) = path.as_deref().map(load).unwrap_or_default();
         Self {
             path,
             items,
+            digests,
             seen: BTreeSet::new(),
             dirty: false,
         }
     }
 
+    /// Marks `name` as present, so pruning keeps what is known about it.
+    pub(crate) fn touch(&mut self, name: &str) {
+        self.seen.insert(name.to_owned());
+    }
+
     /// The remembered item of `name` when its size and time still match.
     pub(crate) fn get(&mut self, name: &str, stamp: Stamp) -> Option<Item> {
-        self.seen.insert(name.to_owned());
+        self.touch(name);
         self.items.get(name).filter(|i| i.matches(stamp)).cloned()
     }
 
     pub(crate) fn put(&mut self, name: &str, item: Item) {
-        self.seen.insert(name.to_owned());
+        self.touch(name);
         self.items.insert(name.to_owned(), item);
+        self.dirty = true;
+    }
+
+    /// The remembered digests of `name` when its size and time still match.
+    pub(crate) fn get_digests(&mut self, name: &str, stamp: Stamp) -> Option<Digests> {
+        self.touch(name);
+        self.digests
+            .get(name)
+            .filter(|i| i.matches(stamp))
+            .map(|i| i.digests.clone())
+    }
+
+    pub(crate) fn put_digests(&mut self, name: &str, stamp: Stamp, digests: Digests) {
+        self.touch(name);
+        self.digests.insert(
+            name.to_owned(),
+            DigestItem {
+                size: stamp.size,
+                secs: stamp.secs,
+                nanos: stamp.nanos,
+                digests,
+            },
+        );
         self.dirty = true;
     }
 
     /// Forgets `name`.
     pub(crate) fn forget(&mut self, name: &str) {
-        if self.items.remove(name).is_some() {
-            self.dirty = true;
-        }
+        let item = self.items.remove(name).is_some();
+        let digests = self.digests.remove(name).is_some();
+        self.dirty |= item || digests;
     }
 
     /// Writes the cache when it changed. With `prune`, entries of files not asked for since
     /// opening (deleted or renamed away) are dropped first.
     pub(crate) fn finish(mut self, prune: bool) {
         if prune {
-            let before = self.items.len();
+            let before = self.items.len() + self.digests.len();
             let seen = &self.seen;
             self.items.retain(|k, _| seen.contains(k));
-            self.dirty |= self.items.len() != before;
+            self.digests.retain(|k, _| seen.contains(k));
+            self.dirty |= self.items.len() + self.digests.len() != before;
         }
         let Some(path) = self.path.as_deref() else {
             return;
@@ -172,6 +242,7 @@ impl FolderCache {
         let file = CacheFile {
             format: FORMAT,
             entries: self.items,
+            digests: self.digests,
         };
         match serde_json::to_vec(&file) {
             Ok(bytes) if bytes.len() as u64 <= MAX_BYTES => {
@@ -185,18 +256,20 @@ impl FolderCache {
     }
 }
 
-fn load(path: &Path) -> BTreeMap<String, Item> {
+type Loaded = (BTreeMap<String, Item>, BTreeMap<String, DigestItem>);
+
+fn load(path: &Path) -> Loaded {
     let Ok(meta) = fs::metadata(path) else {
-        return BTreeMap::new();
+        return Loaded::default();
     };
     if meta.len() > MAX_BYTES {
-        return BTreeMap::new();
+        return Loaded::default();
     }
     let Ok(bytes) = fs::read(path) else {
-        return BTreeMap::new();
+        return Loaded::default();
     };
     match serde_json::from_slice::<CacheFile>(&bytes) {
-        Ok(f) if f.format == FORMAT => f.entries,
-        _ => BTreeMap::new(),
+        Ok(f) if f.format == FORMAT => (f.entries, f.digests),
+        _ => Loaded::default(),
     }
 }

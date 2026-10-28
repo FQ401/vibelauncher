@@ -12,6 +12,7 @@ use crate::install::{
     InstallRequest, PackExportRequest, PackInstallRequest, PackUpdateRequest, UpdateCheckRequest,
     UpdateRequest,
 };
+use crate::secret::Secret;
 
 /// The most results one search page may ask for.
 pub const MAX_SEARCH_LIMIT: u32 = 100;
@@ -457,6 +458,59 @@ pub struct HashMatch {
     pub version: ProjectVersion,
 }
 
+/// Where the API key a platform uses comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ApiKeyOrigin {
+    /// The developer's environment variable (`VL_CURSEFORGE_API_KEY`).
+    Environment,
+    /// The user's key in the OS keyring.
+    Keyring,
+}
+
+/// What the platform said about the key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ApiKeyState {
+    /// No key is set.
+    Missing,
+    /// The platform accepted the key.
+    Valid,
+    /// The platform refused the key (`401`, `403`).
+    Rejected,
+    /// The platform could not be asked, or answered with an error; the key may be fine.
+    Unreachable {
+        /// English technical detail; never holds the key.
+        detail: String,
+    },
+}
+
+/// The API key of a platform: whether one is set, where it comes from and whether it works. The
+/// key itself is never part of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiKeyStatus {
+    /// The platform.
+    pub provider: Provider,
+    /// The result of one request with the key in use.
+    pub state: ApiKeyState,
+    /// Where the key in use comes from; `None` without a key.
+    pub source: Option<ApiKeyOrigin>,
+    /// The environment variable holds a key.
+    pub in_environment: bool,
+    /// The OS keyring holds a key.
+    pub in_keyring: bool,
+}
+
+impl ApiKeyStatus {
+    /// The environment variable is used while the keyring holds a key of its own, so the
+    /// stored key is ignored.
+    pub fn environment_overrides_keyring(&self) -> bool {
+        self.in_environment && self.in_keyring
+    }
+}
+
 /// Catalog commands. They go to the network, so the backend answers from a worker thread.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -529,6 +583,27 @@ pub enum CatalogCommand {
         #[serde(default)]
         world: Option<String>,
     },
+    /// Stores the user's API key of a platform in the OS keyring, replacing the one stored
+    /// → `Response::Done`. The key is checked for shape only; `CheckApiKey` asks the platform.
+    /// The key never appears in a response, an event or an error.
+    SetApiKey {
+        /// The platform (only CurseForge takes a key).
+        provider: Provider,
+        /// The key.
+        key: Secret,
+    },
+    /// Removes the user's API key of a platform from the OS keyring → `Response::Done`. No
+    /// stored key is not an error.
+    RemoveApiKey {
+        /// The platform.
+        provider: Provider,
+    },
+    /// Says whether a key is set and where it comes from, and tries it with one request
+    /// → `Response::ApiKey`.
+    CheckApiKey {
+        /// The platform.
+        provider: Provider,
+    },
 }
 
 #[cfg(test)]
@@ -563,6 +638,23 @@ mod tests {
         assert_eq!(q.query, "a");
         assert_eq!(q.limit, DEFAULT_SEARCH_LIMIT);
         assert_eq!(q.sort, SearchSort::Relevance);
+    }
+
+    #[test]
+    fn a_key_command_never_shows_the_key() {
+        let command = CatalogCommand::SetApiKey {
+            provider: Provider::CurseForge,
+            key: Secret::new("synthetic-key-value"),
+        };
+        assert!(!format!("{command:?}").contains("synthetic"));
+        let status = ApiKeyStatus {
+            provider: Provider::CurseForge,
+            state: ApiKeyState::Valid,
+            source: Some(ApiKeyOrigin::Environment),
+            in_environment: true,
+            in_keyring: true,
+        };
+        assert!(status.environment_overrides_keyring());
     }
 
     #[test]

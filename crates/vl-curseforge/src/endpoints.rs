@@ -200,6 +200,12 @@ impl Endpoints {
         }
     }
 
+    /// `GET /v1/games/432`: Minecraft's game record, a small answer that needs a valid key (the
+    /// key check).
+    pub fn game(&self) -> String {
+        format!("{}/v1/games/{GAME_ID}", self.base)
+    }
+
     /// `POST /v1/fingerprints/432`: the URL.
     pub fn fingerprints_url(&self) -> String {
         format!("{}/v1/fingerprints/{GAME_ID}", self.base)
@@ -476,6 +482,7 @@ mod tests {
             e.fingerprints_url(),
             "https://api.curseforge.com/v1/fingerprints/432"
         );
+        assert_eq!(e.game(), "https://api.curseforge.com/v1/games/432");
     }
 
     #[test]

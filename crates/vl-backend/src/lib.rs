@@ -9,6 +9,7 @@
 //! yet answers [`vl_core::ErrorKind::Unsupported`].
 
 mod accounts;
+mod api_keys;
 pub mod auto_bisect;
 mod bisect;
 mod catalog;

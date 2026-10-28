@@ -619,6 +619,84 @@ fn sources_are_asked_in_order() {
     assert_eq!(env.api_key().unwrap(), None);
 }
 
+#[test]
+fn the_key_check_sends_one_uncached_request() {
+    // No key: nothing is sent.
+    let s = setup_with(Arc::new(Fixed(None)));
+    assert_eq!(
+        s.source.check_key(&Control::default()).unwrap(),
+        ApiKeyState::Missing
+    );
+    assert!(s.fake.seen().is_empty());
+
+    let s = setup();
+    s.fake
+        .push(200, &json!({"data": {"id": 432, "name": "Minecraft"}}));
+    s.fake
+        .push(200, &json!({"data": {"id": 432, "name": "Minecraft"}}));
+    let control = Control::default();
+    assert_eq!(s.source.check_key(&control).unwrap(), ApiKeyState::Valid);
+    // Asked again, not answered from the cache.
+    assert_eq!(s.source.check_key(&control).unwrap(), ApiKeyState::Valid);
+    let seen = s.fake.seen();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].method, "GET");
+    assert_eq!(seen[0].url, "https://curseforge.test/v1/games/432");
+    assert!(
+        seen[0]
+            .headers
+            .iter()
+            .any(|(n, v)| n == API_KEY_HEADER && v == KEY)
+    );
+    assert!(!seen[0].url.contains(KEY));
+
+    let s = setup();
+    s.fake.push(403, &json!({}));
+    assert_eq!(s.source.check_key(&control).unwrap(), ApiKeyState::Rejected);
+
+    // A server error (every retry) is not a verdict on the key.
+    let s = setup();
+    match s.source.check_key(&control).unwrap() {
+        ApiKeyState::Unreachable { detail } => assert!(!detail.contains(KEY), "{detail}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn keys_are_set_removed_and_located() {
+    let vault = Arc::new(MemoryVault::new());
+    let keys = CurseForgeKeys::new(
+        EnvApiKey::named("VL_TEST_CURSEFORGE_KEY_THAT_IS_NEVER_SET"),
+        Arc::new(KeyringApiKey::new(vault.clone())),
+    );
+    let source = keys.source();
+    let nowhere = KeyPlaces {
+        environment: false,
+        keyring: false,
+    };
+    assert_eq!(keys.places().unwrap(), nowhere);
+    assert_eq!(source.api_key().unwrap(), None);
+
+    keys.set(&ApiKey::new(KEY).unwrap()).unwrap();
+    assert_eq!(vault.raw(KEYRING_ENTRY).as_deref(), Some(KEY));
+    assert_eq!(
+        keys.places().unwrap(),
+        KeyPlaces {
+            environment: false,
+            keyring: true
+        }
+    );
+    // The source a CurseForge client reads sees the new key at once.
+    assert_eq!(source.api_key().unwrap().unwrap().expose(), KEY);
+
+    keys.remove().unwrap();
+    assert_eq!(keys.places().unwrap(), nowhere);
+    assert_eq!(source.api_key().unwrap(), None);
+    assert_eq!(vault.raw(KEYRING_ENTRY), None);
+    // Removing twice is fine.
+    keys.remove().unwrap();
+}
+
 /// Live tests against the real API: they run only when `VL_CURSEFORGE_API_KEY` is set and are
 /// skipped (they pass without doing anything) otherwise.
 mod live {
@@ -635,6 +713,15 @@ mod live {
             CurseForgeOptions::default(),
             Arc::new(EnvApiKey::default()),
         ))
+    }
+
+    #[test]
+    fn live_key_check_accepts_the_key() {
+        let Some(source) = live() else { return };
+        assert_eq!(
+            source.check_key(&Control::default()).unwrap(),
+            ApiKeyState::Valid
+        );
     }
 
     #[test]
