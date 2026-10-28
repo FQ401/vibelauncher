@@ -1,7 +1,9 @@
 //! The per-instance config file (`instance.json`) and its components.
 
 use serde::{Deserialize, Serialize};
-use vl_core::instance::Loader;
+use vl_core::component::{ComponentKind, ComponentSet};
+use vl_core::instance::{Loader, LoaderRequest};
+use vl_core::{Error, Result};
 
 /// The config format this launcher writes and reads.
 pub const CONFIG_FORMAT: u32 = 1;
@@ -89,6 +91,45 @@ impl InstanceConfig {
             .iter()
             .find(|c| c.uid == uid)
             .map(|c| c.version.as_str())
+    }
+
+    /// Replaces the loader component (`None` removes it). The request must name a loader and its
+    /// version; choosing a default version is the caller's job.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` for the game as a loader, a missing or unsafe version, or an instance
+    /// without a game version.
+    pub fn set_loader(&mut self, loader: Option<&LoaderRequest>) -> Result<()> {
+        let game = self
+            .game_version()
+            .ok_or_else(|| Error::invalid_input("the instance has no game version"))?
+            .to_owned();
+        let new = match loader {
+            Some(request) => {
+                if !request.kind.is_loader() {
+                    return Err(Error::invalid_input("the game is not a loader"));
+                }
+                let version = request
+                    .version
+                    .as_deref()
+                    .ok_or_else(|| Error::invalid_input("the loader version is not chosen"))?;
+                // Reuses the version checks of the component set.
+                ComponentSet::from_pairs([
+                    (GAME_UID, game.as_str()),
+                    (request.kind.uid(), version),
+                ])?;
+                Some(Component {
+                    uid: request.kind.uid().to_owned(),
+                    version: version.to_owned(),
+                })
+            }
+            None => None,
+        };
+        self.components
+            .retain(|c| !ComponentKind::from_uid(&c.uid).is_some_and(ComponentKind::is_loader));
+        self.components.extend(new);
+        Ok(())
     }
 
     /// The loader derived from the components.

@@ -1,0 +1,226 @@
+//! Mod loader sources: the version list of a loader for a game version, and its launch profile.
+//!
+//! Fabric ([`fabric`]) and Quilt ([`quilt`]) publish a ready launch profile, so a source is a URL
+//! scheme ([`meta::Endpoints`]) plus the parsers of `vl-meta`. [`Loaders`] fetches through `vl-net`
+//! (HTTP cache with `ETag`, retries, size caps, offline reads) and keeps the normalized profile of
+//! every loader version it used on disk, so an installed instance launches without the network.
+//!
+//! A profile on disk is a [`CachedProfile`] at `<profiles dir>/loader/<uid>/<game>/<loader>.json`.
+//! A fresh entry is used as is; an old one is renewed from the source, and when the source cannot
+//! be reached the old one is used. Hashes of the loader's libraries come from the profile; the
+//! files are downloaded and verified by `vl-launch` like any other library.
+//!
+//! Loaders that need an installer (Forge, NeoForge) are not sources of this kind yet: asking for
+//! them is `Unsupported`.
+
+pub mod fabric;
+pub mod meta;
+pub mod quilt;
+
+use std::fs;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use vl_core::component::ComponentKind;
+use vl_core::{Error, Result};
+use vl_meta::loader::{
+    CachedProfile, FetchOutcome, LoaderProfile, LoaderVersion, LoaderVersions, ProfileSource,
+    choose_source, profile_cache_key, resolve_profile,
+};
+use vl_meta::version::MAX_VERSION_BYTES;
+use vl_net::{Client, Control, GetOptions, NetError};
+
+use meta::Endpoints;
+
+/// How [`Loaders`] works.
+#[derive(Debug, Clone)]
+pub struct LoadersOptions {
+    /// The Fabric meta server.
+    pub fabric: Endpoints,
+    /// The Quilt meta server.
+    pub quilt: Endpoints,
+    /// How long a fetched version list is used without asking the server again.
+    pub versions_max_age: Duration,
+    /// How long a stored profile is used without asking the server again.
+    pub profile_max_age: Duration,
+}
+
+impl Default for LoadersOptions {
+    fn default() -> Self {
+        Self {
+            fabric: fabric::endpoints(),
+            quilt: quilt::endpoints(),
+            versions_max_age: Duration::from_secs(10 * 60),
+            profile_max_age: Duration::from_secs(24 * 60 * 60),
+        }
+    }
+}
+
+/// Loader version lists and launch profiles.
+#[derive(Clone)]
+pub struct Loaders {
+    client: Client,
+    profiles_dir: PathBuf,
+    options: LoadersOptions,
+}
+
+impl Loaders {
+    /// Sources that fetch through `client` and keep profiles below `profiles_dir`.
+    pub fn new(client: Client, profiles_dir: impl Into<PathBuf>, options: LoadersOptions) -> Self {
+        Self {
+            client,
+            profiles_dir: profiles_dir.into(),
+            options,
+        }
+    }
+
+    fn endpoints(&self, kind: ComponentKind) -> Result<&Endpoints> {
+        match kind {
+            ComponentKind::Fabric => Ok(&self.options.fabric),
+            ComponentKind::Quilt => Ok(&self.options.quilt),
+            other => Err(Error::unsupported(format!(
+                "{} is not available yet",
+                other.display_name()
+            ))),
+        }
+    }
+
+    /// The versions of loader `kind` that support `game_version`, newest first.
+    ///
+    /// A game version the loader does not know gives an empty list ([`LoaderVersions::check`]
+    /// turns that into `Unsupported`).
+    ///
+    /// # Errors
+    ///
+    /// `Unsupported` for a loader without a source, `Network` / `Offline` when the list cannot be
+    /// fetched and none is cached, `Integrity` for a damaged answer, `Cancelled`.
+    pub fn versions(
+        &self,
+        kind: ComponentKind,
+        game_version: &str,
+        control: &Control,
+    ) -> Result<LoaderVersions> {
+        let url = self.endpoints(kind)?.versions_url(game_version);
+        let options = GetOptions {
+            max_bytes: Some(MAX_VERSION_BYTES as u64),
+            max_age: Some(self.options.versions_max_age),
+            use_cache: true,
+        };
+        match self.client.get_bytes(&url, &options, control) {
+            Ok(fetched) => LoaderVersions::parse_for_game(kind, game_version, &fetched.bytes),
+            // The meta servers answer an unknown game version with 400 or 404.
+            Err(NetError::Status {
+                status: 400 | 404, ..
+            }) => LoaderVersions::new(kind, game_version, Vec::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Picks the loader version to use: `requested` when given and available, else the newest
+    /// stable one.
+    ///
+    /// # Errors
+    ///
+    /// `Unsupported` when the loader does not support the game version, `NotFound` when
+    /// `requested` is not available for it, and the errors of [`versions`](Self::versions).
+    pub fn pick(
+        &self,
+        kind: ComponentKind,
+        game_version: &str,
+        requested: Option<&str>,
+        control: &Control,
+    ) -> Result<LoaderVersion> {
+        let list = self.versions(kind, game_version, control)?;
+        let found = match requested {
+            Some(version) => list.check(version)?,
+            None => list.recommended().ok_or_else(|| {
+                Error::unsupported(format!(
+                    "{} does not support Minecraft {game_version}",
+                    kind.display_name()
+                ))
+            })?,
+        };
+        Ok(found.clone())
+    }
+
+    /// The launch profile of a loader version for a game version, from the profile store, the
+    /// source, or the old stored copy when the source cannot be reached.
+    ///
+    /// # Errors
+    ///
+    /// `Unsupported` for a loader without a source, `NotFound` when the source does not know the
+    /// pair, `Network` / `Offline` without a stored copy, `Integrity` for a damaged answer,
+    /// `Cancelled`.
+    pub fn profile(
+        &self,
+        kind: ComponentKind,
+        game_version: &str,
+        loader_version: &str,
+        control: &Control,
+    ) -> Result<LoaderProfile> {
+        self.profile_at(kind, game_version, loader_version, control, unix_now())
+    }
+
+    /// [`profile`](Self::profile) at a given time (Unix seconds).
+    ///
+    /// # Errors
+    ///
+    /// As [`profile`](Self::profile).
+    pub fn profile_at(
+        &self,
+        kind: ComponentKind,
+        game_version: &str,
+        loader_version: &str,
+        control: &Control,
+        now: i64,
+    ) -> Result<LoaderProfile> {
+        let endpoints = self.endpoints(kind)?;
+        let key = profile_cache_key(kind, game_version, loader_version)?;
+        let path = key
+            .split('/')
+            .fold(self.profiles_dir.clone(), |p, part| p.join(part));
+        let cached = fs::read(&path)
+            .ok()
+            .and_then(|bytes| CachedProfile::decode(&bytes).ok())
+            .filter(|c| {
+                c.profile.kind == kind
+                    && c.profile.loader_version == loader_version
+                    && c.profile.inherits_from == game_version
+            });
+        let max_age = i64::try_from(self.options.profile_max_age.as_secs()).unwrap_or(i64::MAX);
+        if choose_source(cached.as_ref(), now, max_age) == ProfileSource::Cache
+            && let Some(c) = &cached
+        {
+            return Ok(c.profile.clone());
+        }
+        let url = endpoints.profile_url(game_version, loader_version);
+        let options = GetOptions {
+            max_bytes: Some(MAX_VERSION_BYTES as u64),
+            max_age: None,
+            use_cache: true,
+        };
+        let outcome = match self.client.get_bytes(&url, &options, control) {
+            Ok(fetched) => FetchOutcome::Fresh(fetched.bytes, None),
+            Err(NetError::Cancelled) => return Err(Error::cancelled()),
+            Err(NetError::Status {
+                status: 400 | 404, ..
+            }) => FetchOutcome::Failed(Error::not_found(format!(
+                "{} {loader_version} for Minecraft {game_version}",
+                kind.display_name()
+            ))),
+            Err(e) => FetchOutcome::Failed(e.into()),
+        };
+        let resolved = resolve_profile(kind, game_version, loader_version, cached, outcome, now)?;
+        // The store is best effort: a profile that cannot be saved is still used.
+        if let Ok(bytes) = resolved.encode() {
+            let _ = vl_store::write_atomic(&path, &bytes);
+        }
+        Ok(resolved.profile)
+    }
+}
+
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}

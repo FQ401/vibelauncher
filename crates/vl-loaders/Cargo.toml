@@ -1,0 +1,22 @@
+[package]
+name = "vl-loaders"
+description = "Mod loader sources: Fabric and Quilt version lists and launch profiles."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-meta.workspace = true
+vl-net.workspace = true
+vl-store.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

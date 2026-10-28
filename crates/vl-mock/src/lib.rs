@@ -145,7 +145,7 @@ impl MockFacade {
                     name: name.into(),
                     group: new.group,
                     game_version: new.game_version,
-                    loader: Loader::Vanilla,
+                    loader: mock_loader(new.loader.as_ref()),
                     play_time_secs: 0,
                     last_played_unix: None,
                     state: InstanceState::Stopped,
@@ -437,4 +437,20 @@ fn check_settings(settings: &Settings) -> Result<()> {
 
 fn unsupported(command: &impl std::fmt::Debug) -> Error {
     Error::unsupported(format!("vl-mock does not simulate {command:?}"))
+}
+
+/// The loader of a mock instance: the requested kind at a fixed synthetic version.
+fn mock_loader(request: Option<&vl_core::instance::LoaderRequest>) -> Loader {
+    use vl_core::component::ComponentKind;
+    let Some(request) = request else {
+        return Loader::Vanilla;
+    };
+    let version = request.version.clone().unwrap_or_else(|| "1.0.0".into());
+    match request.kind {
+        ComponentKind::Fabric => Loader::Fabric(version),
+        ComponentKind::Quilt => Loader::Quilt(version),
+        ComponentKind::NeoForge => Loader::NeoForge(version),
+        ComponentKind::Forge => Loader::Forge(version),
+        _ => Loader::Vanilla,
+    }
 }

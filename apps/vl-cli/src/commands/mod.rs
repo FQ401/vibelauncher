@@ -10,15 +10,23 @@ mod versions;
 use std::fmt;
 use std::io::{self, Write};
 
+use vl_core::component::ComponentKind;
+use vl_core::instance::LoaderRequest;
 use vl_core::{Command, Facade, Response};
 
 pub(crate) const USAGE: &str = "usage: vl-cli [--mock] [--dir <path>] <command>
 commands:
   info                                which backend answers
   instances list                      list instances
-  instances create <name> <version>   create a vanilla instance
+  instances create <name> <version> [--loader <fabric|quilt>] [--loader-version <v>]
+                                      create an instance (newest stable loader by default)
+  instances set-loader <instance> <fabric|quilt|none> [--loader-version <v>]
+                                      change or remove an instance's loader
   versions list [--snapshots] [--old] list game versions
-  versions install <version>          download a version's files without starting it
+  versions install <version> [--loader <fabric|quilt>] [--loader-version <v>]
+                                      download a version's files without starting it
+  versions loaders <fabric|quilt> <version>
+                                      list loader versions for a game version
   accounts list                       list accounts
   accounts login                      sign in with Microsoft (device code)
   accounts remove <account>           remove an account (id or name)
@@ -71,6 +79,39 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
     }
 }
 
+/// Reads `--loader <name>` and `--loader-version <v>`; both may be absent.
+pub(crate) fn loader_flags(flags: &[&str]) -> Result<Option<LoaderRequest>, CliError> {
+    let mut kind = None;
+    let mut version = None;
+    let mut it = flags.iter();
+    while let Some(flag) = it.next() {
+        let value = it.next().ok_or(CliError::from(USAGE))?;
+        match *flag {
+            "--loader" => kind = Some(parse_loader(value)?),
+            "--loader-version" => version = Some((*value).to_owned()),
+            _ => return Err(USAGE.into()),
+        }
+    }
+    match (kind, version) {
+        (Some(kind), version) => Ok(Some(LoaderRequest { kind, version })),
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err("--loader-version needs --loader".into()),
+    }
+}
+
+/// A loader name as typed on the command line.
+pub(crate) fn parse_loader(name: &str) -> Result<ComponentKind, CliError> {
+    match name {
+        "fabric" => Ok(ComponentKind::Fabric),
+        "quilt" => Ok(ComponentKind::Quilt),
+        "neoforge" => Ok(ComponentKind::NeoForge),
+        "forge" => Ok(ComponentKind::Forge),
+        other => Err(CliError(format!(
+            "unknown loader {other:?} (fabric, quilt)"
+        ))),
+    }
+}
+
 /// Sends `command` and waits for its response.
 pub(crate) fn call(facade: &dyn Facade, command: Command) -> Result<Response, CliError> {
     Ok(facade.call(command).wait()?)
@@ -91,6 +132,34 @@ mod tests {
         let mut out = Vec::new();
         run(&facade, args, &mut out)?;
         Ok(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    #[test]
+    fn creates_an_instance_with_a_loader() {
+        let out = run_mock(&[
+            "instances",
+            "create",
+            "Modded",
+            "26.3",
+            "--loader",
+            "fabric",
+            "--loader-version",
+            "0.20.1",
+        ])
+        .unwrap();
+        assert!(out.contains("Fabric(\"0.20.1\")"), "{out}");
+        let out = run_mock(&["instances", "create", "Plain", "26.3"]).unwrap();
+        assert!(out.contains("Vanilla"), "{out}");
+    }
+
+    #[test]
+    fn loader_flags_are_checked() {
+        assert!(run_mock(&["instances", "create", "X", "26.3", "--loader", "nope"]).is_err());
+        let err =
+            run_mock(&["instances", "create", "X", "26.3", "--loader-version", "1"]).unwrap_err();
+        assert!(err.to_string().contains("--loader"), "{err}");
+        assert!(run_mock(&["instances", "create", "X", "26.3", "--loader"]).is_err());
+        assert!(run_mock(&["instances", "set-loader", "survival", "none", "x"]).is_err());
     }
 
     #[test]

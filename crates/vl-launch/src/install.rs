@@ -3,6 +3,10 @@
 //! [`Installer::install`] is idempotent. It makes everything the game needs exist below the
 //! shared [`Layout`] and returns what the command line is built from ([`Installed`]).
 //!
+//! A mod loader is an optional [`LoaderProfile`]: it takes the place of the root version JSON, the
+//! vanilla version it inherits from is installed as usual, and the merged result (loader main
+//! class, loader libraries first on the class path) is what the rest of the steps work on.
+//!
 //! 1. The version JSON (and the JSONs of an `inheritsFrom` chain) is read from
 //!    `versions/<id>/<id>.json`; when it is not there, the version manifest is fetched (with the
 //!    HTTP cache) and the JSON is downloaded and checked against the manifest's SHA-1. An
@@ -25,6 +29,7 @@ use vl_core::task::ProgressUnit;
 use vl_core::{Error, ErrorKind, Result};
 use vl_meta::assets::{AssetIndex, AssetLayout, AssetPlan, MAX_ASSET_INDEX_BYTES};
 use vl_meta::libraries::{self, LibraryFile, LibraryPlan, apply_replacements};
+use vl_meta::loader::LoaderProfile;
 use vl_meta::manifest::{MAX_MANIFEST_BYTES, VersionManifest};
 use vl_meta::rules::{Features, RuleContext};
 use vl_meta::version::{MAX_VERSION_BYTES, ResolvedVersion, VersionJson};
@@ -148,7 +153,25 @@ impl Installer {
     /// bad hashes and disk problems, `Unsupported` when the platform cannot run the version,
     /// `Cancelled` when the job was cancelled.
     pub fn install(&self, id: &str, game_dir: Option<&Path>, job: &Job) -> Result<Installed> {
-        check_component("version id", id)?;
+        self.install_with(id, None, game_dir, job)
+    }
+
+    /// [`install`](Self::install) with a mod loader: `game` is the vanilla version the profile
+    /// inherits from, and [`Installed::id`] is the profile's id. The profile's libraries are
+    /// downloaded and checked with everything else.
+    ///
+    /// # Errors
+    ///
+    /// As [`install`](Self::install); `InvalidInput` when the profile does not inherit from
+    /// `game`.
+    pub fn install_with(
+        &self,
+        game: &str,
+        loader: Option<&LoaderProfile>,
+        game_dir: Option<&Path>,
+        job: &Job,
+    ) -> Result<Installed> {
+        check_component("version id", game)?;
         job.check()?;
         job.report("metadata", 0, None, ProgressUnit::Steps);
         let mut meta = Metadata {
@@ -156,7 +179,19 @@ impl Installer {
             job,
             manifest: None,
         };
-        let root = meta.load(id)?;
+        let (id, root) = match loader {
+            Some(profile) => {
+                if profile.inherits_from != game {
+                    return Err(Error::invalid_input(format!(
+                        "loader profile {} is for Minecraft {}, not {game}",
+                        profile.id, profile.inherits_from
+                    )));
+                }
+                check_component("loader profile id", &profile.id)?;
+                (profile.id.as_str(), profile.to_version_json())
+            }
+            None => (game, meta.load(game)?),
+        };
         let version = root.resolve(|parent| meta.load(parent))?;
         let mut warnings = Vec::new();
 

@@ -44,7 +44,7 @@ layer = "native"
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
 | `core` | `vl-core`, `vl-meta`, `vl-crash` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
-| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
+| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
 | `app` | `vl-cli`, the desktop app | `core`, `backend`, `ui` | Binaries: choose a backend, own the window or the terminal. Live in `apps/`. |
@@ -63,7 +63,7 @@ Cargo itself rejects dependency cycles, including cycles inside a layer.
 app       vl-cli · vibelauncher          → core, backend, ui
 ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
-native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-launch
+native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-launch
                                          → core, native
 core      vl-core · vl-meta · vl-crash   → core
 ```
@@ -82,6 +82,7 @@ core      vl-core · vl-meta · vl-crash   → core
 | `vl-auth` | native | Accounts: Microsoft sign-in (device code, Xbox Live, XSTS, Minecraft services), token refresh, offline accounts, secrets in the OS keyring. |
 | `vl-java` | native | Java runtimes: discovery on each OS, probing with a timeout, managed downloads, choosing a runtime for a game version. |
 | `vl-instance` | native | Instances on disk: format, create, list, rename, delete; damaged instances are listed with a problem. |
+| `vl-loaders` | native | Mod loader sources: version lists per game version and launch profiles of Fabric and Quilt through `vl-net`, and the on-disk store of the profiles in use. |
 | `vl-launch` | native | Preparing game files, building the command line, running and stopping the game process, streaming its log, detecting crashes. |
 | `vl-backend` | backend | The real facade: routes each command domain to its module, converts native errors into `vl_core::Error`, publishes events. |
 | `vl-mock` | backend | The facade on synthetic in-memory data, with simulated tasks, launches and game logs. No files, network or processes. |
@@ -168,6 +169,11 @@ preparing or running game.
   cancellable download batch with byte progress, natives unpacked with `extract.exclude`, and the
   files of the `virtual` and `map_to_resources` asset layouts restored. `VersionCommand::Install`
   runs it as a task without starting the game.
+- `Installer::install_with` takes an optional `LoaderProfile` for the game version: the profile
+  stands in for the root version JSON, the vanilla version it inherits from is installed as
+  usual, and the merged result (loader main class, loader libraries first on the class path,
+  loader JVM arguments) is installed and launched like any version. `Installed::id` is the
+  profile id (`${version_name}`). `VersionCommand::Install` accepts a loader too.
 - `prepare` adds the Java choice (the version's major version; a game started through
   LaunchWrapper is kept on Java 8), the memory check (a warning when `-Xmx` exceeds the free
   memory, a 1 GiB limit on 32-bit Java), and the command line: memory, user JVM arguments, the
@@ -248,6 +254,16 @@ The data directory holds:
   `LoaderProfile` (main class, libraries with hashes, arguments, the game it inherits from),
   merges it with the vanilla version JSON, and wraps it for the cache (`CachedProfile`, with the
   `ETag`; a stale entry is used when upstream is unreachable). Loader sources only add parsers;
+- mod loaders (`vl-loaders`): Fabric (`meta.fabricmc.net/v2`) and Quilt (`meta.quiltmc.org/v3`)
+  share one API shape, `versions/loader/<game>` (versions for a game version, empty or an error
+  status when the game is not supported) and `versions/loader/<game>/<loader>/profile/json` (a
+  ready launch profile). The version list goes through the HTTP cache. A profile is normalized
+  and stored at `loaders/loader/<uid>/<game>/<loader>.json` in the data directory: a young entry
+  is used as is, an old one is renewed, and an unreachable source falls back to the stored one,
+  so an instance launches offline once it was launched or installed. An instance created with a
+  loader without a version gets the newest stable one (`InstanceCommand::Create` with
+  `LoaderRequest`); `InstanceCommand::SetLoader` replaces or removes the loader of a stopped
+  instance and the next launch rebuilds the class path from the new profile;
 - shared game files (libraries, assets, version files) used by all instances;
 - managed Java runtimes;
 - the normalized metadata cache: upstream metadata (Mojang, loader metadata services) is fetched

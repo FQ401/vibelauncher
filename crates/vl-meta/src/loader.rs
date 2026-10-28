@@ -128,6 +128,39 @@ impl LoaderVersions {
         Self::new(kind, game_version, versions)
     }
 
+    /// Parses the per-game list of Fabric and Quilt (`.../versions/loader/<game>`): a JSON array
+    /// of objects whose `loader` member is `{ "version": ..., "stable": ... }`. Everything else in
+    /// the entries is ignored. An empty array means the loader does not support the game.
+    ///
+    /// # Errors
+    ///
+    /// `Integrity` for a document that is not such an array, is too long, or has duplicates.
+    pub fn parse_for_game(kind: ComponentKind, game_version: &str, bytes: &[u8]) -> Result<Self> {
+        #[derive(Deserialize)]
+        struct Entry {
+            loader: RawLoaderVersion,
+        }
+        if bytes.len() > MAX_VERSION_BYTES {
+            return Err(damaged("loader version list is too large"));
+        }
+        let raw: Vec<Entry> = serde_json::from_slice(bytes)
+            .map_err(|e| damaged(format!("invalid loader version list: {e}")))?;
+        if raw.len() > MAX_LOADER_VERSIONS {
+            return Err(damaged("loader version list has too many entries"));
+        }
+        let versions = raw
+            .into_iter()
+            .map(|e| LoaderVersion {
+                stable: e
+                    .loader
+                    .stable
+                    .unwrap_or_else(|| looks_stable(&e.loader.version)),
+                version: e.loader.version,
+            })
+            .collect();
+        Self::new(kind, game_version, versions)
+    }
+
     /// The versions, optionally only the stable ones.
     pub fn filtered(&self, stable_only: bool) -> Vec<&LoaderVersion> {
         self.versions

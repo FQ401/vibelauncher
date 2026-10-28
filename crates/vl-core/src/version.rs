@@ -1,5 +1,7 @@
 //! Game versions as the launcher offers them.
 
+use crate::component::ComponentKind;
+use crate::instance::LoaderRequest;
 use serde::{Deserialize, Serialize};
 
 /// The kind of a game version (the version manifest's `type`).
@@ -85,10 +87,32 @@ pub enum VersionCommand {
     Refresh,
     /// Installs a version's files (metadata, client, libraries, natives, assets) without
     /// starting the game → `Response::Task`.
+    ///
+    /// With a loader, its profile and libraries are installed as well.
     Install {
         /// The version id, as in the version manifest.
         id: String,
+        /// The mod loader to install with it.
+        #[serde(default)]
+        loader: Option<LoaderRequest>,
     },
+    /// The versions of a mod loader that support a game version, newest first →
+    /// `Response::LoaderVersions`.
+    LoaderVersions {
+        /// The loader.
+        loader: ComponentKind,
+        /// The game version id.
+        game_version: String,
+    },
+}
+
+/// One version of a mod loader.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoaderVersionInfo {
+    /// The loader's version string.
+    pub version: String,
+    /// Whether it is a stable release.
+    pub stable: bool,
 }
 
 /// Changes to the version list.

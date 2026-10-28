@@ -410,3 +410,34 @@ fn offline_launch_uses_the_cache() {
     let e = resolve_profile(Fabric, "1.21.11", "0.20.1", None, bad(), 800).unwrap_err();
     assert_eq!(e.kind, ErrorKind::Integrity);
 }
+
+#[test]
+fn per_game_lists_read_the_nested_loader_object() {
+    let doc = br#"[
+        {"loader": {"version": "0.19.0-beta.1", "stable": false}, "intermediary": {}},
+        {"loader": {"version": "0.18.4", "stable": true, "build": 9}, "hashed": {}},
+        {"loader": {"version": "0.18.3"}}
+    ]"#;
+    let list = LoaderVersions::parse_for_game(Fabric, "1.21.1", doc).unwrap();
+    let versions: Vec<_> = list
+        .versions
+        .iter()
+        .map(|v| (&*v.version, v.stable))
+        .collect();
+    assert_eq!(
+        versions,
+        [("0.19.0-beta.1", false), ("0.18.4", true), ("0.18.3", true)]
+    );
+    assert_eq!(list.recommended().unwrap().version, "0.18.4");
+
+    assert!(
+        LoaderVersions::parse_for_game(Fabric, "1.2.5", b"[]")
+            .unwrap()
+            .versions
+            .is_empty()
+    );
+    for bad in [&b"{}"[..], b"[{\"version\": \"1\"}]", b"nope"] {
+        let e = LoaderVersions::parse_for_game(Fabric, "1.21.1", bad).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Integrity);
+    }
+}
