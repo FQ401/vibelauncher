@@ -423,11 +423,14 @@ fn install_loader(
     };
     let layout = service.installer.layout();
     let libraries_dir = layout.libraries_dir();
+    let versions_dir = layout.versions_dir();
     let ctx = InstallContext {
         java: &java.runtime.path,
         minecraft_jar: &installed.client_jar,
         root: layout.root(),
         libraries_dir: &libraries_dir,
+        versions_dir: &versions_dir,
+        game_dir,
         runner: &JavaRunner::default(),
         control: &control,
         on_step: &on_step,

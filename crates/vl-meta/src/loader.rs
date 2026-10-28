@@ -250,6 +250,11 @@ pub struct LoaderProfile {
     pub replaces_game_arguments: bool,
     /// Extra libraries, with hashes where the source gives them.
     pub libraries: Vec<LibraryEntry>,
+    /// The id of the version whose client jar the game runs from, when the loader's installation
+    /// makes its own copy of the vanilla jar (legacy Forge: the vanilla jar without `META-INF/`,
+    /// at `versions/<jar>/<jar>.jar`). `None` runs the vanilla jar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jar: Option<String>,
 }
 
 impl LoaderProfile {
@@ -308,6 +313,7 @@ impl LoaderProfile {
                 .into_iter()
                 .map(normalize_library)
                 .collect::<Result<_>>()?,
+            jar: None,
         };
         profile.validate()?;
         Ok(profile)
@@ -328,6 +334,9 @@ impl LoaderProfile {
         if self.id.is_empty() || self.main_class.is_empty() || self.inherits_from.is_empty() {
             return Err(damaged("profile is missing id, mainClass or inheritsFrom"));
         }
+        if self.jar.as_deref().is_some_and(|j| !safe_part(j)) {
+            return Err(damaged("profile names an invalid client jar"));
+        }
         let mut seen = HashSet::new();
         for lib in &self.libraries {
             if !seen.insert(lib.key()) {
@@ -343,7 +352,9 @@ impl LoaderProfile {
         ComponentRef::new(self.kind, self.loader_version.clone())
     }
 
-    /// The profile as a version JSON that inherits from the game.
+    /// The profile as a version JSON that inherits from the game. A profile that replaces the
+    /// game arguments and has JVM arguments of its own carries both a `minecraftArguments` line
+    /// and `arguments.jvm`.
     pub fn to_version_json(&self) -> VersionJson {
         let (arguments, minecraft_arguments) = if self.replaces_game_arguments {
             let line = self
@@ -353,7 +364,11 @@ impl LoaderProfile {
                 .flat_map(|a| a.values.iter().map(String::as_str))
                 .collect::<Vec<_>>()
                 .join(" ");
-            (None, Some(line))
+            let jvm = (!self.arguments.jvm.is_empty()).then(|| Arguments {
+                game: Vec::new(),
+                jvm: self.arguments.jvm.clone(),
+            });
+            (jvm, Some(line))
         } else {
             (Some(self.arguments.clone()), None)
         };
@@ -366,6 +381,7 @@ impl LoaderProfile {
             main_class: Some(self.main_class.clone()),
             libraries: self.libraries.clone(),
             release_time: self.release_time.clone(),
+            jar: self.jar.clone(),
             ..VersionJson::default()
         }
     }

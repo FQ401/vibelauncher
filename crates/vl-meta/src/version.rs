@@ -20,7 +20,9 @@
 //! - `mainClass`, `assetIndex`, `assets`, `javaVersion`, `logging`: the child's, else the parent's.
 //! - `arguments`: the child's `game` and `jvm` lists are appended after the parent's. A child that
 //!   has only a legacy `minecraftArguments` replaces the parent's game arguments and keeps its
-//!   JVM arguments. A legacy parent contributes [`default_jvm`] arguments.
+//!   JVM arguments; a child with both (a legacy loader profile with JVM arguments of its own)
+//!   replaces the game arguments with the line and appends its `arguments.jvm`. A legacy parent
+//!   contributes [`default_jvm`] arguments.
 //! - `libraries`: the child's entries come first, then the parent's entries whose
 //!   `group:artifact[:classifier]` the child does not list (the child's version wins).
 //! - `downloads`: merged by key; the child's entry wins.
@@ -378,7 +380,22 @@ fn merge(chain: Vec<VersionJson>) -> Result<ResolvedVersion> {
             release_time = v.release_time;
         }
         match (v.arguments, v.minecraft_arguments) {
-            (Some(new), _) => match args.as_mut() {
+            (Some(own), Some(legacy)) => {
+                let line = Arguments::from_legacy(&legacy);
+                match args.as_mut() {
+                    Some(acc) => {
+                        acc.game = line.game;
+                        acc.jvm.extend(own.jvm);
+                    }
+                    None => {
+                        args = Some(Arguments {
+                            game: line.game,
+                            jvm: line.jvm.into_iter().chain(own.jvm).collect(),
+                        });
+                    }
+                }
+            }
+            (Some(new), None) => match args.as_mut() {
                 Some(acc) => acc.extend(new),
                 None => args = Some(new),
             },

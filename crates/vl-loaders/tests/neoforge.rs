@@ -294,6 +294,8 @@ fn install(
         minecraft_jar: &jar,
         root,
         libraries_dir: &libraries,
+        versions_dir: &root.join("versions"),
+        game_dir: None,
         runner,
         control,
         on_step: &on_step,

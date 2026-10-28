@@ -2,8 +2,10 @@
 //! an installer.
 //!
 //! Forge publishes every version as `net.minecraftforge:forge` in its Maven repository. A Maven
-//! version is `<game>-<forge>` (`1.20.1-47.3.0`); the launcher calls the version by its Forge
-//! part (`47.3.0`) and accepts the full form as input too.
+//! version is `<game>-<forge>` (`1.20.1-47.3.0`), for some older builds with a branch suffix
+//! (`1.7.10-10.13.4.1614-1.7.10`); the launcher calls the version by its Forge part (`47.3.0`,
+//! `10.13.4.1614`) and accepts the Maven form without a branch as input too. The Forge part is
+//! unique per game version, so [`find_maven_version`] finds the Maven version with its branch.
 //!
 //! Forge versions are not divided into stable and unstable ones: every version counts as stable.
 //! The promotions document (`promotions_slim.json`) names a `<game>-recommended` build, which
@@ -11,9 +13,11 @@
 //! default choice ([`LoaderVersions::recommended`]) is the recommended build, else the latest.
 //! When the promotions are not known, no version is recommended.
 //!
-//! Forge for Minecraft 1.13 and newer ships an installer with an `install_profile.json` (spec 0
-//! up to 1.16, spec 1 since 1.17), handled by [`crate::install_profile`]. Older game versions use
-//! a different installer format and are `Unsupported` here ([`check_game`]).
+//! Forge ships an installer jar for Minecraft 1.5.2 and newer. Since 1.13 (and for the last
+//! 1.12.2 builds) it holds an `install_profile.json` with processors (spec 0 up to 1.16, spec 1
+//! since 1.17), handled by [`crate::install_profile`]; older installers hold the legacy
+//! `install` + `versionInfo` profile, handled by [`crate::forge_legacy`]. Game versions before
+//! 1.5.2 have no installer (Forge is a jar mod there) and are `Unsupported` ([`check_game`]).
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -37,31 +41,36 @@ fn damaged(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::Integrity, message)
 }
 
-/// Whether `game` is older than Minecraft 1.13 (a `1.<minor>` version with `minor` below 13),
-/// whose Forge installers have the legacy format.
-pub fn is_legacy_game(game: &str) -> bool {
+/// The minor and patch numbers of a `1.<minor>[.<patch>]` game version (`1.7.10_pre4` gives
+/// `(7, 10)`), or `None` for any other form.
+fn minor_patch(game: &str) -> Option<(u32, u32)> {
     let mut parts = game.split('.');
     if parts.next() != Some("1") {
-        return false;
+        return None;
     }
-    let minor: String = parts
-        .next()
-        .unwrap_or_default()
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    minor.parse::<u32>().is_ok_and(|m| m < 13)
+    let number = |part: Option<&str>| -> Option<u32> {
+        let digits: String = part?.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    };
+    let minor = number(parts.next())?;
+    Some((minor, number(parts.next()).unwrap_or(0)))
 }
 
-/// Checks that Forge for `game` is supported.
+/// Whether `game` is older than Minecraft 1.13 (a `1.<minor>` version with `minor` below 13).
+/// Forge installers of these game versions may have the legacy format.
+pub fn is_legacy_game(game: &str) -> bool {
+    minor_patch(game).is_some_and(|(minor, _)| minor < 13)
+}
+
+/// Checks that Forge for `game` is supported: Minecraft 1.5.2 and newer.
 ///
 /// # Errors
 ///
-/// `Unsupported` for Minecraft older than 1.13.
+/// `Unsupported` for Minecraft older than 1.5.2.
 pub fn check_game(game: &str) -> Result<()> {
-    if is_legacy_game(game) {
+    if minor_patch(game).is_some_and(|v| v < (5, 2)) {
         return Err(Error::unsupported(format!(
-            "Forge for Minecraft {game} is not supported yet: only Minecraft 1.13 and newer"
+            "Forge for Minecraft {game} is not supported: only Minecraft 1.5.2 and newer"
         )));
     }
     Ok(())
@@ -84,15 +93,31 @@ fn numbers(forge: &str) -> Option<Vec<u64>> {
         .collect()
 }
 
-/// Splits a Maven version (`1.20.1-47.3.0`) into the game version and the Forge version, or
-/// `None` when it is not of that form.
+fn safe_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_')
+}
+
+/// Splits a Maven version (`1.20.1-47.3.0`, `1.7.10-10.13.4.1614-1.7.10`) into the game version
+/// and the Forge version; a branch suffix is dropped. `None` when it is not of that form.
 pub fn split_maven_version(maven: &str) -> Option<(&str, &str)> {
-    let (game, forge) = maven.split_once('-')?;
-    let safe_game = !game.is_empty()
-        && game
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_');
-    (safe_game && numbers(forge).is_some()).then_some((game, forge))
+    let (game, rest) = maven.split_once('-')?;
+    let (forge, branch) = match rest.split_once('-') {
+        Some((forge, branch)) => (forge, Some(branch)),
+        None => (rest, None),
+    };
+    (safe_name(game) && numbers(forge).is_some() && branch.is_none_or(safe_name))
+        .then_some((game, forge))
+}
+
+/// The Maven version of Forge `forge` (short form or `<game>-<forge>`) for `game` in the full
+/// Maven list, with its branch suffix if it has one.
+pub fn find_maven_version<'a>(game: &str, forge: &str, all: &'a [String]) -> Option<&'a str> {
+    let short = short_version(game, forge);
+    all.iter()
+        .map(String::as_str)
+        .find(|v| split_maven_version(v) == Some((game, short)))
 }
 
 /// The Maven version of Forge `forge` for `game`. `forge` may already be the full form.
@@ -104,7 +129,7 @@ pub fn maven_version(game: &str, forge: &str) -> Result<String> {
     let short = short_version(game, forge);
     let full = format!("{game}-{short}");
     match split_maven_version(&full) {
-        Some((g, _)) if g == game => Ok(full),
+        Some((g, f)) if g == game && f == short => Ok(full),
         _ => Err(Error::invalid_input(format!(
             "invalid Forge version {forge:?} for Minecraft {game}"
         ))),
@@ -125,9 +150,22 @@ pub fn short_version<'a>(game: &str, version: &'a str) -> &'a str {
 ///
 /// `InvalidInput` for a version that cannot be a path part.
 pub fn installer_path(game: &str, forge: &str) -> Result<String> {
-    let full = maven_version(game, forge)?;
+    installer_path_of(&maven_version(game, forge)?)
+}
+
+/// The repository path of the installer of the Maven version `maven` (with its branch, if any).
+///
+/// # Errors
+///
+/// `InvalidInput` for a version that is not a Forge Maven version.
+pub fn installer_path_of(maven: &str) -> Result<String> {
+    if split_maven_version(maven).is_none() {
+        return Err(Error::invalid_input(format!(
+            "invalid Forge version {maven:?}"
+        )));
+    }
     Ok(format!(
-        "net/minecraftforge/forge/{full}/forge-{full}-installer.jar"
+        "net/minecraftforge/forge/{maven}/forge-{maven}-installer.jar"
     ))
 }
 
@@ -182,7 +220,7 @@ pub fn parse_promotions(bytes: &[u8]) -> Result<Promotions> {
 ///
 /// # Errors
 ///
-/// `Unsupported` for a game version older than 1.13; `Integrity` for a repeated version.
+/// `Unsupported` for a game version older than 1.5.2; `Integrity` for a repeated version.
 pub fn versions_for_game(
     game: &str,
     all: &[String],
@@ -226,12 +264,17 @@ mod tests {
 
     #[test]
     fn tells_legacy_game_versions() {
-        for legacy in ["1.12.2", "1.7.10", "1.7.10_pre4", "1.8", "1.2.5"] {
+        for legacy in ["1.12.2", "1.7.10", "1.7.10_pre4", "1.8", "1.5.2", "1.6"] {
             assert!(is_legacy_game(legacy), "{legacy}");
-            assert_eq!(check_game(legacy).unwrap_err().kind, ErrorKind::Unsupported);
+            assert!(check_game(legacy).is_ok(), "{legacy}");
+        }
+        for old in ["1.5.1", "1.5", "1.4.7", "1.2.5"] {
+            assert!(is_legacy_game(old), "{old}");
+            assert_eq!(check_game(old).unwrap_err().kind, ErrorKind::Unsupported);
         }
         for modern in ["1.13.2", "1.16.5", "1.20.1", "1.21", "26.1.2", "26.3"] {
             assert!(!is_legacy_game(modern), "{modern}");
+            assert!(check_game(modern).is_ok(), "{modern}");
         }
     }
 
@@ -242,7 +285,30 @@ mod tests {
             Some(("1.20.1", "47.3.0"))
         );
         assert_eq!(split_maven_version("26.3-66.1.0"), Some(("26.3", "66.1.0")));
-        assert_eq!(split_maven_version("1.7.10-10.13.4.1614-1.7.10"), None);
+        assert_eq!(
+            split_maven_version("1.7.10-10.13.4.1614-1.7.10"),
+            Some(("1.7.10", "10.13.4.1614"))
+        );
+        assert_eq!(split_maven_version("1.7.10-10.13.4.1614-../x"), None);
+        assert_eq!(split_maven_version("1.7.10-10.13.4.1614-a-b"), None);
+        let all = vec![
+            "1.7.10-10.13.4.1614-1.7.10".to_owned(),
+            "1.12.2-14.23.5.2860".to_owned(),
+        ];
+        assert_eq!(
+            find_maven_version("1.7.10", "10.13.4.1614", &all),
+            Some("1.7.10-10.13.4.1614-1.7.10")
+        );
+        assert_eq!(
+            find_maven_version("1.12.2", "1.12.2-14.23.5.2860", &all),
+            Some("1.12.2-14.23.5.2860")
+        );
+        assert_eq!(find_maven_version("1.7.10", "10.13.4.1", &all), None);
+        assert_eq!(
+            installer_path_of("1.7.10-10.13.4.1614-1.7.10").unwrap(),
+            "net/minecraftforge/forge/1.7.10-10.13.4.1614-1.7.10/forge-1.7.10-10.13.4.1614-1.7.10-installer.jar"
+        );
+        assert!(installer_path_of("../x").is_err());
         assert_eq!(split_maven_version("1.20.1"), None);
         assert_eq!(split_maven_version("../x-1.0"), None);
         assert_eq!(maven_version("1.20.1", "47.3.0").unwrap(), "1.20.1-47.3.0");

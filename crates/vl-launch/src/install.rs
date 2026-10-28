@@ -214,14 +214,32 @@ impl Installer {
             }
         }
 
+        // The client download belongs to the root version. A loader that runs the game from its
+        // own copy of that jar (`jar` naming another version) made the copy when it was
+        // installed.
         let client_jar = self.layout.client_jar(&version.client_jar);
+        let downloaded_jar = match version.chain.last() {
+            Some(root) if *root != version.client_jar => {
+                if !client_jar.is_file() {
+                    return Err(Error::new(
+                        ErrorKind::NotFound,
+                        format!(
+                            "version {id} runs from {} and it is missing: install the loader again",
+                            version.client_jar
+                        ),
+                    ));
+                }
+                self.layout.client_jar(root)
+            }
+            _ => client_jar.clone(),
+        };
         match version.downloads.get("client") {
             Some(d) => {
-                if let Some(fetch) = self.checked_fetch(&d.url, &client_jar, &d.sha1, d.size) {
+                if let Some(fetch) = self.checked_fetch(&d.url, &downloaded_jar, &d.sha1, d.size) {
                     fetches.push(fetch);
                 }
             }
-            None if !client_jar.is_file() => {
+            None if !downloaded_jar.is_file() => {
                 return Err(Error::new(
                     ErrorKind::NotFound,
                     format!(
