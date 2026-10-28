@@ -136,6 +136,7 @@ impl World {
     fn ctx<'a>(&'a self, control: &'a Control) -> Context<'a> {
         Context {
             source: &self.cat,
+            curseforge: None,
             client: &self.net,
             game_dir: &self.game,
             meta_dir: &self.meta,

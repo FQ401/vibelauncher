@@ -15,6 +15,7 @@
 //! [`PackRecord`] is the origin of the pack kept in `<instance>/.vibelauncher/pack.json` for
 //! later updates.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -183,38 +184,51 @@ impl Pack {
         wanted: &[(String, PathBuf)],
         control: &Control,
     ) -> Result<()> {
-        if wanted.is_empty() {
-            return Ok(());
-        }
-        let map = self.final_overrides();
-        let file = File::open(&self.path).map_err(|e| io(&self.path, &e))?;
-        let mut archive =
-            ZipArchive::new(file).map_err(|e| bad(format!("not a zip archive: {e}")))?;
-        let mut budget = MAX_OVERRIDE_BYTES;
-        for (rel, dest) in wanted {
-            check_cancel(control)?;
-            let index = *map
-                .get(rel.as_str())
-                .ok_or_else(|| Error::not_found(format!("{rel} is not in the pack")))?;
-            let mut source = archive
-                .by_index(index)
-                .map_err(|e| bad(format!("{rel}: {e}")))?;
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).map_err(|e| io(parent, &e))?;
-            }
-            let mut out = File::create(dest).map_err(|e| io(dest, &e))?;
-            let written = std::io::copy(&mut (&mut source).take(budget + 1), &mut out)
-                .map_err(|e| io(dest, &e))?;
-            if written > budget {
-                return Err(bad(format!(
-                    "the overrides are larger than {MAX_OVERRIDE_BYTES} bytes"
-                )));
-            }
-            budget -= written;
-            out.flush().map_err(|e| io(dest, &e))?;
-        }
-        Ok(())
+        extract_entries_to(&self.path, &self.final_overrides(), wanted, control)
     }
+}
+
+/// Extracts the archive entries of the named paths (`map` gives the entry of each path), each
+/// to its own destination, within the override byte budget.
+///
+/// # Errors
+///
+/// `NotFound` for a path `map` does not have, `Cancelled`, `Io`, `Integrity`.
+pub(crate) fn extract_entries_to(
+    archive_path: &Path,
+    map: &std::collections::BTreeMap<&str, usize>,
+    wanted: &[(String, PathBuf)],
+    control: &Control,
+) -> Result<()> {
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let file = File::open(archive_path).map_err(|e| io(archive_path, &e))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| bad(format!("not a zip archive: {e}")))?;
+    let mut budget = MAX_OVERRIDE_BYTES;
+    for (rel, dest) in wanted {
+        check_cancel(control)?;
+        let index = *map
+            .get(rel.as_str())
+            .ok_or_else(|| Error::not_found(format!("{rel} is not in the pack")))?;
+        let mut source = archive
+            .by_index(index)
+            .map_err(|e| bad(format!("{rel}: {e}")))?;
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| io(parent, &e))?;
+        }
+        let mut out = File::create(dest).map_err(|e| io(dest, &e))?;
+        let written = std::io::copy(&mut (&mut source).take(budget + 1), &mut out)
+            .map_err(|e| io(dest, &e))?;
+        if written > budget {
+            return Err(bad(format!(
+                "the overrides are larger than {MAX_OVERRIDE_BYTES} bytes"
+            )));
+        }
+        budget -= written;
+        out.flush().map_err(|e| io(dest, &e))?;
+    }
+    Ok(())
 }
 
 /// Where an install writes.
@@ -296,19 +310,43 @@ pub(crate) fn check_cancel(control: &Control) -> Result<()> {
     }
 }
 
+/// The largest file downloaded when its size is not known.
+const MAX_UNSIZED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 /// Downloads every file from its first URL; a file that failed is tried on its other URLs.
 pub(crate) fn download_files(
     input: &InstallInput<'_>,
     files: &[&PackFile],
     dests: &[PathBuf],
 ) -> Result<()> {
+    download_files_allowing(input, files, dests, &HashSet::new()).map(|_| ())
+}
+
+/// [`download_files`], except that a file whose path is in `may_fail` and that cannot be
+/// fetched from any of its URLs is left out instead of failing the whole download (a CurseForge
+/// file the author does not let other apps download). Returns the paths left out.
+///
+/// A file is checked by its SHA-512, else by its SHA-1, and by its size when the size is known
+/// (else it is capped).
+pub(crate) fn download_files_allowing(
+    input: &InstallInput<'_>,
+    files: &[&PackFile],
+    dests: &[PathBuf],
+    may_fail: &HashSet<String>,
+) -> Result<HashSet<String>> {
     let spec = |file: &PackFile, url: &str, dest: &Path| {
-        let mut spec = Download::new(url, dest).size(file.size);
-        if let Some(sum) = Checksum::sha512(&file.sha512) {
+        let mut spec = Download::new(url, dest);
+        spec = if file.size > 0 {
+            spec.size(file.size)
+        } else {
+            spec.max_bytes(MAX_UNSIZED_BYTES)
+        };
+        if let Some(sum) = Checksum::sha512(&file.sha512).or_else(|| Checksum::sha1(&file.sha1)) {
             spec = spec.checksum(sum);
         }
         spec
     };
+    let mut left_out = HashSet::new();
     let specs: Vec<Download> = files
         .iter()
         .zip(dests)
@@ -340,14 +378,19 @@ pub(crate) fn download_files(
                 }
             }
         }
-        if !done {
-            return Err(Error::new(
-                last.kind,
-                format!("{}: {}", file.path, last.message),
-            ));
+        if done {
+            continue;
         }
+        if may_fail.contains(&file.path) {
+            left_out.insert(file.path.clone());
+            continue;
+        }
+        return Err(Error::new(
+            last.kind,
+            format!("{}: {}", file.path, last.message),
+        ));
     }
-    Ok(())
+    Ok(left_out)
 }
 
 /// Extracts the override files in order.

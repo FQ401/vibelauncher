@@ -117,13 +117,16 @@ commands:
                                       resourcepacks, shaderpacks
   packs updates <instance> [--channel <release|beta|alpha>]
                                       look for a newer version of the instance's modpack
-  packs update <instance> [--version <id>] [--file <pack.mrpack>] [--channel <c>] [--reset] [--yes]
+  packs update <instance> [--version <id>] [--file <pack.mrpack|pack.zip>] [--channel <c>]
+               [--reset] [--yes]
                                       update the modpack; prints what changes first. Files you
                                       deleted, disabled or changed are kept, changed configs get
                                       the new version beside them as <file>.pack-new, replaced
                                       files are backed up under .vibelauncher/backup; --reset puts
                                       every pack file back as the pack has it; --file updates a
-                                      pack that was installed from a file
+                                      pack that was installed from a file. CurseForge packs need
+                                      a key; files their authors keep off other apps are listed
+                                      for you to download
   storage show [--sizes]              the data folder and the folder of every section
                                       (data, instances, game, java, cache, backups, logs)
   storage check <section> <path>      check a folder for a section (errors and warnings)

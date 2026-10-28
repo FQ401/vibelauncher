@@ -3,8 +3,10 @@
 //! Checks and plans are answered from a worker thread. An update runs as an `UpdatePack` task:
 //! it fetches the new pack, plans against the folder as it is when the task starts, and applies
 //! the plan in one all-or-nothing step together with the change of the instance's game version
-//! and loader (see [`vl_install::mrpack_update`]). Packs installed from CurseForge are not
-//! updated yet: every command answers `Unsupported` for them.
+//! and loader (see [`vl_install::mrpack_update`]). Packs installed from CurseForge are updated
+//! the same way; their files are resolved through the CurseForge API, so without a key every
+//! command answers `NoApiKey` before anything is sent, and files the user has to download by
+//! hand are launcher log warnings.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +21,7 @@ use vl_core::{Error, Event, InstanceId, Replier, Response, Result};
 use vl_install::mrpack::{PackKind, PackRecord};
 use vl_install::mrpack_update::{Context, Prepared, Wanted, apply, check as check_pack, prepare};
 use vl_net::{Client, Control};
+use vl_platforms::CurseForgeSource;
 use vl_platforms::Platforms;
 use vl_tasks::TaskSpec;
 
@@ -49,20 +52,16 @@ fn setup(backend: &Backend, id: &InstanceId) -> Result<Setup> {
     let record = PackRecord::load(&meta).ok_or_else(|| {
         Error::not_found(format!("instance {id} was not installed from a modpack"))
     })?;
-    if record.kind == PackKind::CurseForge {
-        return Err(Error::unsupported(
-            "updating a CurseForge modpack is not supported yet",
-        ));
-    }
+    let provider = match (&record.source, record.kind) {
+        (Some(s), _) => s.provider,
+        (None, PackKind::CurseForge) => Provider::CurseForge,
+        (None, _) => Provider::default(),
+    };
     Ok(Setup {
         id: id.clone(),
         name: config.name,
         game_dir: backend.instances.game_dir(id)?,
-        provider: record
-            .source
-            .as_ref()
-            .map(|s| s.provider)
-            .unwrap_or_default(),
+        provider,
         meta,
         record,
         platforms: Arc::clone(&backend.catalog.platforms),
@@ -70,6 +69,22 @@ fn setup(backend: &Backend, id: &InstanceId) -> Result<Setup> {
         instances: backend.instances.clone(),
         loaders: backend.launch.loaders().clone(),
     })
+}
+
+/// What an update of `setup` works on.
+fn context<'a>(setup: &'a Setup, control: &'a Control) -> Result<Context<'a>> {
+    Ok(Context {
+        source: setup.platforms.source(setup.provider)?,
+        curseforge: Some(curseforge(setup)),
+        client: &setup.client,
+        game_dir: &setup.game_dir,
+        meta_dir: &setup.meta,
+        control,
+    })
+}
+
+fn curseforge(setup: &Setup) -> &CurseForgeSource {
+    setup.platforms.curseforge()
 }
 
 fn wanted<'a>(request: &'a PackUpdateRequest, file: Option<&'a std::path::Path>) -> Wanted<'a> {
@@ -88,14 +103,7 @@ pub(crate) fn check(backend: &Backend, request: PackUpdateRequest, replier: Repl
     };
     spawn_reply("pack-update-check", replier, move || {
         let control = Control::default();
-        let source = setup.platforms.source(setup.provider)?;
-        let ctx = Context {
-            source,
-            client: &setup.client,
-            game_dir: &setup.game_dir,
-            meta_dir: &setup.meta,
-            control: &control,
-        };
+        let ctx = context(&setup, &control)?;
         check_pack(&ctx, &setup.record, request.min_stability).map(Response::PackUpdate)
     });
 }
@@ -121,14 +129,7 @@ pub(crate) fn plan(backend: &Backend, request: PackUpdateRequest, replier: Repli
     };
     spawn_reply("pack-update-plan", replier, move || {
         let control = Control::default();
-        let source = setup.platforms.source(setup.provider)?;
-        let ctx = Context {
-            source,
-            client: &setup.client,
-            game_dir: &setup.game_dir,
-            meta_dir: &setup.meta,
-            control: &control,
-        };
+        let ctx = context(&setup, &control)?;
         let file = request.file.as_deref().map(std::path::Path::new);
         let changes = match prepare(&ctx, &setup.record, &wanted(&request, file))? {
             Some(p) => p.changes,
@@ -145,10 +146,10 @@ fn components(setup: &Setup, prepared: &Prepared, control: &Control) -> Result<O
     let config = setup.instances.load(&setup.id)?;
     let game = prepared.new_game_version.clone();
     let game_changed = config.game_version() != Some(game.as_str());
-    let Some((kind, version)) = prepared.pack.index.loader() else {
+    let Some((kind, version)) = &prepared.loader else {
         return Ok(game_changed.then_some((game, None)));
     };
-    let component = component_of(kind)?;
+    let component = component_of(*kind)?;
     let chosen = setup
         .loaders
         .pick(component, &game, Some(version), control)?;
@@ -186,14 +187,7 @@ pub(crate) fn update(backend: &Backend, request: PackUpdateRequest) -> Result<Re
                         text,
                     }));
                 };
-                let source = setup.platforms.source(setup.provider)?;
-                let context = Context {
-                    source,
-                    client: &setup.client,
-                    game_dir: &setup.game_dir,
-                    meta_dir: &setup.meta,
-                    control: &control,
-                };
+                let context = context(&setup, &control)?;
                 let file = request.file.as_deref().map(std::path::Path::new);
                 let Some(prepared) = prepare(&context, &setup.record, &wanted(&request, file))?
                 else {
@@ -226,6 +220,13 @@ pub(crate) fn update(backend: &Backend, request: PackUpdateRequest) -> Result<Re
                     if let (true, Some(note)) = (kept, &c.note) {
                         log(format!("{}: {note}", c.path));
                     }
+                }
+                for blocked in &applied.blocked {
+                    events.publish(&Event::Log(LogLine {
+                        source: LogSource::Launcher,
+                        level: LogLevel::Warn,
+                        text: blocked.describe(),
+                    }));
                 }
                 log(format!(
                     "modpack updated to {}; previous versions of changed files are in {}",
