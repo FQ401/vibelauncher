@@ -77,11 +77,14 @@ impl JavaService {
     }
 
     /// The runtime to launch a game with: the user's explicit choice as it is (checked, never
-    /// replaced), else the best installed one, else a managed runtime downloaded now.
+    /// replaced), else the best installed one, else a managed runtime downloaded now. `platform`
+    /// is the one the game is launched for (after the adjustments of `vl_launch::replace`), not
+    /// the one the launcher runs on: both the choice and the download follow its architecture.
     pub(crate) fn ensure(
         &self,
         requirement: &JavaRequirement,
         explicit: Option<&Path>,
+        platform: Platform,
         control: &Control,
     ) -> Result<JavaRuntime, Error> {
         if let Some(path) = explicit {
@@ -92,9 +95,9 @@ impl JavaService {
                 .map_err(|e| Error::new(ErrorKind::Java, format!("{}: {e}", path.display())));
         }
         let list = self.inner.runtimes(false);
-        match select::resolve(&list, requirement, Platform::current().arch, None) {
+        match select::resolve(&list, requirement, platform.arch, None) {
             Resolution::Use(runtime) => Ok(runtime),
-            Resolution::Download(requirement) => self.install(&requirement, control),
+            Resolution::Download(requirement) => self.install(&requirement, platform, control),
         }
     }
 
@@ -103,9 +106,13 @@ impl JavaService {
     pub(crate) fn install(
         &self,
         requirement: &JavaRequirement,
+        platform: Platform,
         control: &Control,
     ) -> Result<JavaRuntime, Error> {
-        let installed = self.inner.installer()?.install(requirement, control)?;
+        let installed = self
+            .inner
+            .installer(platform)?
+            .install(requirement, control)?;
         self.inner.add_runtime(installed.runtime.clone());
         self.inner
             .events
@@ -115,13 +122,13 @@ impl JavaService {
 }
 
 impl Inner {
-    fn installer(&self) -> Result<Installer, Error> {
+    fn installer(&self, platform: Platform) -> Result<Installer, Error> {
         let config = NetConfig {
             cache_dir: Some(self.http_cache.clone()),
             ..NetConfig::default()
         };
         let client = Client::new(config)?;
-        Ok(Installer::new(client, &self.managed_dir))
+        Ok(Installer::new(client, &self.managed_dir).with_platform(platform))
     }
 
     /// Puts a freshly installed runtime into the remembered list (when there is one).
@@ -195,7 +202,9 @@ pub(crate) fn handle(backend: &Backend, command: JavaCommand, replier: Replier) 
                 move |ctx| {
                     crate::launch::with_job(ctx, |job| {
                         let requirement = JavaRequirement::from_major(major);
-                        service.install(&requirement, &job_control(job)).map(|_| ())
+                        service
+                            .install(&requirement, Platform::current(), &job_control(job))
+                            .map(|_| ())
                     })
                 },
             );
@@ -275,10 +284,48 @@ mod tests {
             .ensure(
                 &JavaRequirement::legacy(),
                 Some(&missing),
+                Platform::current(),
                 &Control::default(),
             )
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Java);
+        drop(backend);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn runtime(arch: vl_core::platform::Arch) -> JavaRuntime {
+        JavaRuntime {
+            path: PathBuf::from(format!("{arch:?}/java")),
+            major: 8,
+            version: "1.8.0_402".to_owned(),
+            arch,
+            vendor: "Synthetic".to_owned(),
+            managed: false,
+        }
+    }
+
+    #[test]
+    fn the_launch_platform_decides_which_architecture_counts() {
+        use vl_core::platform::{Arch, Os};
+        // macOS on Apple silicon running a LWJGL 2 game: the launch platform is x86_64.
+        let launch = Platform {
+            os: Os::MacOs,
+            arch: Arch::X86_64,
+        };
+        let requirement = JavaRequirement::legacy();
+        let arm_only = [runtime(Arch::Aarch64)];
+        assert!(matches!(
+            select::resolve(&arm_only, &requirement, launch.arch, None),
+            Resolution::Download(_)
+        ));
+        let both = [runtime(Arch::Aarch64), runtime(Arch::X86_64)];
+        let (backend, dir) = backend("launch-platform");
+        *backend.java.inner.last.lock().unwrap() = Some(both.to_vec());
+        let chosen = backend
+            .java
+            .ensure(&requirement, None, launch, &Control::default())
+            .unwrap();
+        assert_eq!(chosen.arch, Arch::X86_64);
         drop(backend);
         let _ = std::fs::remove_dir_all(dir);
     }

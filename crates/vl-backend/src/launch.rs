@@ -28,7 +28,7 @@ use vl_core::task::{Progress, ProgressUnit, TaskKind};
 use vl_core::{Error, ErrorKind, Event, EventBus, InstanceId, Replier, Response};
 use vl_java::select::JavaRequirement;
 use vl_launch::process::{self, GameBatch, RunningGame, SpawnOptions};
-use vl_launch::{Installer, InstallerOptions, Job, Layout, PrepareInput};
+use vl_launch::{Installer, InstallerOptions, Job, Layout, PrepareInput, Verify};
 use vl_loaders::installer::{InstallContext, Installation};
 use vl_loaders::processors::JavaRunner;
 use vl_loaders::{Loaders, LoadersOptions};
@@ -124,6 +124,7 @@ pub(crate) fn handle(backend: &Backend, command: LaunchCommand, replier: Replier
     let result = match command {
         LaunchCommand::Launch(request) => launch(backend, request),
         LaunchCommand::Stop { instance } => stop(&backend.launch, &instance),
+        LaunchCommand::Verify { instance } => verify(backend, &instance),
         LaunchCommand::Diagnose { instance } => {
             return crate::crash::handle(backend, instance, replier);
         }
@@ -373,8 +374,13 @@ fn ensure_java(
     }
     job.report("java", 0, None, ProgressUnit::Bytes);
     let requirement = JavaRequirement::new(wanted.component, wanted.major_version);
-    java.ensure(&requirement, None, &crate::java::job_control(job))
-        .map(|_| ())
+    java.ensure(
+        &requirement,
+        None,
+        installed.platform,
+        &crate::java::job_control(job),
+    )
+    .map(|_| ())
 }
 
 /// The installation step of a loader that needs one (see [`Loaders::needs_install`]): the vanilla
@@ -561,6 +567,52 @@ pub(crate) fn install(
                 service
                     .installer
                     .install_with(&version, profile.as_ref(), None, job)
+                    .map(|_| ())
+            })
+        },
+    );
+    Ok(Response::Task(handle.id()))
+}
+
+/// `LaunchCommand::Verify`: a task that installs the instance's version and loader again with
+/// every existing file hashed, so damaged files are downloaded again.
+fn verify(backend: &Backend, instance: &InstanceId) -> vl_core::Result<Response> {
+    let config = backend.instances.load(instance)?;
+    let components =
+        ComponentSet::from_pairs(config.components.iter().map(|c| (&*c.uid, &*c.version)))
+            .map_err(|e| Error::new(e.kind, format!("instance {instance}: {}", e.message)))?;
+    let game_dir = backend.instances.game_dir(instance)?;
+    let service = backend.launch.clone();
+    if service.active().contains_key(instance) {
+        return Err(Error::conflict(format!(
+            "instance {instance} is preparing or running"
+        )));
+    }
+    let handle = backend.tasks().spawn(
+        TaskSpec::new(TaskKind::VerifyFiles).subject(&config.name),
+        move |ctx| {
+            with_job(ctx, |job| {
+                let installer = service.installer.with_verify(Verify::Full);
+                let profile = match components.loader() {
+                    Some(l) => {
+                        ctx.set_stage("loader");
+                        let control = Control::with_cancel(job.cancel_token().clone());
+                        Some(service.loaders.profile(
+                            l.kind,
+                            components.game_version(),
+                            &l.version,
+                            &control,
+                        )?)
+                    }
+                    None => None,
+                };
+                installer
+                    .install_with(
+                        components.game_version(),
+                        profile.as_ref(),
+                        Some(&game_dir),
+                        job,
+                    )
                     .map(|_| ())
             })
         },
