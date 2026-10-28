@@ -273,7 +273,7 @@ pub(crate) fn component_of(kind: PackLoader) -> Result<ComponentKind> {
         PackLoader::Fabric => Ok(ComponentKind::Fabric),
         PackLoader::Quilt => Ok(ComponentKind::Quilt),
         PackLoader::NeoForge => Ok(ComponentKind::NeoForge),
-        PackLoader::Forge => Err(Error::unsupported("Forge is not supported yet")),
+        PackLoader::Forge => Ok(ComponentKind::Forge),
     }
 }
 
@@ -567,17 +567,10 @@ mod tests {
         assert_eq!(instances.list().unwrap().len(), 1, "{names:?}");
         assert_eq!(names.len(), 1, "{names:?}");
 
-        // Forge is a clear error and creates nothing.
-        pack(&file, r#""minecraft":"1.21.1","forge":"52.0.0""#, "");
-        let (result, instances) = run_pack_file(&root, &file);
-        let err = result.unwrap_err();
-        assert_eq!(err.kind, vl_core::ErrorKind::Unsupported);
-        assert_eq!(err.message, "Forge is not supported yet");
-        assert_eq!(instances.list().unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// Serves the NeoForge version list and nothing else.
+    /// Serves the NeoForge and Forge version lists and nothing else.
     struct Maven;
 
     impl vl_net::HttpTransport for Maven {
@@ -585,8 +578,15 @@ mod tests {
             &self,
             request: &vl_net::HttpRequest,
         ) -> std::result::Result<vl_net::HttpResponse, vl_net::NetError> {
-            let xml = "<metadata><versioning><versions><version>21.1.2</version>                <version>21.1.7</version><version>21.4.1</version></versions></versioning></metadata>";
-            let found = request.url.ends_with("/neoforge/maven-metadata.xml");
+            let forge = request
+                .url
+                .ends_with("/net/minecraftforge/forge/maven-metadata.xml");
+            let xml = if forge {
+                "<metadata><versioning><versions><version>1.21.1-52.0.0</version><version>1.21.1-52.1.2</version><version>1.20.1-47.3.0</version></versions></versioning></metadata>"
+            } else {
+                "<metadata><versioning><versions><version>21.1.2</version>                <version>21.1.7</version><version>21.4.1</version></versions></versioning></metadata>"
+            };
+            let found = forge || request.url.ends_with("/neoforge/maven-metadata.xml");
             Ok(vl_net::HttpResponse {
                 status: if found { 200 } else { 404 },
                 headers: Vec::new(),
@@ -620,6 +620,32 @@ mod tests {
 
         // A version the list does not have is refused and creates nothing.
         pack(&file, r#""minecraft":"1.21.1","neoforge":"9.9.9""#, "");
+        let (result, instances) = run_pack_with(&root, &file, std::sync::Arc::new(Maven));
+        assert!(result.is_err());
+        assert_eq!(instances.list().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_forge_pack_creates_an_instance_on_that_loader() {
+        let root = std::env::temp_dir().join(format!("vl-backend-forge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("p.mrpack");
+
+        pack(&file, r#""minecraft":"1.21.1","forge":"52.0.0""#, "");
+        let (result, instances) = run_pack_with(&root, &file, std::sync::Arc::new(Maven));
+        let (summary, _) = result.unwrap();
+        assert!(
+            matches!(&summary.loader, Loader::Forge(v) if v == "52.0.0"),
+            "{:?}",
+            summary.loader
+        );
+        let dir = instances.dir(&summary.id).unwrap();
+        assert!(dir.join(".vibelauncher/pack.json").is_file());
+
+        // A version the list does not have is refused and creates nothing.
+        pack(&file, r#""minecraft":"1.21.1","forge":"9.9.9""#, "");
         let (result, instances) = run_pack_with(&root, &file, std::sync::Arc::new(Maven));
         assert!(result.is_err());
         assert_eq!(instances.list().unwrap().len(), 1);
