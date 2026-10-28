@@ -27,6 +27,7 @@ vl-instance = { path = "crates/vl-instance" }
 vl-launch = { path = "crates/vl-launch" }
 vl-loaders = { path = "crates/vl-loaders" }
 vl-modrinth = { path = "crates/vl-modrinth" }
+vl-curseforge = { path = "crates/vl-curseforge" }
 vl-platforms = { path = "crates/vl-platforms" }
 vl-install = { path = "crates/vl-install" }
 vl-backend = { path = "crates/vl-backend" }

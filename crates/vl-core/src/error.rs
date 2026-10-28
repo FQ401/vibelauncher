@@ -26,8 +26,11 @@ pub enum ErrorKind {
     Io,
     /// Downloaded or stored data failed a hash, size or format check.
     Integrity,
-    /// Signing in failed or the account needs to sign in again.
+    /// Signing in failed or the account needs to sign in again; also a platform that refused
+    /// the user's API key.
     Auth,
+    /// A platform needs an API key and none is set (CurseForge: the user enters their own key).
+    NoApiKey,
     /// No suitable Java runtime, or the runtime failed its check.
     Java,
     /// The game process failed to start or exited abnormally.

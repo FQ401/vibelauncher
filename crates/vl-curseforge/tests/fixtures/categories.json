@@ -1,0 +1,9 @@
+{
+  "data": [
+    {"id": 6, "gameId": 432, "name": "Mods", "slug": "mc-mods", "url": "https://www.curseforge.com/minecraft/mc-mods", "iconUrl": "https://media.forgecdn.net/avatars/6/1/mods.png", "dateModified": "2014-05-08T17:44:39.057Z", "isClass": true, "displayIndex": 0},
+    {"id": 412, "gameId": 432, "name": "Technology", "slug": "technology", "url": "https://www.curseforge.com/minecraft/mc-mods/technology", "iconUrl": "https://media.forgecdn.net/avatars/14/486/tech.png", "dateModified": "2014-05-08T17:42:15.287Z", "isClass": false, "classId": 6, "parentCategoryId": 6},
+    {"id": 420, "gameId": 432, "name": "Storage", "slug": "storage", "iconUrl": "ftp://media.example/x.png", "isClass": false, "classId": 6, "parentCategoryId": 412},
+    {"id": 0, "name": "Broken", "slug": "broken"},
+    {"id": 999, "name": "No slug", "slug": ""}
+  ]
+}

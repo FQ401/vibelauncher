@@ -1,0 +1,65 @@
+{
+  "data": [
+    {
+      "id": 910001,
+      "gameId": 432,
+      "name": "Example Storage",
+      "slug": "example-storage",
+      "links": {
+        "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/example-storage",
+        "wikiUrl": "",
+        "issuesUrl": "https://git.example.org/storage/issues",
+        "sourceUrl": "https://git.example.org/storage"
+      },
+      "summary": "Chests that sort themselves.",
+      "status": 4,
+      "downloadCount": 1234567.0,
+      "isFeatured": false,
+      "primaryCategoryId": 420,
+      "categories": [
+        {"id": 420, "gameId": 432, "name": "Storage", "slug": "storage", "isClass": false, "classId": 6, "parentCategoryId": 6},
+        {"id": 412, "gameId": 432, "name": "Technology", "slug": "technology", "isClass": false, "classId": 6, "parentCategoryId": 6}
+      ],
+      "classId": 6,
+      "authors": [{"id": 1, "name": "example_author", "url": "https://www.curseforge.com/members/example_author"}],
+      "logo": {
+        "id": 5,
+        "modId": 910001,
+        "thumbnailUrl": "https://media.forgecdn.net/avatars/thumbnails/0/5/256/256/logo.png",
+        "url": "https://media.forgecdn.net/avatars/0/5/logo.png"
+      },
+      "mainFileId": 5100200,
+      "latestFiles": [],
+      "latestFilesIndexes": [
+        {"gameVersion": "1.21.1", "fileId": 5100200, "filename": "example-storage-fabric-2.0.0.jar", "releaseType": 1, "gameVersionTypeId": 77784, "modLoader": 4},
+        {"gameVersion": "1.21.1", "fileId": 5100199, "filename": "example-storage-neoforge-2.0.0.jar", "releaseType": 1, "gameVersionTypeId": 77784, "modLoader": 6},
+        {"gameVersion": "1.20.1", "fileId": 5000100, "filename": "example-storage-forge-1.9.0.jar", "releaseType": 2, "gameVersionTypeId": 75125, "modLoader": 1}
+      ],
+      "dateCreated": "2023-02-01T10:00:00Z",
+      "dateModified": "2026-09-30T12:00:00.123Z",
+      "dateReleased": "2026-09-30T11:59:00Z",
+      "allowModDistribution": true,
+      "gamePopularityRank": 120,
+      "isAvailable": true,
+      "thumbsUpCount": 42
+    },
+    {
+      "id": "not a number",
+      "name": "Damaged entry"
+    },
+    {
+      "id": 910002,
+      "name": "Example Pack",
+      "slug": "example-pack",
+      "summary": "A small pack.",
+      "classId": 4471,
+      "categories": "not a list",
+      "authors": [],
+      "logo": null,
+      "downloadCount": 10,
+      "latestFilesIndexes": [{"gameVersion": "1.20.1", "fileId": 5000300, "modLoader": 1}],
+      "dateModified": "2026-08-01T00:00:00Z"
+    }
+  ],
+  "pagination": {"index": 20, "pageSize": 20, "resultCount": 3, "totalCount": 25000}
+}

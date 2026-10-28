@@ -1,0 +1,46 @@
+{
+  "data": {
+    "isCacheBuilt": true,
+    "exactMatches": [
+      {
+        "id": 910001,
+        "file": {
+          "id": 5100200,
+          "modId": 910001,
+          "displayName": "Example Storage 2.0.0 (Fabric)",
+          "fileName": "example-storage-fabric-2.0.0.jar",
+          "releaseType": 1,
+          "hashes": [{"value": "0123456789abcdef0123456789abcdef01234567", "algo": 1}],
+          "fileDate": "2026-09-30T11:59:00Z",
+          "fileLength": 524288,
+          "downloadUrl": "https://edge.forgecdn.net/files/5100/200/example-storage-fabric-2.0.0.jar",
+          "gameVersions": ["1.21.1", "Fabric"],
+          "fileFingerprint": 3000000000
+        },
+        "latestFiles": []
+      },
+      {
+        "id": 910002,
+        "file": {
+          "id": 5000300,
+          "modId": 910002,
+          "displayName": "Example Library 1.0",
+          "fileName": "example-library-1.0.jar",
+          "releaseType": 1,
+          "fileLength": 1000,
+          "downloadUrl": null,
+          "gameVersions": ["1.20.1", "Forge"],
+          "fileFingerprint": 17
+        },
+        "latestFiles": []
+      },
+      {"id": 910003, "file": {"id": 5000400, "fileName": "too-big.jar", "fileFingerprint": 99999999999}},
+      {"id": 910004, "file": null}
+    ],
+    "exactFingerprints": [3000000000, 17],
+    "partialMatches": [],
+    "partialMatchFingerprints": {},
+    "installedFingerprints": [3000000000, 17, 5],
+    "unmatchedFingerprints": [5]
+  }
+}
