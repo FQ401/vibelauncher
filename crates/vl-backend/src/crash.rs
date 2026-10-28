@@ -165,7 +165,10 @@ pub(crate) fn diagnose(sources: &Sources) -> vl_core::Result<CrashDiagnosis> {
     );
 
     let trash = sources.log_dir.join("..").join(".trash");
-    let index = Resources::new(sources.game_dir.clone(), trash).class_index()?;
+    let cache = sources.log_dir.join("..").join(vl_resources::META_DIR);
+    let index = Resources::new(sources.game_dir.clone(), trash)
+        .with_cache_dir(cache)
+        .class_index()?;
     let input = CrashInput {
         latest_log: &log,
         crash_report: &report,

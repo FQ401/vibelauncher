@@ -14,6 +14,7 @@ vl-core.workspace = true
 vl-mods.workspace = true
 vl-crash.workspace = true
 vl-bisect.workspace = true
+vl-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true
