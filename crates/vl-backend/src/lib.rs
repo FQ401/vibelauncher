@@ -9,6 +9,7 @@
 //! yet answers [`vl_core::ErrorKind::Unsupported`].
 
 mod accounts;
+mod catalog;
 mod instances;
 mod java;
 mod launch;
@@ -58,6 +59,7 @@ pub struct Backend {
     tasks: TaskEngine,
     accounts: accounts::Service,
     launch: launch::Service,
+    catalog: catalog::Service,
 }
 
 impl Backend {
@@ -71,6 +73,7 @@ impl Backend {
         let tasks = TaskEngine::new(Arc::clone(&events), MAX_PARALLEL_TASKS);
         let accounts = accounts::Service::new(&store, Arc::clone(&events))?;
         let launch = launch::Service::new(&store, Arc::clone(&events))?;
+        let catalog = catalog::Service::new(store.cache_dir())?;
         Ok(Self {
             java: java::JavaService::new(store.data_dir(), store.cache_dir(), Arc::clone(&events)),
             config,
@@ -81,6 +84,7 @@ impl Backend {
             tasks,
             accounts,
             launch,
+            catalog,
         })
     }
 
@@ -127,6 +131,7 @@ impl Facade for Backend {
             Command::Launch(c) => launch::handle(self, c, replier),
             Command::Tasks(c) => tasks::handle(self, c, replier),
             Command::Resources(c) => resources::handle(self, c, replier),
+            Command::Catalog(c) => catalog::handle(self, c, replier),
             other => replier.send(Err(Error::unsupported(format!("{other:?}")))),
         }
         reply

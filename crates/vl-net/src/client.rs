@@ -10,7 +10,7 @@ use crate::cache::HttpCache;
 use crate::config::NetConfig;
 use crate::control::{Control, Semaphore};
 use crate::error::{NetError, redact_url};
-use crate::transport::{HttpRequest, HttpTransport, UreqTransport};
+use crate::transport::{HttpRequest, HttpResponse, HttpTransport, PostRequest, UreqTransport};
 
 /// Where the bytes of a metadata request came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +53,18 @@ impl Default for GetOptions {
             use_cache: true,
         }
     }
+}
+
+/// Observes the network requests of one call: lets a caller pace itself against a server's rate
+/// limit. Cache hits and offline reads send no request and do not reach the hooks.
+pub trait RequestHooks: Send + Sync {
+    /// Called before every network attempt (retries included); may block to wait, and fails to
+    /// stop the call (for example when cancelled).
+    fn before_request(&self, control: &Control) -> Result<(), NetError>;
+
+    /// Called with the status and the lowercase-named headers of every response, whatever its
+    /// status.
+    fn after_response(&self, status: u16, headers: &[(String, String)]);
 }
 
 pub(crate) struct Inner {
@@ -103,6 +115,17 @@ impl Client {
         options: &GetOptions,
         control: &Control,
     ) -> Result<Fetched, NetError> {
+        self.get_bytes_with(url, options, control, None)
+    }
+
+    /// [`get_bytes`](Self::get_bytes) with [`RequestHooks`] around every network attempt.
+    pub fn get_bytes_with(
+        &self,
+        url: &str,
+        options: &GetOptions,
+        control: &Control,
+        hooks: Option<&dyn RequestHooks>,
+    ) -> Result<Fetched, NetError> {
         check_url(url)?;
         control.cancel.check()?;
         let cache = if options.use_cache {
@@ -132,7 +155,7 @@ impl Client {
             .max_bytes
             .unwrap_or(self.inner.config.max_response_bytes);
         let result = self.with_retries(control, || {
-            self.fetch_once(url, entry.as_ref(), cap, control)
+            self.fetch_once(url, entry.as_ref(), cap, control, hooks)
         });
         match (result, entry) {
             (Ok(Fetch::NotModified), Some(entry)) => {
@@ -161,6 +184,47 @@ impl Client {
             (Err(e), Some(entry)) if e.is_transport() => Ok(stale(entry)),
             (Err(e), _) => Err(e),
         }
+    }
+
+    /// POST `body` to `url` and return the response body. Nothing is cached; retries, timeouts
+    /// and the size cap are the same as for a GET. Redirects are not followed.
+    pub fn post_bytes(
+        &self,
+        url: &str,
+        content_type: &str,
+        body: &[u8],
+        max_bytes: Option<u64>,
+        control: &Control,
+        hooks: Option<&dyn RequestHooks>,
+    ) -> Result<Vec<u8>, NetError> {
+        check_url(url)?;
+        control.cancel.check()?;
+        if self.inner.config.offline {
+            return Err(NetError::Offline(redact_url(url)));
+        }
+        let cap = max_bytes.unwrap_or(self.inner.config.max_response_bytes);
+        self.with_retries(control, || {
+            if let Some(h) = hooks {
+                h.before_request(control)?;
+            }
+            let response = self.inner.transport.post(&PostRequest {
+                url: url.to_string(),
+                headers: Vec::new(),
+                content_type: Some(content_type.to_string()),
+                body: body.to_vec(),
+                body_timeout: self.inner.config.request_timeout,
+            })?;
+            if let Some(h) = hooks {
+                h.after_response(response.status, &response.headers);
+            }
+            if response.status != 200 {
+                return Err(NetError::Status {
+                    status: response.status,
+                    url: redact_url(url),
+                });
+            }
+            read_capped(response, cap, url, control)
+        })
     }
 
     /// [`get_bytes`](Self::get_bytes) and parse the body as JSON.
@@ -207,6 +271,7 @@ impl Client {
         entry: Option<&crate::cache::Entry>,
         cap: u64,
         control: &Control,
+        hooks: Option<&dyn RequestHooks>,
     ) -> Result<Fetch, NetError> {
         let mut headers = Vec::new();
         if let Some(entry) = entry {
@@ -222,7 +287,13 @@ impl Client {
             headers,
             body_timeout: self.inner.config.request_timeout,
         };
+        if let Some(h) = hooks {
+            h.before_request(control)?;
+        }
         let response = self.inner.transport.get(&request)?;
+        if let Some(h) = hooks {
+            h.after_response(response.status, &response.headers);
+        }
         if response.status == 304 && entry.is_some() {
             return Ok(Fetch::NotModified);
         }
@@ -232,39 +303,50 @@ impl Client {
                 url: redact_url(url),
             });
         }
-        let too_large = || NetError::TooLarge {
-            limit: cap,
-            url: redact_url(url),
-        };
-        let declared = content_length(&response.headers);
-        if declared.is_some_and(|n| n > cap) {
-            return Err(too_large());
-        }
         let etag = response.header("etag").map(str::to_string);
         let last_modified = response.header("last-modified").map(str::to_string);
-        let mut body = response.body;
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 16 * 1024];
-        loop {
-            control.cancel.check()?;
-            let n = body.read(&mut chunk).map_err(read_error)?;
-            if n == 0 {
-                break;
-            }
-            if (bytes.len() + n) as u64 > cap {
-                return Err(too_large());
-            }
-            bytes.extend_from_slice(&chunk[..n]);
-        }
-        if declared.is_some_and(|n| n != bytes.len() as u64) {
-            return Err(NetError::Connect("response body ended early".into()));
-        }
+        let bytes = read_capped(response, cap, url, control)?;
         Ok(Fetch::Body(Body {
             bytes,
             etag,
             last_modified,
         }))
     }
+}
+
+/// Reads a response body up to `cap` bytes, checking the declared length.
+fn read_capped(
+    response: HttpResponse,
+    cap: u64,
+    url: &str,
+    control: &Control,
+) -> Result<Vec<u8>, NetError> {
+    let too_large = || NetError::TooLarge {
+        limit: cap,
+        url: redact_url(url),
+    };
+    let declared = content_length(&response.headers);
+    if declared.is_some_and(|n| n > cap) {
+        return Err(too_large());
+    }
+    let mut body = response.body;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        control.cancel.check()?;
+        let n = body.read(&mut chunk).map_err(read_error)?;
+        if n == 0 {
+            break;
+        }
+        if (bytes.len() + n) as u64 > cap {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk[..n]);
+    }
+    if declared.is_some_and(|n| n != bytes.len() as u64) {
+        return Err(NetError::Connect("response body ended early".into()));
+    }
+    Ok(bytes)
 }
 
 enum Fetch {

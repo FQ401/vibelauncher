@@ -5,6 +5,7 @@
 //! launch reports task progress, moves the instance to `Running`, streams game log lines and
 //! exits. Nothing touches files, the network or real processes.
 
+mod catalog;
 mod data;
 mod sim;
 
@@ -121,6 +122,7 @@ impl MockFacade {
             Command::Settings(c) => self.settings(c),
             Command::Launch(c) => self.launch(c),
             Command::Tasks(c) => self.tasks(c),
+            Command::Catalog(c) => catalog::handle(c),
             other => Err(unsupported(&other)),
         }
     }

@@ -22,6 +22,7 @@ vl-instance.workspace = true
 vl-launch.workspace = true
 vl-resources.workspace = true
 vl-loaders.workspace = true
+vl-platforms.workspace = true
 
 [lints]
 workspace = true

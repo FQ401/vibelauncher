@@ -1,6 +1,7 @@
 //! Command groups; each group lives in its own module.
 
 mod accounts;
+mod catalog;
 mod info;
 mod instances;
 mod java;
@@ -39,7 +40,15 @@ commands:
   accounts refresh <account>          renew a Microsoft sign-in
   java list                           list Java runtimes
   java install <major>                download a Java runtime (8, 17, 21...)
-  launch <instance> [--offline]       launch and follow the game log";
+  launch <instance> [--offline]       launch and follow the game log
+  catalog search <query> [--type <mod|modpack|resourcepack|shader|datapack>] [--version <v>]
+                         [--loader <l>] [--category <c>] [--sort <relevance|downloads|follows|newest|updated>]
+                         [--offset <n>] [--limit <n>]
+                                      search Modrinth
+  catalog project <slug>              show a project
+  catalog versions <slug> [--version <v>] [--loader <l>]
+                                      list a project's versions
+  catalog lookup <sha1>...            find which versions own files with these hashes";
 
 /// A failed command line.
 #[derive(Debug)]
@@ -81,6 +90,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         ["accounts", rest @ ..] => accounts::run(facade, rest, out),
         ["java", rest @ ..] => java::run(facade, rest, out),
         ["launch", rest @ ..] => launch::run(facade, rest, out),
+        ["catalog", rest @ ..] => catalog::run(facade, rest, out),
         _ => Err(USAGE.into()),
     }
 }

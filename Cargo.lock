@@ -4097,6 +4097,7 @@ dependencies = [
  "vl-loaders",
  "vl-meta",
  "vl-net",
+ "vl-platforms",
  "vl-resources",
  "vl-settings",
  "vl-store",
@@ -4202,6 +4203,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vl-modrinth"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vl-core",
+]
+
+[[package]]
 name = "vl-mods"
 version = "0.0.0"
 dependencies = [
@@ -4220,6 +4230,16 @@ dependencies = [
  "sha2",
  "ureq",
  "vl-core",
+]
+
+[[package]]
+name = "vl-platforms"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "vl-core",
+ "vl-modrinth",
+ "vl-net",
 ]
 
 [[package]]
