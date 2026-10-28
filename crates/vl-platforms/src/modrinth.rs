@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use vl_core::catalog::{
-    HashAlgorithm, HashMatch, Project, ProjectVersion, Provider, SearchPage, SearchQuery,
-    VersionFilter,
+    HashAlgorithm, HashMatch, Project, ProjectVersion, Provider, ReleaseChannel, SearchPage,
+    SearchQuery, VersionFilter,
 };
 use vl_core::{Error, ErrorKind, Result};
 use vl_modrinth::parse::{self, MAX_PROJECT_BYTES, MAX_SEARCH_BYTES, MAX_VERSIONS_BYTES};
@@ -179,6 +179,50 @@ impl CatalogSource for ModrinthSource {
                 .options
                 .endpoints
                 .versions_by_hashes_body(chunk, algorithm)?;
+            let bytes = self
+                .client
+                .post_bytes(
+                    &url,
+                    "application/json",
+                    &body,
+                    Some(MAX_VERSIONS_BYTES as u64),
+                    control,
+                    Some(hooks),
+                )
+                .map_err(convert)?;
+            matches.extend(parse::parse_version_files(&bytes, algorithm)?);
+        }
+        matches.sort_by(|a, b| a.hash.cmp(&b.hash));
+        Ok(matches)
+    }
+
+    fn latest_versions_by_hashes(
+        &self,
+        algorithm: HashAlgorithm,
+        hashes: &[String],
+        filter: &VersionFilter,
+        channels: &[ReleaseChannel],
+        control: &Control,
+    ) -> Result<Vec<HashMatch>> {
+        if hashes.len() > MAX_LOOKUP_HASHES {
+            return Err(Error::invalid_input(format!(
+                "at most {MAX_LOOKUP_HASHES} hashes per lookup"
+            )));
+        }
+        let unique: Vec<String> = hashes
+            .iter()
+            .map(|h| h.to_ascii_lowercase())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let url = self.options.endpoints.latest_versions_url();
+        let hooks: &dyn RequestHooks = &*self.limiter;
+        let mut matches = Vec::new();
+        for chunk in unique.chunks(MAX_HASHES_PER_REQUEST) {
+            let body = self
+                .options
+                .endpoints
+                .latest_versions_body(chunk, algorithm, filter, channels)?;
             let bytes = self
                 .client
                 .post_bytes(
@@ -443,6 +487,43 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::InvalidInput);
         assert_eq!(s.fake.urls().len(), 1);
+    }
+
+    #[test]
+    fn updates_are_one_batched_post_with_filters_and_channels() {
+        let s = setup(None);
+        let h1 = "1".repeat(40);
+        s.fake
+            .push(reply(200, &json!({ h1.clone(): version("v9", &h1) })));
+        let filter = VersionFilter {
+            loaders: vec!["fabric".into()],
+            game_versions: vec!["1.21.4".into()],
+        };
+        let found = s
+            .source
+            .latest_versions_by_hashes(
+                HashAlgorithm::Sha1,
+                std::slice::from_ref(&h1),
+                &filter,
+                &[vl_core::catalog::ReleaseChannel::Release],
+                &Control::default(),
+            )
+            .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].version.id, "v9");
+        let seen = s.fake.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, "POST");
+        assert!(
+            seen[0].1.ends_with("/version_files/update"),
+            "{}",
+            seen[0].1
+        );
+        let body: Value = serde_json::from_slice(&seen[0].2).unwrap();
+        assert_eq!(body["loaders"], json!(["fabric"]));
+        assert_eq!(body["game_versions"], json!(["1.21.4"]));
+        assert_eq!(body["version_types"], json!(["release"]));
+        assert_eq!(body["hashes"], json!([h1]));
     }
 
     #[test]

@@ -14,8 +14,8 @@ pub mod modrinth;
 pub mod rate;
 
 use vl_core::catalog::{
-    HashAlgorithm, HashMatch, Project, ProjectVersion, Provider, SearchPage, SearchQuery,
-    VersionFilter,
+    HashAlgorithm, HashMatch, Project, ProjectVersion, Provider, ReleaseChannel, SearchPage,
+    SearchQuery, VersionFilter,
 };
 use vl_core::{Error, Result};
 use vl_net::{Client, Control};
@@ -49,6 +49,22 @@ pub trait CatalogSource: Send + Sync {
         hashes: &[String],
         control: &Control,
     ) -> Result<Vec<HashMatch>>;
+
+    /// For the files with these hashes, the newest version of the file's project that fits
+    /// `filter` and is of one of `channels` (any when empty), in one batched request. The result
+    /// is keyed by the asked hash; files whose project has no such version are left out. The
+    /// answer is data: the caller checks that it fits and is newer.
+    fn latest_versions_by_hashes(
+        &self,
+        algorithm: HashAlgorithm,
+        hashes: &[String],
+        filter: &VersionFilter,
+        channels: &[ReleaseChannel],
+        control: &Control,
+    ) -> Result<Vec<HashMatch>> {
+        let _ = (algorithm, hashes, filter, channels, control);
+        Err(Error::unsupported("update lookup by hash"))
+    }
 }
 
 /// Every platform the launcher can ask.

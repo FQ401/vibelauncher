@@ -11,6 +11,9 @@
 //! put back as they were. Every installed file gets an [`Origin`] record in
 //! `<instance>/.vibelauncher/resources.json` (see [`origin`]).
 //!
+//! [`updates`] finds the origin of files added by hand, checks for newer versions and plans
+//! updates and version changes with the same planner.
+//!
 //! [`mrpack`] installs a Modrinth modpack (`.mrpack`) into a fresh game directory.
 //!
 //! Plans and execution are blocking and are meant to run inside a task.
@@ -22,11 +25,13 @@ pub mod mrpack_origins;
 pub mod origin;
 mod plan;
 mod scan;
+pub mod updates;
 
 pub use apply::{ApplyInput, Report, execute};
 pub use hashing::{FileHashes, hash_file};
 pub use origin::{Origin, OriginStore};
 pub use plan::{PlanInput, Target, plan, resource_kind};
+pub use updates::{Selection, UpdateInput, UpdateOptions, check, identify, plan_update};
 
 #[cfg(test)]
 mod tests;

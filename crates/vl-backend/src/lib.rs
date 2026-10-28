@@ -16,6 +16,7 @@ mod launch;
 mod resources;
 mod settings;
 mod tasks;
+mod updates;
 mod versions;
 
 use std::path::PathBuf;

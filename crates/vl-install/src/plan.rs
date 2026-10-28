@@ -104,7 +104,7 @@ pub fn plan(
     Ok(planner.finish())
 }
 
-struct Planner<'a> {
+pub(crate) struct Planner<'a> {
     input: &'a PlanInput<'a>,
     min: MinStability,
     origins: Vec<Origin>,
@@ -116,10 +116,14 @@ struct Planner<'a> {
     satisfied: Vec<Satisfied>,
     optional: Vec<(String, String)>,
     warnings: Vec<String>,
+    /// Projects the caller asked for; a dependency on one of them waits for its own turn.
+    requested: HashSet<String>,
+    /// Versions the caller already has, by id.
+    known: HashMap<String, ProjectVersion>,
 }
 
 impl<'a> Planner<'a> {
-    fn new(input: &'a PlanInput<'a>, min: MinStability) -> Self {
+    pub(crate) fn new(input: &'a PlanInput<'a>, min: MinStability) -> Self {
         let loaded = input.origins.load();
         let mut warnings = Vec::new();
         if loaded.damaged {
@@ -139,6 +143,8 @@ impl<'a> Planner<'a> {
             satisfied: Vec::new(),
             optional: Vec::new(),
             warnings,
+            requested: HashSet::new(),
+            known: HashMap::new(),
         }
     }
 
@@ -154,6 +160,27 @@ impl<'a> Planner<'a> {
             self.scanned.insert(kind, files);
         }
         Ok(self.scanned.get(&kind).map_or(&[], Vec::as_slice))
+    }
+
+    /// Starts from files already scanned and versions already fetched, so no lookup repeats.
+    pub(crate) fn seed(
+        &mut self,
+        scanned: HashMap<ResourceKind, Vec<InstalledFile>>,
+        known: HashMap<String, ProjectVersion>,
+    ) {
+        self.scanned = scanned;
+        self.known = known;
+    }
+
+    /// Plans the exact `version` of each project `(project id, version id)`; all of them are
+    /// asked for, so none is skipped as somebody's dependency.
+    pub(crate) fn add_pinned(&mut self, pins: &[(String, String)]) -> Result<()> {
+        self.requested = pins.iter().map(|(p, _)| p.clone()).collect();
+        for (project, version) in pins {
+            let info = self.input.source.project(project, self.input.control)?;
+            self.add(info, Some(version), PlanRole::Requested, 0)?;
+        }
+        Ok(())
     }
 
     fn add(
@@ -225,6 +252,10 @@ impl<'a> Planner<'a> {
         for dependency in &version.dependencies {
             match (dependency.kind, dependency.project_id.as_deref()) {
                 (DependencyKind::Required, Some(id)) => {
+                    if self.requested.contains(id) && !self.seen.contains(id) {
+                        // Asked for by the caller: it gets its own turn with its own version.
+                        continue;
+                    }
                     let wanted = self.input.source.project(id, self.input.control)?;
                     if resource_kind(wanted.project_type).is_none() {
                         self.warnings.push(format!(
@@ -305,6 +336,20 @@ impl<'a> Planner<'a> {
         } else {
             Vec::new()
         };
+        if let Some(v) = pinned.and_then(|id| self.known.get(id))
+            && v.project_id == project.id
+        {
+            let fits = v.game_versions.contains(&target.game_version)
+                && (loaders.is_empty() || v.loaders.iter().any(|l| loaders.contains(l)));
+            return if fits {
+                Ok(v.clone())
+            } else {
+                Err(Error::not_found(format!(
+                    "version {} of {} does not fit Minecraft {}",
+                    v.version_number, project.title, target.game_version
+                )))
+            };
+        }
         let filter = VersionFilter {
             loaders: loaders.clone(),
             game_versions: vec![target.game_version.clone()],
@@ -487,7 +532,7 @@ impl<'a> Planner<'a> {
         }
     }
 
-    fn finish(mut self) -> InstallPlan {
+    pub(crate) fn finish(mut self) -> InstallPlan {
         let recommended = self.recommendations();
         InstallPlan {
             game_version: self.input.target.game_version.clone(),

@@ -194,6 +194,10 @@ impl Ver {
 struct Catalog {
     projects: Vec<Project>,
     versions: Vec<Ver>,
+    lookup_calls: AtomicU32,
+    update_calls: AtomicU32,
+    /// The filter and channels of each update request.
+    update_asks: Mutex<Vec<(VersionFilter, Vec<ReleaseChannel>)>>,
 }
 
 impl Catalog {
@@ -252,12 +256,57 @@ impl CatalogSource for Catalog {
             .collect())
     }
 
+    fn latest_versions_by_hashes(
+        &self,
+        _: HashAlgorithm,
+        hashes: &[String],
+        filter: &VersionFilter,
+        channels: &[ReleaseChannel],
+        _: &Control,
+    ) -> Result<Vec<HashMatch>> {
+        self.update_calls.fetch_add(1, Ordering::Relaxed);
+        self.update_asks
+            .lock()
+            .unwrap()
+            .push((filter.clone(), channels.to_vec()));
+        let all: Vec<ProjectVersion> = self.versions.iter().map(Ver::build).collect();
+        Ok(all
+            .iter()
+            .filter_map(|owner| {
+                let sha = owner.files[0].sha1.clone()?;
+                if !hashes.contains(&sha) {
+                    return None;
+                }
+                let newest = all
+                    .iter()
+                    .filter(|v| v.project_id == owner.project_id)
+                    .filter(|v| {
+                        filter.loaders.is_empty()
+                            || v.loaders.iter().any(|l| filter.loaders.contains(l))
+                    })
+                    .filter(|v| {
+                        filter.game_versions.is_empty()
+                            || v.game_versions
+                                .iter()
+                                .any(|g| filter.game_versions.contains(g))
+                    })
+                    .filter(|v| channels.is_empty() || channels.contains(&v.channel))
+                    .max_by(|a, b| a.date_published.cmp(&b.date_published))?;
+                Some(HashMatch {
+                    hash: sha,
+                    version: newest.clone(),
+                })
+            })
+            .collect())
+    }
+
     fn versions_by_hashes(
         &self,
         _: HashAlgorithm,
         hashes: &[String],
         _: &Control,
     ) -> Result<Vec<HashMatch>> {
+        self.lookup_calls.fetch_add(1, Ordering::Relaxed);
         Ok(self
             .versions
             .iter()
@@ -913,3 +962,5 @@ fn origin_records_survive_damage_and_manual_changes() {
     let files: Vec<_> = store.load().origins.into_iter().map(|o| o.file).collect();
     assert_eq!(files, ["d.jar"]);
 }
+
+mod updates_cases;

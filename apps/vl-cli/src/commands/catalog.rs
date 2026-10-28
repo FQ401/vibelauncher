@@ -274,9 +274,22 @@ fn install(
         writeln!(out, "not installed; add --yes to install")?;
         return Ok(());
     }
+    run_task(
+        facade,
+        Command::Catalog(CatalogCommand::Install(request)),
+        out,
+    )
+}
+
+/// Starts the task a command returns and follows it to its end.
+pub(crate) fn run_task(
+    facade: &dyn Facade,
+    command: Command,
+    out: Out<'_>,
+) -> Result<(), CliError> {
     // Subscribe before the command so no event is missed.
     let events = facade.subscribe();
-    let task = match call(facade, Command::Catalog(CatalogCommand::Install(request)))? {
+    let task = match call(facade, command)? {
         Response::Task(task) => task,
         other => return Err(unexpected(&other)),
     };
@@ -302,7 +315,7 @@ fn install(
 }
 
 /// Asks on a terminal; anything else is a plan only.
-fn confirmed(out: Out<'_>) -> Result<bool, CliError> {
+pub(crate) fn confirmed(out: Out<'_>) -> Result<bool, CliError> {
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
         return Ok(false);
@@ -314,7 +327,11 @@ fn confirmed(out: Out<'_>) -> Result<bool, CliError> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }
 
-fn print_plan(instance: &InstanceId, plan: &InstallPlan, out: Out<'_>) -> Result<(), CliError> {
+pub(crate) fn print_plan(
+    instance: &InstanceId,
+    plan: &InstallPlan,
+    out: Out<'_>,
+) -> Result<(), CliError> {
     writeln!(
         out,
         "plan for {instance} (Minecraft {}, {}):",

@@ -1,6 +1,6 @@
 //! Request URLs and bodies of the Modrinth API.
 
-use vl_core::catalog::{HashAlgorithm, ProjectType, SearchQuery, VersionFilter};
+use vl_core::catalog::{HashAlgorithm, ProjectType, ReleaseChannel, SearchQuery, VersionFilter};
 use vl_core::{Error, Result};
 
 /// The public API, version 2.
@@ -111,6 +111,52 @@ impl Endpoints {
             "algorithm": algorithm_name(algorithm),
         }))
         .map_err(|e| Error::internal(e.to_string()))
+    }
+
+    /// `POST /version_files/update`: the URL.
+    pub fn latest_versions_url(&self) -> String {
+        format!("{}/version_files/update", self.base)
+    }
+
+    /// `POST /version_files/update`: the JSON body for at most [`MAX_HASHES_PER_REQUEST`] hashes.
+    /// The answer holds, for each hash, the newest version of the file's project that fits
+    /// `filter` and is of one of `channels` (any channel when empty).
+    pub fn latest_versions_body(
+        &self,
+        hashes: &[String],
+        algorithm: HashAlgorithm,
+        filter: &VersionFilter,
+        channels: &[ReleaseChannel],
+    ) -> Result<Vec<u8>> {
+        if hashes.len() > MAX_HASHES_PER_REQUEST {
+            return Err(Error::invalid_input(format!(
+                "at most {MAX_HASHES_PER_REQUEST} hashes per request"
+            )));
+        }
+        let mut lower = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            check_hash(hash, algorithm)?;
+            lower.push(hash.to_ascii_lowercase());
+        }
+        let types: Vec<&str> = channels
+            .iter()
+            .filter_map(|c| match c {
+                ReleaseChannel::Release => Some("release"),
+                ReleaseChannel::Beta => Some("beta"),
+                ReleaseChannel::Alpha => Some("alpha"),
+                _ => None,
+            })
+            .collect();
+        let mut body = serde_json::json!({
+            "hashes": lower,
+            "algorithm": algorithm_name(algorithm),
+            "loaders": clean(&filter.loaders),
+            "game_versions": clean(&filter.game_versions),
+        });
+        if !types.is_empty() {
+            body["version_types"] = serde_json::json!(types);
+        }
+        serde_json::to_vec(&body).map_err(|e| Error::internal(e.to_string()))
     }
 }
 
@@ -290,6 +336,34 @@ mod tests {
             bare.as_deref().ok(),
             Some("https://api.modrinth.com/v2/project/abc/version?include_changelog=false")
         );
+    }
+
+    #[test]
+    fn update_requests_carry_filter_and_channels() {
+        let e = Endpoints::default();
+        assert!(e.latest_versions_url().ends_with("/version_files/update"));
+        let filter = VersionFilter {
+            loaders: vec!["fabric".into()],
+            game_versions: vec!["1.21.4".into()],
+        };
+        let body = e
+            .latest_versions_body(
+                &["AB".repeat(20)],
+                HashAlgorithm::Sha1,
+                &filter,
+                &[ReleaseChannel::Release, ReleaseChannel::Beta],
+            )
+            .unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        assert_eq!(v["loaders"], serde_json::json!(["fabric"]));
+        assert_eq!(v["game_versions"], serde_json::json!(["1.21.4"]));
+        assert_eq!(v["version_types"], serde_json::json!(["release", "beta"]));
+        assert_eq!(v["hashes"][0], "ab".repeat(20));
+        let any = e
+            .latest_versions_body(&[], HashAlgorithm::Sha1, &filter, &[])
+            .unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_slice(&any).unwrap_or_default();
+        assert!(v.get("version_types").is_none());
     }
 
     #[test]

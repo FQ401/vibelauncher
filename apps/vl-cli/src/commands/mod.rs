@@ -28,6 +28,12 @@ commands:
   instances mods list <instance> [--kind <k>]
   instances mods enable|disable|remove <instance> <file> [--kind <k>]
   instances mods add <instance> <path> [--kind <k>]
+  instances mods identify <instance>  find where hand-added files come from (by hash)
+  instances mods updates <instance> [--channel <c>] [--include-pack-files]
+                                      list newer versions of mods, packs and shaders
+  instances mods update <instance> [<mod>...|--all] [--version <id>] [--channel <c>]
+                        [--include-pack-files] [--yes]
+                                      update, or switch one mod to a version (older only by id)
                                       manage mods (default) or --kind resourcepacks|shaderpacks|
                                       datapacks|global-datapacks; remove moves to the trash
   versions list [--snapshots] [--old] list game versions

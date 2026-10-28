@@ -143,7 +143,14 @@ fn apply_one(
     let resources = input.resources;
     let dir = resources.dir(item.kind);
     let mut was_disabled = false;
+    let mut was_dependency = false;
     if let PlanAction::Replace { file, .. } = &item.action {
+        was_dependency = input
+            .origins
+            .load()
+            .origins
+            .iter()
+            .any(|o| o.kind == item.kind && o.file == *file && o.dependency);
         let disabled = dir.join(format!("{file}{DISABLED_SUFFIX}"));
         was_disabled = disabled.exists();
         let from = if was_disabled {
@@ -181,7 +188,8 @@ fn apply_one(
         version_id: item.version_id.clone(),
         version_number: Some(item.version_number.clone()),
         installed_unix: now_unix(),
-        dependency: matches!(item.role, vl_core::install::PlanRole::Dependency { .. }),
+        dependency: was_dependency
+            || matches!(item.role, vl_core::install::PlanRole::Dependency { .. }),
     });
     Ok(())
 }
