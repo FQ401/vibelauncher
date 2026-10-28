@@ -11,6 +11,7 @@
 mod accounts;
 mod bisect;
 mod catalog;
+mod crash;
 mod instances;
 mod java;
 mod launch;

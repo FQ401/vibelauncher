@@ -1,6 +1,6 @@
 //! Synthetic logs: one per signature and loader, plus the levels without a signature.
 
-use vl_crash::{CrashInput, Level, ModInfo, Signatures, diagnose};
+use vl_crash::{Cause, CrashInput, Level, ModInfo, Signatures, diagnose};
 
 fn mods() -> Vec<ModInfo> {
     vec![
@@ -46,13 +46,18 @@ fn builtin_table_is_valid() {
         ids,
         [
             "wrong_java",
+            "corrupt_files",
             "native_memory",
             "out_of_memory",
+            "graphics_driver",
             "jvm_crash",
             "wrong_game_version",
             "wrong_loader_version",
+            "wrong_dependency_version",
             "missing_dependency",
             "duplicate_mod",
+            "entrypoint_failure",
+            "loader_error",
             "mixin_conflict"
         ]
     );
@@ -363,5 +368,129 @@ fn custom_tables_are_validated() {
             "[[signature]]\nid='x'\nmessage_key='k'\nsources=['nope']\ntriggers=['a']"
         )
         .is_err()
+    );
+}
+
+fn hs(text: &str) -> CrashInput<'_> {
+    CrashInput {
+        hs_err: text,
+        ..CrashInput::default()
+    }
+}
+
+#[test]
+fn fabric_wrong_dependency_version() {
+    let text = "Incompatible mods found!
+Some of your mods are incompatible with the game or each other!
+Unmet dependency listing:
+	 - Mod 'Example' (example) 1.0 requires version 0.5 or later of 'Library' (library), but only the wrong version is present: 0.4!
+";
+    let d = diagnose(&log(text), &mods());
+    assert_eq!(d.signature.as_deref(), Some("wrong_dependency_version"));
+    assert_eq!(d.culprit_mods, ["example"]);
+    assert_eq!(d.args["dependency"], "library");
+    assert_eq!(d.args["expected"], "0.5 or later");
+    assert_eq!(d.args["found"], "0.4");
+    assert_eq!(d.cause, Cause::ModLikely);
+    assert!(d.loader_reported);
+}
+
+#[test]
+fn quilt_formats() {
+    let missing = "Mod example 1.0 requires any version of library, which is missing";
+    let d = diagnose(&log(missing), &mods());
+    assert_eq!(d.signature.as_deref(), Some("missing_dependency"));
+    assert_eq!(d.culprit_mods, ["example"]);
+    assert_eq!(d.args["dependency"], "library");
+    let wrong = "Mod example 1.0 requires version 2.0 or later of library, but the installed version is 1.5";
+    let d = diagnose(&log(wrong), &mods());
+    assert_eq!(d.signature.as_deref(), Some("wrong_dependency_version"));
+    assert_eq!(d.args["found"], "1.5");
+}
+
+#[test]
+fn forge_wrong_dependency_version_and_loading_error() {
+    let wrong = "Missing or unsupported mandatory dependencies:
+	Mod ID: 'library', Requested by: 'example', Expected range: '[2.0,)', Actual version: '1.5'
+";
+    let d = diagnose(&log(wrong), &mods());
+    assert_eq!(d.signature.as_deref(), Some("wrong_dependency_version"));
+    assert_eq!(d.args["expected"], "[2.0,)");
+    assert_eq!(d.args["found"], "1.5");
+    let error = "net.neoforged.fml.ModLoadingException: Mod File: /mods/x.jar
+	Failure message: Something went wrong
+";
+    let d = diagnose(&log(error), &mods());
+    assert_eq!(d.signature.as_deref(), Some("loader_error"));
+    assert!(d.loader_reported);
+    assert_eq!(d.args["detail"], "Something went wrong");
+}
+
+#[test]
+fn entrypoint_failure_names_the_mod() {
+    let text = "Could not execute entrypoint stage 'main' due to errors, provided by 'example'!";
+    let d = diagnose(&log(text), &mods());
+    assert_eq!(d.signature.as_deref(), Some("entrypoint_failure"));
+    assert_eq!(d.culprit_mods, ["example"]);
+}
+
+#[test]
+fn environment_causes() {
+    for (text, id) in [
+        (
+            "java.lang.UnsupportedClassVersionError: x (class file version 65.0)",
+            "wrong_java",
+        ),
+        (
+            "Error: Invalid or corrupt jarfile /games/client.jar",
+            "corrupt_files",
+        ),
+        (
+            "java.lang.OutOfMemoryError: Java heap space",
+            "out_of_memory",
+        ),
+        (
+            "Could not reserve enough space for 8388608KB object heap",
+            "native_memory",
+        ),
+    ] {
+        let d = diagnose(&log(text), &mods());
+        assert_eq!(d.signature.as_deref(), Some(id), "{text}");
+        assert_eq!(d.cause, Cause::Environment, "{text}");
+        assert!(!d.loader_reported);
+    }
+}
+
+#[test]
+fn graphics_driver_crash_in_hs_err() {
+    let text = "# A fatal error has been detected by the Java Runtime Environment:
+#  EXCEPTION_ACCESS_VIOLATION (0xc0000005)
+# Problematic frame:
+# C  [nvoglv64.dll+0x1234ab]
+";
+    let d = diagnose(&hs(text), &mods());
+    assert_eq!(d.signature.as_deref(), Some("graphics_driver"));
+    assert_eq!(d.cause, Cause::Environment);
+    assert_eq!(d.args["frame"], "nvoglv64.dll");
+    let other = "# A fatal error has been detected by the Java Runtime Environment:
+# C  [jvm.dll+0x1234ab]
+";
+    let d = diagnose(&hs(other), &mods());
+    assert_eq!(d.signature.as_deref(), Some("jvm_crash"));
+    assert_eq!(d.cause, Cause::Unknown);
+}
+
+#[test]
+fn stack_levels_carry_a_cause() {
+    let one = "java.lang.RuntimeException
+	at com.example.alpha.Thing.run(Thing.java:1)
+";
+    let d = diagnose(&log(one), &mods());
+    assert_eq!((d.level, d.cause), (Level::SingleMod, Cause::ModLikely));
+    assert!(!d.loader_reported);
+    let none = diagnose(&log("nothing here"), &mods());
+    assert_eq!(
+        (none.level, none.cause),
+        (Level::Undetermined, Cause::Unknown)
     );
 }

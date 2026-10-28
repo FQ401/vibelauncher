@@ -135,7 +135,7 @@ pub trait Facade: Send + Sync {
 | `Log(LogLine)` | a launcher log line with its source and level |
 | `LogBatch(LogBatch)` | a group of game output lines (level, time, text) with a count of lines left out |
 | `Instance(InstanceEvent)` | `Added`, `Changed`, `Removed` |
-| `Launch(LaunchEvent)` | `StateChanged { instance, state }`, `Exited { instance, exit }` |
+| `Launch(LaunchEvent)` | `StateChanged { instance, state }`, `Exited { instance, exit }`, `Diagnosed { instance, diagnosis }` |
 | `Account(AccountEvent)` | `DeviceCode(prompt)` for sign-in, `ListChanged` |
 | `Version`, `Java`, `Settings` | list or value changed; read it again with a command |
 | `Lagged { missed }` | this stream fell behind and dropped `missed` events |
@@ -195,6 +195,18 @@ preparing or running game.
   `console.max_lines` lines in memory (at most 16 MiB) and delivers batches every 100 ms of at
   most 500 lines; the surplus is counted as skipped. A run is a crash when the code is not 0 or a
   new file appeared in `crash-reports/` or as `hs_err_pid*.log` in the game directory.
+- Crash diagnosis (`vl-backend`): after a run that crashed (not stopped by the user) the backend
+  reads the tail (512 KiB) of the run's output file, else of `logs/latest.log`, and the head
+  (256 KiB) of the run's crash report and JVM error log, builds a `CrashInput`, and runs
+  `vl_crash::diagnose` with the `ModClassIndex` of the instance's enabled mods on its own thread.
+  The result is `LaunchEvent::Diagnosed` (a `vl_core::crash::CrashDiagnosis`, after `Exited`) and a
+  warning line in the launcher log. `LaunchCommand::Diagnose { instance }` does the same for the
+  newest logs without launching (`Response::Diagnosis`; `vl-cli instances diagnose <instance>`).
+  A diagnosis carries `cause` (`ModLikely`, `Environment`: Java, memory, graphics driver, damaged
+  game files, `Unknown`) and `loader_reported` (the mod loader named the problem itself:
+  Fabric/Quilt "Incompatible mods found!", Forge/NeoForge mod loading errors, missing or wrong
+  dependency versions); `bisect_useful()` is true only for `ModLikely` without `loader_reported`.
+  Message and action keys are Fluent ids in the interface locale (`crash-*`, `crash-action-*`).
 - Apple silicon: LWJGL 3 versions without arm64 natives get LWJGL 3.3.3 from Maven Central;
   LWJGL 2 versions (up to 1.12.2) are installed for `x86_64` and need an `x86_64` Java (Rosetta).
 

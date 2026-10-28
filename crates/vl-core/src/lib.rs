@@ -12,6 +12,7 @@ pub mod account;
 pub mod bisect;
 pub mod catalog;
 pub mod component;
+pub mod crash;
 pub mod error;
 pub mod facade;
 pub mod ids;

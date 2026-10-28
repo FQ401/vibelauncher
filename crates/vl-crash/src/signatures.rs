@@ -1,6 +1,6 @@
 //! The signature table (data in `signatures.toml`) and its matcher.
 
-use crate::{EvidenceLine, Source, evidence, push_evidence};
+use crate::{Cause, EvidenceLine, Source, evidence, push_evidence};
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -24,6 +24,10 @@ struct Raw {
     #[serde(default)]
     action_key: Option<String>,
     #[serde(default)]
+    cause: Option<String>,
+    #[serde(default)]
+    loader_reported: bool,
+    #[serde(default)]
     sources: Vec<String>,
     triggers: Vec<String>,
     #[serde(default)]
@@ -36,6 +40,8 @@ pub struct Signature {
     id: String,
     message_key: String,
     action_key: Option<String>,
+    cause: Cause,
+    loader_reported: bool,
     sources: Vec<Source>,
     triggers: Vec<Regex>,
     collect: Vec<Regex>,
@@ -52,6 +58,8 @@ pub(crate) struct Hit {
     pub id: String,
     pub message_key: String,
     pub action_key: Option<String>,
+    pub cause: Cause,
+    pub loader_reported: bool,
     pub mods: Vec<String>,
     pub args: BTreeMap<String, String>,
     pub evidence: Vec<EvidenceLine>,
@@ -80,6 +88,12 @@ impl Signatures {
                     other => Err(format!("{}: unknown source {other}", raw.id)),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let cause = match raw.cause.as_deref() {
+                None | Some("unknown") => Cause::Unknown,
+                Some("mod_likely") => Cause::ModLikely,
+                Some("environment") => Cause::Environment,
+                Some(other) => return Err(format!("{}: unknown cause {other}", raw.id)),
+            };
             let compile = |patterns: &[String]| {
                 patterns
                     .iter()
@@ -95,6 +109,8 @@ impl Signatures {
                 id: raw.id,
                 message_key: raw.message_key,
                 action_key: raw.action_key,
+                cause,
+                loader_reported: raw.loader_reported,
                 sources,
             });
         }
@@ -104,6 +120,16 @@ impl Signatures {
     /// The ids of the signatures, in evaluation order.
     pub fn ids(&self) -> Vec<&str> {
         self.list.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    /// The message and action keys the signatures can produce.
+    pub fn keys(&self) -> Vec<&str> {
+        let mut keys = Vec::new();
+        for s in &self.list {
+            keys.push(s.message_key.as_str());
+            keys.extend(s.action_key.as_deref());
+        }
+        keys
     }
 
     pub(crate) fn find(&self, sources: &[(Source, &str)]) -> Option<Hit> {
@@ -131,6 +157,8 @@ impl Signature {
             id: self.id.clone(),
             message_key: self.message_key.clone(),
             action_key: self.action_key.clone(),
+            cause: self.cause,
+            loader_reported: self.loader_reported,
             mods: Vec::new(),
             args: BTreeMap::new(),
             evidence: Vec::new(),

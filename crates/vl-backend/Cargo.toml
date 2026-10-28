@@ -21,6 +21,7 @@ vl-java.workspace = true
 vl-instance.workspace = true
 vl-launch.workspace = true
 vl-resources.workspace = true
+vl-crash.workspace = true
 vl-loaders.workspace = true
 vl-platforms.workspace = true
 vl-install.workspace = true

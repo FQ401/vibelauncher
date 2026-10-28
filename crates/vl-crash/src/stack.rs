@@ -1,7 +1,7 @@
 //! Levels 2-4: suspects from stack traces, when no signature matched.
 
 use crate::{
-    ClassIndex, CrashInput, Diagnosis, EvidenceLine, Level, Source, evidence, push_evidence,
+    Cause, ClassIndex, CrashInput, Diagnosis, EvidenceLine, Level, Source, evidence, push_evidence,
 };
 use std::collections::BTreeMap;
 
@@ -28,6 +28,16 @@ const NOT_MODS: &[&str] = &[
     "org.objectweb.",
     "org.slf4j.",
     "joptsimple.",
+];
+
+/// The keys this module can return.
+pub(crate) const KEYS: &[&str] = &[
+    "crash-undetermined",
+    "crash-suspect-single",
+    "crash-suspect-several",
+    "crash-action-export-report",
+    "crash-action-disable-mod",
+    "crash-action-find-culprit",
 ];
 
 type Frame<'a> = (usize, String, &'a str);
@@ -58,19 +68,22 @@ pub(crate) fn suspects<I: ClassIndex + ?Sized>(input: &CrashInput<'_>, mods: &I)
         push_evidence(&mut lines, evidence(source, *number, raw));
     }
 
-    let (level, message_key, action_key) = match culprits.len() {
+    let (level, cause, message_key, action_key) = match culprits.len() {
         0 => (
             Level::Undetermined,
+            Cause::Unknown,
             "crash-undetermined",
             "crash-action-export-report",
         ),
         1 => (
             Level::SingleMod,
+            Cause::ModLikely,
             "crash-suspect-single",
             "crash-action-disable-mod",
         ),
         _ => (
             Level::SeveralMods,
+            Cause::ModLikely,
             "crash-suspect-several",
             "crash-action-find-culprit",
         ),
@@ -78,6 +91,8 @@ pub(crate) fn suspects<I: ClassIndex + ?Sized>(input: &CrashInput<'_>, mods: &I)
     Diagnosis {
         level,
         signature: None,
+        cause,
+        loader_reported: false,
         culprit_mods: culprits,
         message_key: message_key.to_owned(),
         action_key: Some(action_key.to_owned()),

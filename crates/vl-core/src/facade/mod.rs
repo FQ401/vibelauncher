@@ -19,6 +19,7 @@ pub use channel::{EventBus, EventStream, Replier, Reply, reply_channel};
 use crate::account::{Account, AccountCommand, AccountEvent};
 use crate::bisect::{BisectCommand, BisectStatus};
 use crate::catalog::{CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage};
+use crate::crash::CrashDiagnosis;
 use crate::ids::TaskId;
 use crate::install::{
     IdentifyReport, InstallPlan, PackChanges, PackExport, PackUpdateInfo, UpdateReport,
@@ -134,6 +135,8 @@ pub enum Response {
     PackChanges(PackChanges),
     /// What a modpack export wrote.
     PackExported(PackExport),
+    /// The diagnosis of an instance's newest logs.
+    Diagnosis(CrashDiagnosis),
 }
 
 /// Something that happened in the launcher.
