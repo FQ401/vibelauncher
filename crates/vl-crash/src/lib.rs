@@ -137,15 +137,61 @@ pub fn diagnose_with<I: ClassIndex + ?Sized>(
     input: &CrashInput<'_>,
     mods: &I,
 ) -> Diagnosis {
+    let crash_report = strip_loading_reports(input.crash_report);
+    let latest_log = strip_loading_reports(input.latest_log);
     let sources = [
-        (Source::CrashReport, input.crash_report),
+        (Source::CrashReport, &*crash_report),
         (Source::HsErr, input.hs_err),
-        (Source::LatestLog, input.latest_log),
+        (Source::LatestLog, &*latest_log),
     ];
     if let Some(hit) = signatures.find(&sources) {
         return hit_to_diagnosis(hit);
     }
-    stack::suspects(input, mods)
+    stack::suspects(
+        &CrashInput {
+            latest_log: &latest_log,
+            crash_report: &crash_report,
+            hs_err: input.hs_err,
+        },
+        mods,
+    )
+}
+
+/// The marker of the loading report that Forge 1.7.10 prints on a normal start.
+const LOADING_REPORT_MARKER: &str = "THIS IS NOT A ERROR";
+const REPORT_HEADER: &str = "---- Minecraft Crash Report ----";
+/// How far below its header a report may carry the marker.
+const MARKER_WINDOW: usize = 12;
+
+/// Removes the "Minecraft Crash Report" blocks that say `THIS IS NOT A ERROR`: Forge 1.7.10
+/// prints one while loading, and it describes no failure. A block runs from its header to the
+/// next log line (one that starts with `[`) or to the end of the text.
+fn strip_loading_reports(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(LOADING_REPORT_MARKER) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let window_end = (i + 1 + MARKER_WINDOW).min(lines.len());
+        if line.contains(REPORT_HEADER)
+            && lines[i + 1..window_end]
+                .iter()
+                .any(|l| l.contains(LOADING_REPORT_MARKER))
+        {
+            i += 1;
+            while i < lines.len() && !lines[i].starts_with('[') {
+                i += 1;
+            }
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+        i += 1;
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 fn hit_to_diagnosis(hit: signatures::Hit) -> Diagnosis {
