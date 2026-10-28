@@ -192,6 +192,8 @@ fn pack_files_are_skipped_unless_asked_for() {
             origin_known: false,
         }],
         overrides: Vec::new(),
+        kind: Default::default(),
+        blocked: Vec::new(),
     };
     record.save(&meta).unwrap();
     let target = fabric();

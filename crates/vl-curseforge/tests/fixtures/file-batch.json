@@ -1,0 +1,36 @@
+{
+  "data": [
+    {
+      "id": 5100200,
+      "modId": 910001,
+      "displayName": "Example Storage 2.0.0",
+      "fileName": "example-storage-2.0.0.jar",
+      "releaseType": 1,
+      "hashes": [
+        {"value": "0123456789ABCDEF0123456789ABCDEF01234567", "algo": 1},
+        {"value": "0123456789abcdef0123456789abcdef", "algo": 2}
+      ],
+      "fileLength": 524288,
+      "downloadUrl": "https://edge.forgecdn.net/files/5100/200/example-storage-2.0.0.jar"
+    },
+    {
+      "id": 5200300,
+      "modId": 910002,
+      "displayName": "Quiet Shaders r4",
+      "fileName": "Quiet Shaders r4.zip",
+      "hashes": [{"value": "0123456789abcdef0123456789abcdef", "algo": 2}],
+      "fileLength": 1024,
+      "downloadUrl": null
+    },
+    {
+      "id": 5300400,
+      "modId": 910003,
+      "displayName": "Unsafe",
+      "fileName": "../escape.jar",
+      "fileLength": 1,
+      "downloadUrl": "http://insecure.test/escape.jar"
+    },
+    {"id": 0, "modId": 1, "fileName": "no-id.jar"},
+    "not an object"
+  ]
+}

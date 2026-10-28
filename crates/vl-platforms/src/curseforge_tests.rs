@@ -360,6 +360,65 @@ fn fingerprints_are_deduplicated_and_posted() {
 }
 
 #[test]
+fn file_and_mod_batches_are_posted_once_per_chunk() {
+    let s = setup();
+    s.fake.push(
+        200,
+        &json!({"data": [
+            {"id": 7, "modId": 70, "fileName": "a.jar", "downloadUrl": null},
+            {"id": 99, "modId": 70, "fileName": "not-asked.jar"}
+        ]}),
+    );
+    let files = s
+        .source
+        .files_by_ids(&[7, 3, 7], &Control::default())
+        .unwrap();
+    assert_eq!(files.len(), 1, "a file not asked for is ignored");
+    assert_eq!(files[0].download_url, None);
+    s.fake.push(
+        200,
+        &json!({"data": [{"id": 70, "slug": "a", "name": "A", "classId": 12}]}),
+    );
+    let mods = s.source.mods_by_ids(&[70], &Control::default()).unwrap();
+    assert_eq!(mods[0].class_id, 12);
+    let seen = s.fake.seen();
+    assert_eq!(seen[0].method, "POST");
+    assert_eq!(seen[0].url, "https://curseforge.test/v1/mods/files");
+    let body: Value = serde_json::from_slice(&seen[0].body).unwrap();
+    assert_eq!(body, json!({"fileIds": [3, 7]}));
+    assert_eq!(seen[1].url, "https://curseforge.test/v1/mods");
+    let body: Value = serde_json::from_slice(&seen[1].body).unwrap();
+    assert_eq!(body, json!({"modIds": [70]}));
+
+    let many: Vec<u64> = (1..=(MAX_IDS_PER_REQUEST as u64 + 1)).collect();
+    s.fake.push(200, &json!({"data": []}));
+    s.fake.push(200, &json!({"data": []}));
+    s.source.files_by_ids(&many, &Control::default()).unwrap();
+    assert_eq!(s.fake.seen().len(), 4, "split into two requests");
+
+    let too_many = vec![0; MAX_LOOKUP_IDS + 1];
+    assert!(
+        s.source
+            .mods_by_ids(&too_many, &Control::default())
+            .is_err()
+    );
+}
+
+#[test]
+fn batches_without_a_key_send_nothing() {
+    let s = setup_with(Arc::new(Fixed(None)));
+    for err in [
+        s.source
+            .files_by_ids(&[1], &Control::default())
+            .unwrap_err(),
+        s.source.mods_by_ids(&[], &Control::default()).unwrap_err(),
+    ] {
+        assert_eq!(err.kind, ErrorKind::NoApiKey);
+    }
+    assert!(s.fake.seen().is_empty());
+}
+
+#[test]
 fn hash_lookups_are_unsupported() {
     let s = setup();
     let err = s

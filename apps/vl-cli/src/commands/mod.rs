@@ -97,9 +97,13 @@ commands:
                                       install a project and its required dependencies into an
                                       instance; prints the plan first, --yes skips the question.
                                       Data packs need --world (the world's folder name)
-  packs install <file.mrpack|slug> [--name <n>] [--version <id>] [--group <g>] [--channel <c>]
-                                      install a Modrinth modpack as a new instance (name, Minecraft
-                                      version and loader come from the pack)
+  packs install <file.mrpack|file.zip|slug|id> [--provider <modrinth|curseforge>] [--name <n>]
+                [--version <id>] [--group <g>] [--channel <c>]
+                                      install a Modrinth or CurseForge modpack as a new instance
+                                      (name, Minecraft version and loader come from the pack).
+                                      CurseForge needs your API key; files whose authors do not
+                                      allow other apps to download them are listed with the page
+                                      to download them from by hand
   packs export <instance> --out <file.mrpack> [--name <n>] [--version <v>] [--summary <t>]
                [--include <config,kubejs,resourcepacks,shaderpacks,options|none>]
                                       export the instance as a Modrinth modpack; files the catalog

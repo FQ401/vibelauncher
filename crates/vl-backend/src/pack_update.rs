@@ -3,7 +3,8 @@
 //! Checks and plans are answered from a worker thread. An update runs as an `UpdatePack` task:
 //! it fetches the new pack, plans against the folder as it is when the task starts, and applies
 //! the plan in one all-or-nothing step together with the change of the instance's game version
-//! and loader (see [`vl_install::mrpack_update`]).
+//! and loader (see [`vl_install::mrpack_update`]). Packs installed from CurseForge are not
+//! updated yet: every command answers `Unsupported` for them.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use vl_core::instance::{InstanceEvent, Loader, LoaderRequest};
 use vl_core::log::{LogLevel, LogLine, LogSource};
 use vl_core::task::TaskKind;
 use vl_core::{Error, Event, InstanceId, Replier, Response, Result};
-use vl_install::mrpack::PackRecord;
+use vl_install::mrpack::{PackKind, PackRecord};
 use vl_install::mrpack_update::{Context, Prepared, Wanted, apply, check as check_pack, prepare};
 use vl_net::{Client, Control};
 use vl_platforms::Platforms;
@@ -48,6 +49,11 @@ fn setup(backend: &Backend, id: &InstanceId) -> Result<Setup> {
     let record = PackRecord::load(&meta).ok_or_else(|| {
         Error::not_found(format!("instance {id} was not installed from a modpack"))
     })?;
+    if record.kind == PackKind::CurseForge {
+        return Err(Error::unsupported(
+            "updating a CurseForge modpack is not supported yet",
+        ));
+    }
     Ok(Setup {
         id: id.clone(),
         name: config.name,

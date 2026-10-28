@@ -2,8 +2,10 @@
 
 use vl_core::catalog::{DependencyKind, ProjectType, ReleaseChannel, SideSupport};
 use vl_curseforge::parse::{
-    parse_categories, parse_file, parse_files, parse_fingerprints, parse_project, parse_search,
+    parse_categories, parse_file, parse_files, parse_fingerprints, parse_mod_files, parse_mods,
+    parse_project, parse_search,
 };
+use vl_curseforge::{ModLoader, parse_manifest};
 
 const SEARCH: &[u8] = include_bytes!("fixtures/search.json");
 const MOD: &[u8] = include_bytes!("fixtures/mod.json");
@@ -182,4 +184,89 @@ fn fingerprint_matches() {
         "https://edge.forgecdn.net/files/5000/300/example-library-1.0.jar"
     );
     assert!(parse_fingerprints(br#"{"data": []}"#).is_err());
+}
+
+const FILE_BATCH: &[u8] = include_bytes!("fixtures/file-batch.json");
+const MOD_BATCH: &[u8] = include_bytes!("fixtures/mod-batch.json");
+const MANIFEST: &[u8] = include_bytes!("fixtures/manifest.json");
+
+#[test]
+fn file_batch_keeps_what_a_pack_install_needs() {
+    let files = parse_mod_files(FILE_BATCH).unwrap();
+    assert_eq!(files.len(), 3, "entries without an id are skipped");
+
+    let jar = &files[0];
+    assert_eq!((jar.id, jar.mod_id), (5_100_200, 910_001));
+    assert_eq!(jar.file_name, "example-storage-2.0.0.jar");
+    assert_eq!(jar.size, 524_288);
+    assert_eq!(
+        jar.sha1.as_deref(),
+        Some("0123456789abcdef0123456789abcdef01234567")
+    );
+    assert_eq!(
+        jar.download_url.as_deref(),
+        Some("https://edge.forgecdn.net/files/5100/200/example-storage-2.0.0.jar")
+    );
+
+    let blocked = &files[1];
+    assert_eq!(blocked.download_url, None, "distribution is not allowed");
+    assert_eq!(blocked.sha1, None, "only an MD5 is given");
+    assert_eq!(
+        blocked.edge_url().as_deref(),
+        Some("https://edge.forgecdn.net/files/5200/300/Quiet%20Shaders%20r4.zip")
+    );
+
+    let unsafe_file = &files[2];
+    assert_eq!(unsafe_file.safe_file_name(), None);
+    assert_eq!(unsafe_file.edge_url(), None);
+    assert_eq!(unsafe_file.download_url, None, "not https");
+
+    assert!(parse_mod_files(br#"{"data": {}}"#).is_err());
+}
+
+#[test]
+fn mod_batch_gives_classes_and_pages() {
+    let mods = parse_mods(MOD_BATCH).unwrap();
+    assert_eq!(mods.len(), 2);
+    assert_eq!(mods[0].class_id, 6);
+    assert_eq!(mods[0].slug, "example-storage");
+    assert_eq!(mods[0].allow_distribution, Some(true));
+    assert_eq!(
+        mods[0].page_url(),
+        "https://www.curseforge.com/minecraft/mc-mods/example-storage"
+    );
+    assert_eq!(mods[1].class_id, 6552);
+    assert_eq!(mods[1].allow_distribution, Some(false));
+    assert_eq!(mods[1].website_url, None, "not a web link");
+    assert_eq!(
+        mods[1].page_url(),
+        "https://www.curseforge.com/projects/910002"
+    );
+}
+
+#[test]
+fn a_pack_manifest() {
+    let m = parse_manifest(MANIFEST).unwrap();
+    assert_eq!(m.name, "Example Adventures");
+    assert_eq!(m.version, "3.1.0");
+    assert_eq!(m.author, "example_author");
+    assert_eq!(m.minecraft_version, "1.20.1");
+    assert_eq!(
+        m.loader().unwrap(),
+        Some((ModLoader::Forge, "47.2.0".to_owned()))
+    );
+    assert_eq!(m.overrides, "overrides");
+    let ids: Vec<(u64, u64, bool)> = m
+        .files
+        .iter()
+        .map(|f| (f.project_id, f.file_id, f.required))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            (910_001, 5_100_200, true),
+            (910_002, 5_200_300, false),
+            (910_003, 5_300_400, true)
+        ]
+    );
 }

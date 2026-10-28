@@ -47,7 +47,7 @@ pub(crate) fn io(path: &Path, e: &std::io::Error) -> Error {
     Error::new(ErrorKind::Io, format!("{}: {e}", path.display()))
 }
 
-fn bad(why: impl std::fmt::Display) -> Error {
+pub(crate) fn bad(why: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::Integrity, format!("unusable modpack: {why}"))
 }
 
@@ -170,29 +170,7 @@ impl Pack {
     ///
     /// `Io` or `Integrity` when the archive cannot be read, `Integrity` past the byte budget.
     pub fn override_hashes(&self) -> Result<Vec<OverrideRecord>> {
-        let file = File::open(&self.path).map_err(|e| io(&self.path, &e))?;
-        let mut archive =
-            ZipArchive::new(file).map_err(|e| bad(format!("not a zip archive: {e}")))?;
-        let mut budget = MAX_OVERRIDE_BYTES;
-        let mut out = Vec::new();
-        for (rel, index) in self.final_overrides() {
-            let entry = archive
-                .by_index(index)
-                .map_err(|e| bad(format!("{rel}: {e}")))?;
-            let (sha1, size) = crate::hashing::sha1_of(entry.take(budget + 1))
-                .map_err(|e| bad(format!("{rel}: {e}")))?;
-            if size > budget {
-                return Err(bad(format!(
-                    "the overrides are larger than {MAX_OVERRIDE_BYTES} bytes"
-                )));
-            }
-            budget -= size;
-            out.push(OverrideRecord {
-                path: rel.to_owned(),
-                sha1,
-            });
-        }
-        Ok(out)
+        hash_entries(&self.path, self.final_overrides())
     }
 
     /// Extracts the named override files, each to its own destination.
@@ -372,23 +350,69 @@ pub(crate) fn download_files(
     Ok(())
 }
 
-/// Extracts the override files in order. The byte budget counts what is written, not what the
-/// archive declares.
+/// Extracts the override files in order.
 fn extract_overrides(pack: &Pack, game_dir: &Path, control: &Control) -> Result<usize> {
-    if pack.overrides.is_empty() {
-        return Ok(0);
-    }
-    let file = File::open(&pack.path).map_err(|e| io(&pack.path, &e))?;
+    let entries: Vec<(usize, &str)> = pack
+        .overrides
+        .iter()
+        .map(|o| (o.index, o.rel.as_str()))
+        .collect();
+    extract_entries(&pack.path, &entries, game_dir, control)
+}
+
+/// The SHA-1 of archive entries given as `(path in the game directory, entry index)`, within
+/// the override byte budget.
+pub(crate) fn hash_entries<'a>(
+    archive_path: &Path,
+    entries: impl IntoIterator<Item = (&'a str, usize)>,
+) -> Result<Vec<OverrideRecord>> {
+    let file = File::open(archive_path).map_err(|e| io(archive_path, &e))?;
     let mut archive = ZipArchive::new(file).map_err(|e| bad(format!("not a zip archive: {e}")))?;
     let mut budget = MAX_OVERRIDE_BYTES;
-    for entry in &pack.overrides {
+    let mut out = Vec::new();
+    for (rel, index) in entries {
+        let entry = archive
+            .by_index(index)
+            .map_err(|e| bad(format!("{rel}: {e}")))?;
+        let (sha1, size) = crate::hashing::sha1_of(entry.take(budget + 1))
+            .map_err(|e| bad(format!("{rel}: {e}")))?;
+        if size > budget {
+            return Err(bad(format!(
+                "the overrides are larger than {MAX_OVERRIDE_BYTES} bytes"
+            )));
+        }
+        budget -= size;
+        out.push(OverrideRecord {
+            path: rel.to_owned(),
+            sha1,
+        });
+    }
+    Ok(out)
+}
+
+/// Extracts archive entries given as `(entry index, checked path in the game directory)` in
+/// order; a later entry for the same path wins. The byte budget counts what is written, not what
+/// the archive declares.
+pub(crate) fn extract_entries(
+    archive_path: &Path,
+    entries: &[(usize, &str)],
+    game_dir: &Path,
+    control: &Control,
+) -> Result<usize> {
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    let file = File::open(archive_path).map_err(|e| io(archive_path, &e))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| bad(format!("not a zip archive: {e}")))?;
+    let mut budget = MAX_OVERRIDE_BYTES;
+    for (index, rel) in entries {
         check_cancel(control)?;
         let mut source = archive
-            .by_index(entry.index)
-            .map_err(|e| bad(format!("{}: {e}", entry.rel)))?;
-        let target = game_dir.join(&entry.rel);
+            .by_index(*index)
+            .map_err(|e| bad(format!("{rel}: {e}")))?;
+        let target = game_dir.join(rel);
         if target.is_dir() {
-            return Err(bad(format!("{} is a folder and a file", entry.rel)));
+            return Err(bad(format!("{rel} is a folder and a file")));
         }
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|e| io(parent, &e))?;
@@ -404,7 +428,7 @@ fn extract_overrides(pack: &Pack, game_dir: &Path, control: &Control) -> Result<
         budget -= written;
         out.flush().map_err(|e| io(&target, &e))?;
     }
-    Ok(pack.overrides.len())
+    Ok(entries.len())
 }
 
 /// Which catalog version a pack came from.
@@ -475,6 +499,24 @@ pub struct PackRecord {
     /// longer matches. Empty in records written before updates existed.
     #[serde(default)]
     pub overrides: Vec<OverrideRecord>,
+    /// The pack's format; records written before CurseForge packs existed are Modrinth packs.
+    #[serde(default)]
+    pub kind: PackKind,
+    /// Files of a CurseForge pack that could not be downloaded and are left to the user.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked: Vec<crate::cfpack::BlockedFile>,
+}
+
+/// The format of an installed modpack.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackKind {
+    /// A Modrinth `.mrpack`.
+    #[default]
+    Modrinth,
+    /// A CurseForge zip with `manifest.json`.
+    #[serde(rename = "curseforge")]
+    CurseForge,
 }
 
 impl PackRecord {
@@ -508,6 +550,8 @@ impl PackRecord {
                 })
                 .collect(),
             overrides: Vec::new(),
+            kind: PackKind::Modrinth,
+            blocked: Vec::new(),
         }
     }
 

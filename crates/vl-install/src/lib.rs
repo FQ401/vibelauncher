@@ -16,6 +16,10 @@
 //!
 //! [`mrpack`] installs a Modrinth modpack (`.mrpack`) into a fresh game directory.
 //!
+//! [`cfpack`] installs a CurseForge modpack (a zip with `manifest.json`): its files are resolved
+//! by id through the CurseForge API, and files the API cannot serve are listed for the user to
+//! download by hand.
+//!
 //! [`mrpack_export`] writes an instance as a `.mrpack`: files the catalog knows by hash become
 //! download links, everything else is carried in `overrides/`.
 //!
@@ -25,6 +29,7 @@
 //! Plans and execution are blocking and are meant to run inside a task.
 
 mod apply;
+pub mod cfpack;
 mod hashing;
 pub mod mrpack;
 pub mod mrpack_export;
@@ -46,6 +51,9 @@ mod tests;
 
 #[cfg(test)]
 mod mrpack_tests;
+
+#[cfg(test)]
+mod cfpack_tests;
 
 #[cfg(test)]
 mod mrpack_update_tests;

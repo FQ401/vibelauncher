@@ -1,4 +1,5 @@
-//! `packs install <file.mrpack|slug> [--name X] [--version <id>] [--group G] [--channel <c>]`,
+//! `packs install <file.mrpack|file.zip|slug> [--provider <p>] [--name X] [--version <id>]
+//! [--group G] [--channel <c>]`,
 //! `packs updates <instance>` and `packs update <instance> ...`.
 
 use std::path::Path;
@@ -37,12 +38,23 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
     }
 }
 
-/// A path that names a file (or ends in `.mrpack`) is a local pack; anything else is a project.
-fn parse_source(pack: &str, version: Option<String>) -> Result<PackSource, CliError> {
-    let is_file = pack.to_ascii_lowercase().ends_with(".mrpack") || Path::new(pack).is_file();
+/// A path that names a file (or ends in `.mrpack` or `.zip`) is a local pack, Modrinth or
+/// CurseForge (the launcher tells them apart by content); anything else is a project of
+/// `provider`.
+fn parse_source(
+    pack: &str,
+    provider: Option<Provider>,
+    version: Option<String>,
+) -> Result<PackSource, CliError> {
+    let lower = pack.to_ascii_lowercase();
+    let is_file =
+        lower.ends_with(".mrpack") || lower.ends_with(".zip") || Path::new(pack).is_file();
     if is_file {
         if version.is_some() {
             return Err("--version applies to catalog packs, not files".into());
+        }
+        if provider.is_some() {
+            return Err("--provider applies to catalog packs, not files".into());
         }
         let path = std::path::absolute(pack)
             .map_err(|e| CliError::from(format!("{pack}: {e}")))?
@@ -51,7 +63,7 @@ fn parse_source(pack: &str, version: Option<String>) -> Result<PackSource, CliEr
         Ok(PackSource::File { path })
     } else {
         Ok(PackSource::Catalog {
-            provider: Provider::default(),
+            provider: provider.unwrap_or_default(),
             project: pack.to_owned(),
             version,
         })
@@ -59,7 +71,7 @@ fn parse_source(pack: &str, version: Option<String>) -> Result<PackSource, CliEr
 }
 
 fn parse_request(pack: &str, flags: &[&str]) -> Result<PackInstallRequest, CliError> {
-    let (mut name, mut version, mut group) = (None, None, None);
+    let (mut name, mut version, mut group, mut provider) = (None, None, None, None);
     let mut min_stability = MinStability::default();
     let mut it = flags.iter();
     while let Some(flag) = it.next() {
@@ -68,6 +80,7 @@ fn parse_request(pack: &str, flags: &[&str]) -> Result<PackInstallRequest, CliEr
             "--name" => name = Some((*value).to_owned()),
             "--version" => version = Some((*value).to_owned()),
             "--group" => group = Some((*value).to_owned()),
+            "--provider" => provider = Some(parse_provider(value)?),
             "--channel" => {
                 min_stability = MinStability::parse(value)
                     .ok_or_else(|| CliError::from("channel is release, beta or alpha"))?;
@@ -76,11 +89,19 @@ fn parse_request(pack: &str, flags: &[&str]) -> Result<PackInstallRequest, CliEr
         }
     }
     Ok(PackInstallRequest {
-        source: parse_source(pack, version)?,
+        source: parse_source(pack, provider, version)?,
         name,
         group,
         min_stability,
     })
+}
+
+fn parse_provider(name: &str) -> Result<Provider, CliError> {
+    match name.to_ascii_lowercase().as_str() {
+        "modrinth" => Ok(Provider::Modrinth),
+        "curseforge" => Ok(Provider::CurseForge),
+        _ => Err("provider is modrinth or curseforge".into()),
+    }
 }
 
 fn install(facade: &dyn Facade, pack: &str, flags: &[&str], out: Out<'_>) -> Result<(), CliError> {
@@ -422,7 +443,16 @@ mod tests {
         let r = parse_request("fabulously-optimized", &["--version", "abc"]).unwrap();
         assert!(matches!(
             r.source,
-            PackSource::Catalog { version: Some(ref v), .. } if v == "abc"
+            PackSource::Catalog { version: Some(ref v), provider: Provider::Modrinth, .. }
+                if v == "abc"
+        ));
+        let r = parse_request("pack.zip", &[]).unwrap();
+        assert!(matches!(r.source, PackSource::File { .. }));
+        let r = parse_request("396246", &["--provider", "CurseForge", "--version", "7"]).unwrap();
+        assert!(matches!(
+            r.source,
+            PackSource::Catalog { provider: Provider::CurseForge, version: Some(ref v), .. }
+                if v == "7"
         ));
     }
 
@@ -444,5 +474,7 @@ mod tests {
         assert!(parse_request("p", &["--name"]).is_err());
         assert!(parse_request("p", &["--nope", "1"]).is_err());
         assert!(parse_request("p", &["--channel", "nightly"]).is_err());
+        assert!(parse_request("p", &["--provider", "other"]).is_err());
+        assert!(parse_request("p.zip", &["--provider", "curseforge"]).is_err());
     }
 }
