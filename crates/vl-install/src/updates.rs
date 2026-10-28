@@ -7,6 +7,11 @@
 //! loader and release channel) and one for the other kinds. Only a version that is newer than the
 //! installed one is offered, so an update never goes back to an older version.
 //!
+//! Every operation works on one platform and finds files by that platform's hash
+//! ([`CatalogSource::file_hash`]: SHA-1 on Modrinth, the fingerprint on CurseForge). A file
+//! whose origin record names another platform belongs to that platform: a check does not
+//! offer updates for it and [`identify`] keeps its record.
+//!
 //! Files that came with the instance's modpack are left out unless asked for: the pack is
 //! updated as a whole. [`plan_update`] turns a selection into an [`InstallPlan`] through the same
 //! planner as an install, so new required dependencies are resolved the same way; the plan is
@@ -17,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use vl_core::catalog::{HashAlgorithm, ProjectVersion, ReleaseChannel, VersionFilter};
+use vl_core::catalog::{ProjectVersion, ReleaseChannel, VersionFilter};
 use vl_core::install::{
     IdentifiedFile, IdentifyReport, InstallPlan, MatchedBy, MinStability, PackFile, UncheckedFile,
     UncheckedReason, UpdateCandidate, UpdateReport, VersionLabel,
@@ -124,19 +129,24 @@ fn label(v: &ProjectVersion) -> VersionLabel {
 }
 
 /// Whether `new` is a real update of `current` for this instance. The platform's answer is data:
-/// it is checked to be newer, to fit and to be of an allowed channel.
+/// it is checked to be newer, to fit and to be of an allowed channel. A pack or shader whose
+/// installed version names no loader (CurseForge files often name none) may be updated by one
+/// that names none either.
 fn is_update(
+    kind: ResourceKind,
     current: &ProjectVersion,
     new: &ProjectVersion,
     target: &Target,
     loaders: &[String],
     min: MinStability,
 ) -> bool {
+    let unlabeled =
+        kind != ResourceKind::Mods && current.loaders.is_empty() && new.loaders.is_empty();
     new.id != current.id
         && new.project_id == current.project_id
         && new.date_published > current.date_published
         && new.game_versions.contains(&target.game_version)
-        && (loaders.is_empty() || new.loaders.iter().any(|l| loaders.contains(l)))
+        && (loaders.is_empty() || unlabeled || new.loaders.iter().any(|l| loaders.contains(l)))
         && min.rank(new.channel).is_some()
 }
 
@@ -194,6 +204,13 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
                 file: file.file.clone(),
                 reason,
             };
+            // A file installed from another platform is checked there.
+            if file.foreign.is_some() {
+                report
+                    .unchecked
+                    .push(unchecked(UncheckedReason::OtherPlatform));
+                continue;
+            }
             let Some(identity) = file.identity.as_ref() else {
                 report.unchecked.push(unchecked(UncheckedReason::NoOrigin));
                 continue;
@@ -247,7 +264,7 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
         if group.is_empty() {
             continue;
         }
-        let hashes: Vec<String> = group.iter().map(|a| a.file.hashes.sha1.clone()).collect();
+        let hashes: Vec<String> = group.iter().map(|a| a.file.key.clone()).collect();
         let filter = VersionFilter {
             loaders: loaders.clone(),
             game_versions: vec![input.target.game_version.clone()],
@@ -255,7 +272,7 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
         let answers: HashMap<String, ProjectVersion> = input
             .source
             .latest_versions_by_hashes(
-                HashAlgorithm::Sha1,
+                input.source.file_hash(),
                 &hashes,
                 &filter,
                 &channels,
@@ -265,8 +282,17 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
             .map(|m| (m.hash.to_ascii_lowercase(), m.version))
             .collect();
         for asked in group {
-            match answers.get(&asked.file.hashes.sha1) {
-                Some(new) if is_update(asked.current, new, input.target, &loaders, options.min) => {
+            match answers.get(&asked.file.key) {
+                Some(new)
+                    if is_update(
+                        asked.kind,
+                        asked.current,
+                        new,
+                        input.target,
+                        &loaders,
+                        options.min,
+                    ) =>
+                {
                     latest.insert(new.id.clone(), new.clone());
                     found.push((asked, new.clone()));
                 }
@@ -331,6 +357,8 @@ pub fn identify(input: &UpdateInput<'_>) -> Result<IdentifyReport> {
     for &kind in kinds(input.target) {
         for file in scanned.get(&kind).map_or(&[][..], Vec::as_slice) {
             match &file.identity {
+                // Recorded as installed from another platform: that record stays.
+                _ if file.foreign.is_some() => report.already_known += 1,
                 None => report.unknown.push(PackFile {
                     kind,
                     file: file.file.clone(),

@@ -49,6 +49,15 @@ pub trait CatalogSource: Send + Sync {
         control: &Control,
     ) -> Result<Vec<ProjectVersion>>;
 
+    /// The hash this platform finds local files by ([`versions_by_hashes`] and
+    /// [`latest_versions_by_hashes`]): SHA-1 unless the platform says otherwise.
+    ///
+    /// [`versions_by_hashes`]: CatalogSource::versions_by_hashes
+    /// [`latest_versions_by_hashes`]: CatalogSource::latest_versions_by_hashes
+    fn file_hash(&self) -> HashAlgorithm {
+        HashAlgorithm::Sha1
+    }
+
     /// The versions owning the files with these hashes; unknown hashes are left out.
     fn versions_by_hashes(
         &self,

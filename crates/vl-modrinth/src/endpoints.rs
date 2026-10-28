@@ -76,12 +76,12 @@ impl Endpoints {
 
     /// `GET /version_file/{hash}`.
     pub fn version_by_hash(&self, hash: &str, algorithm: HashAlgorithm) -> Result<String> {
+        let name = algorithm_name(algorithm)?;
         check_hash(hash, algorithm)?;
         Ok(format!(
-            "{}/version_file/{}?algorithm={}",
+            "{}/version_file/{}?algorithm={name}",
             self.base,
             hash.to_ascii_lowercase(),
-            algorithm_name(algorithm)
         ))
     }
 
@@ -108,7 +108,7 @@ impl Endpoints {
         }
         serde_json::to_vec(&serde_json::json!({
             "hashes": lower,
-            "algorithm": algorithm_name(algorithm),
+            "algorithm": algorithm_name(algorithm)?,
         }))
         .map_err(|e| Error::internal(e.to_string()))
     }
@@ -149,7 +149,7 @@ impl Endpoints {
             .collect();
         let mut body = serde_json::json!({
             "hashes": lower,
-            "algorithm": algorithm_name(algorithm),
+            "algorithm": algorithm_name(algorithm)?,
             "loaders": clean(&filter.loaders),
             "game_versions": clean(&filter.game_versions),
         });
@@ -160,10 +160,14 @@ impl Endpoints {
     }
 }
 
-fn algorithm_name(algorithm: HashAlgorithm) -> &'static str {
+/// Modrinth's name of a hash; it knows files by SHA-1 and SHA-512 only.
+fn algorithm_name(algorithm: HashAlgorithm) -> Result<&'static str> {
     match algorithm {
-        HashAlgorithm::Sha512 => "sha512",
-        _ => "sha1",
+        HashAlgorithm::Sha1 => Ok("sha1"),
+        HashAlgorithm::Sha512 => Ok("sha512"),
+        _ => Err(Error::unsupported(
+            "Modrinth looks files up by SHA-1 or SHA-512 only",
+        )),
     }
 }
 
@@ -376,6 +380,24 @@ mod tests {
         assert!(url.ends_with(&format!("/version_file/{}?algorithm=sha1", "ab".repeat(20))));
         assert!(e.version_by_hash("zz", HashAlgorithm::Sha1).is_err());
         assert!(e.version_by_hash(&sha1, HashAlgorithm::Sha512).is_err());
+        // CurseForge fingerprints are not Modrinth's.
+        for err in [
+            e.version_by_hash("12345", HashAlgorithm::Fingerprint)
+                .map(|_| ()),
+            e.versions_by_hashes_body(&["12345".into()], HashAlgorithm::Fingerprint)
+                .map(|_| ()),
+            e.latest_versions_body(
+                &["12345".into()],
+                HashAlgorithm::Fingerprint,
+                &VersionFilter::default(),
+                &[],
+            )
+            .map(|_| ()),
+        ]
+        .map(Result::unwrap_err)
+        {
+            assert_eq!(err.kind, vl_core::ErrorKind::Unsupported);
+        }
 
         let body = e
             .versions_by_hashes_body(&[sha1], HashAlgorithm::Sha1)

@@ -1,6 +1,7 @@
 //! What is in a resource folder and which projects it belongs to.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use vl_core::Result;
 use vl_core::catalog::{HashAlgorithm, ProjectVersion, Provider};
@@ -10,7 +11,7 @@ use vl_net::Control;
 use vl_platforms::CatalogSource;
 use vl_resources::{DISABLED_SUFFIX, Resources};
 
-use crate::hashing::{FileHashes, hash_file};
+use crate::hashing::{FileHashes, fingerprint_file, hash_file};
 use crate::origin::Origin;
 
 /// The project and version a file is known to be.
@@ -33,9 +34,15 @@ pub(crate) struct InstalledFile {
     /// The mod's name when the jar says one, else the file name.
     pub name: String,
     pub hashes: FileHashes,
+    /// What the platform finds the file by ([`CatalogSource::file_hash`]): the SHA-1, or the
+    /// CurseForge fingerprint in decimal.
+    pub key: String,
     /// Mod ids declared in the jar.
     pub mod_ids: Vec<String>,
     pub identity: Option<Identity>,
+    /// The platform of the file's origin record, when the record is of another platform than
+    /// the one asked.
+    pub foreign: Option<Provider>,
 }
 
 /// `Sodium-Extra` and `sodium_extra` compare equal.
@@ -57,7 +64,8 @@ pub(crate) fn scan(
         .unwrap_or_default())
 }
 
-/// [`scan`] for several folders with one batched lookup for all their files.
+/// [`scan`] for several folders with one batched lookup for all their files, by the hash the
+/// platform finds files by.
 pub(crate) fn scan_many(
     resources: &Resources,
     kinds: &[ResourceKind],
@@ -65,31 +73,34 @@ pub(crate) fn scan_many(
     source: &dyn CatalogSource,
     control: &Control,
 ) -> Result<HashMap<ResourceKind, Vec<InstalledFile>>> {
+    let algorithm = source.file_hash();
     let mut all: HashMap<ResourceKind, Vec<InstalledFile>> = HashMap::new();
     for &kind in kinds {
-        all.insert(kind, list(resources, kind)?);
+        all.insert(kind, list(resources, kind, algorithm)?);
     }
-    let mut hashes: Vec<String> = all
-        .values()
-        .flatten()
-        .map(|f| f.hashes.sha1.clone())
-        .collect();
-    hashes.sort();
-    hashes.dedup();
-    if hashes.is_empty() {
+    let mut keys: Vec<String> = all.values().flatten().map(|f| f.key.clone()).collect();
+    keys.sort();
+    keys.dedup();
+    if keys.is_empty() {
         return Ok(all);
     }
     let provider: Provider = source.provider();
     let mut known: HashMap<String, ProjectVersion> = HashMap::new();
-    for m in source.versions_by_hashes(HashAlgorithm::Sha1, &hashes, control)? {
+    for m in source.versions_by_hashes(algorithm, &keys, control)? {
         known.insert(m.hash.to_ascii_lowercase(), m.version);
     }
     for (&kind, files) in &mut all {
         for file in files {
-            let looked_up = known.get(&file.hashes.sha1).cloned();
+            let looked_up = known.get(&file.key).cloned();
+            let recorded = |o: &&Origin| o.kind == kind && o.sha1 == file.hashes.sha1;
             let origin = origins
                 .iter()
-                .find(|o| o.provider == provider && o.kind == kind && o.sha1 == file.hashes.sha1);
+                .filter(recorded)
+                .find(|o| o.provider == provider);
+            file.foreign = match origin {
+                Some(_) => None,
+                None => origins.iter().find(recorded).map(|o| o.provider),
+            };
             file.identity = match (looked_up, origin) {
                 (Some(v), origin) => Some(Identity {
                     project_id: v.project_id.clone(),
@@ -116,8 +127,21 @@ pub(crate) fn scan_many(
     Ok(all)
 }
 
+/// The key of a file for `algorithm`.
+fn key(path: &Path, hashes: &FileHashes, algorithm: HashAlgorithm) -> std::io::Result<String> {
+    Ok(match algorithm {
+        HashAlgorithm::Fingerprint => fingerprint_file(path)?.to_string(),
+        HashAlgorithm::Sha512 => hashes.sha512.clone(),
+        _ => hashes.sha1.clone(),
+    })
+}
+
 /// The readable files of a folder, without identities.
-fn list(resources: &Resources, kind: ResourceKind) -> Result<Vec<InstalledFile>> {
+fn list(
+    resources: &Resources,
+    kind: ResourceKind,
+    algorithm: HashAlgorithm,
+) -> Result<Vec<InstalledFile>> {
     let dir = resources.dir(kind);
     let mut files = Vec::new();
     for entry in resources.list(kind)? {
@@ -129,7 +153,11 @@ fn list(resources: &Resources, kind: ResourceKind) -> Result<Vec<InstalledFile>>
         } else {
             format!("{}{DISABLED_SUFFIX}", entry.file)
         };
-        let Ok(hashes) = hash_file(&dir.join(&on_disk)) else {
+        let path = dir.join(&on_disk);
+        let Ok(hashes) = hash_file(&path) else {
+            continue;
+        };
+        let Ok(key) = key(&path, &hashes, algorithm) else {
             continue;
         };
         files.push(InstalledFile {
@@ -140,8 +168,10 @@ fn list(resources: &Resources, kind: ResourceKind) -> Result<Vec<InstalledFile>>
             enabled: entry.enabled,
             file: entry.file,
             hashes,
+            key,
             mod_ids: entry.mods.iter().map(|m| m.id.clone()).collect(),
             identity: None,
+            foreign: None,
         });
     }
     Ok(files)
