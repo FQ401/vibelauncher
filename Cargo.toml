@@ -38,6 +38,7 @@ vl-ui-egui = { path = "crates/vl-ui-egui" }
 apple-native-keyring-store = { version = "1.0.2", default-features = false, features = ["keychain"] }
 getrandom = "0.3.4"
 ctrlc = "3.5.2"
+rpassword = "7.5.4"
 regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 keyring-core = "1.0.1"

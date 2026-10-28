@@ -1008,5 +1008,6 @@ fn origin_records_survive_damage_and_manual_changes() {
     assert_eq!(files, ["d.jar"]);
 }
 
+mod combined_cases;
 mod updates_cases;
 mod world_cases;

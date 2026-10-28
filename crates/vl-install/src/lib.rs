@@ -46,7 +46,9 @@ pub use apply::{ApplyInput, Report, execute};
 pub use hashing::{FileHashes, hash_file};
 pub use origin::{Origin, OriginStore};
 pub use plan::{PlanInput, Target, plan, resource_kind};
-pub use updates::{Selection, UpdateInput, UpdateOptions, check, identify, plan_update};
+pub use updates::{
+    Selection, UpdateInput, UpdateOptions, check, check_all, identify, plan_update, plan_update_all,
+};
 
 #[cfg(test)]
 mod tests;

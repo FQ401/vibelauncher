@@ -18,7 +18,9 @@ pub use channel::{EventBus, EventStream, Replier, Reply, reply_channel};
 
 use crate::account::{Account, AccountCommand, AccountEvent};
 use crate::bisect::{AutoBisectReport, BisectCommand, BisectEvent, BisectStatus};
-use crate::catalog::{CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage};
+use crate::catalog::{
+    ApiKeyStatus, CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage,
+};
 use crate::crash::CrashDiagnosis;
 use crate::ids::TaskId;
 use crate::install::{
@@ -136,6 +138,8 @@ pub enum Response {
     UpdateReport(UpdateReport),
     /// The result of identifying files.
     Identified(IdentifyReport),
+    /// The API key of a platform: set or not, where from, and whether it works.
+    ApiKey(ApiKeyStatus),
     /// The result of checking a modpack for a newer version.
     PackUpdate(PackUpdateInfo),
     /// What updating a modpack would change.

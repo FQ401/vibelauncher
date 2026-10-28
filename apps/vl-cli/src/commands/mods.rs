@@ -205,7 +205,7 @@ fn check_request<'a>(
             "--include-pack-files" => check.include_pack_files = true,
             "--provider" => {
                 let v = it.next().ok_or(CliError::from(USAGE))?;
-                check.provider = super::packs::parse_provider(v)?;
+                check.provider = Some(super::packs::parse_provider(v)?);
             }
             "--world" => {
                 let v = it.next().ok_or(CliError::from(USAGE))?;
@@ -232,12 +232,13 @@ fn print_report(report: &UpdateReport, out: Out<'_>) -> Result<(), CliError> {
     for u in &report.updates {
         writeln!(
             out,
-            "  update    {} [{}] {} -> {} ({}){}{}",
+            "  update    {} [{}] {} -> {} ({}, {}){}{}",
             u.name,
             u.kind.name(),
             u.current.number,
             u.latest.number,
             u.file,
+            provider_name(u.provider),
             if u.enabled { "" } else { " [disabled]" },
             if u.from_pack { " [from pack]" } else { "" }
         )?;
@@ -256,7 +257,7 @@ fn print_report(report: &UpdateReport, out: Out<'_>) -> Result<(), CliError> {
             UncheckedReason::UnknownToPlatform => "the platform no longer knows this file",
             UncheckedReason::NoLoader => "the instance has no mod loader",
             UncheckedReason::OtherPlatform => {
-                "installed from another platform; check with its --provider"
+                "installed from another platform, which was not checked"
             }
             _ => "not checked",
         };
@@ -388,6 +389,7 @@ mod tests {
                 file: "a-1.jar".into(),
                 enabled: false,
                 name: "A".into(),
+                provider: Provider::Modrinth,
                 project_id: "p".into(),
                 current: label("1"),
                 latest: label("2"),
@@ -409,7 +411,7 @@ mod tests {
         print_report(&report, &mut out).unwrap();
         let out = String::from_utf8(out).unwrap();
         assert!(
-            out.contains("update    A [mods] 1 -> 2 (a-1.jar) [disabled]"),
+            out.contains("update    A [mods] 1 -> 2 (a-1.jar, Modrinth) [disabled]"),
             "{out}"
         );
         assert!(out.contains("from pack b.jar"), "{out}");

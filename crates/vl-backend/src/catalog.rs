@@ -555,6 +555,13 @@ fn run(platforms: &Platforms, command: CatalogCommand) -> Result<Response> {
                 source.versions_by_hashes(algorithm, &hashes, &control)?,
             ))
         }
+        CatalogCommand::SetApiKey { provider, key } => {
+            crate::api_keys::set(platforms, provider, &key)
+        }
+        CatalogCommand::RemoveApiKey { provider } => crate::api_keys::remove(platforms, provider),
+        CatalogCommand::CheckApiKey { provider } => {
+            crate::api_keys::check(platforms, provider, &control)
+        }
         other => Err(Error::unsupported(format!("{other:?}"))),
     }
 }

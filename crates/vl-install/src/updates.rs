@@ -10,7 +10,9 @@
 //! Every operation works on one platform and finds files by that platform's hash
 //! ([`CatalogSource::file_hash`]: SHA-1 on Modrinth, the fingerprint on CurseForge). A file
 //! whose origin record names another platform belongs to that platform: a check does not
-//! offer updates for it and [`identify`] keeps its record.
+//! offer updates for it and [`identify`] keeps its record. [`check_all`] and
+//! [`plan_update_all`] work on several platforms at once and give each file to one of them: the
+//! platform of its origin record, else the first that knows it.
 //!
 //! Files that came with the instance's modpack are left out unless asked for: the pack is
 //! updated as a whole. [`plan_update`] turns a selection into an [`InstallPlan`] through the same
@@ -22,7 +24,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use vl_core::catalog::{ProjectVersion, ReleaseChannel, VersionFilter};
+use vl_core::catalog::{ProjectVersion, Provider, ReleaseChannel, VersionFilter};
 use vl_core::install::{
     IdentifiedFile, IdentifyReport, InstallPlan, MatchedBy, MinStability, PackFile, UncheckedFile,
     UncheckedReason, UpdateCandidate, UpdateReport, VersionLabel,
@@ -99,6 +101,35 @@ struct Inspection {
     /// The newer versions found, by version id.
     latest: HashMap<String, ProjectVersion>,
     pack_files: HashSet<(ResourceKind, String)>,
+    /// What the check says about each file, in folder order.
+    outcomes: Vec<(FileKey, Outcome)>,
+}
+
+/// A file of a folder: the folder and the name without `.disabled`.
+type FileKey = (ResourceKind, String);
+
+/// What one platform's check says about one file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// A newer version exists (the candidate is in the report).
+    Update,
+    /// On the newest allowed version.
+    UpToDate,
+    /// Left out because it came with the modpack.
+    FromPack,
+    /// Not checked.
+    Unchecked(UncheckedReason),
+}
+
+impl Outcome {
+    /// Whether the platform takes the file: it knows it, or it has the file's origin record.
+    /// A file nobody knows, or one recorded as another platform's, is not taken.
+    fn taken(self) -> bool {
+        !matches!(
+            self,
+            Self::Unchecked(UncheckedReason::NoOrigin | UncheckedReason::OtherPlatform)
+        )
+    }
 }
 
 fn pack_hashes(meta_dir: &Path) -> HashSet<String> {
@@ -155,6 +186,8 @@ struct Asked<'a> {
     kind: ResourceKind,
     file: &'a InstalledFile,
     current: &'a ProjectVersion,
+    /// Its place in the outcomes.
+    slot: usize,
 }
 
 /// The folders to look at: a world has only data packs.
@@ -184,59 +217,61 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
     )?;
     let pack = pack_hashes(input.meta_dir);
     let mut pack_files = HashSet::new();
+    let mut outcomes: Vec<(FileKey, Outcome)> = Vec::new();
 
     let mut mods: Vec<Asked<'_>> = Vec::new();
     let mut others: Vec<Asked<'_>> = Vec::new();
     for &kind in kinds(input.target) {
         for file in scanned.get(&kind).map_or(&[][..], Vec::as_slice) {
+            let key = (kind, file.file.clone());
             if pack.contains(&file.hashes.sha1) || pack.contains(&file.hashes.sha512) {
-                pack_files.insert((kind, file.file.clone()));
+                pack_files.insert(key.clone());
                 if !options.include_pack_files {
                     report.from_pack.push(PackFile {
                         kind,
                         file: file.file.clone(),
                     });
+                    outcomes.push((key, Outcome::FromPack));
                     continue;
                 }
             }
-            let unchecked = |reason| UncheckedFile {
-                kind,
-                file: file.file.clone(),
-                reason,
+            let mut unchecked = |reason| {
+                report.unchecked.push(UncheckedFile {
+                    kind,
+                    file: file.file.clone(),
+                    reason,
+                });
+                outcomes.push((key.clone(), Outcome::Unchecked(reason)));
             };
             // A file installed from another platform is checked there.
             if file.foreign.is_some() {
-                report
-                    .unchecked
-                    .push(unchecked(UncheckedReason::OtherPlatform));
+                unchecked(UncheckedReason::OtherPlatform);
                 continue;
             }
             let Some(identity) = file.identity.as_ref() else {
-                report.unchecked.push(unchecked(UncheckedReason::NoOrigin));
+                unchecked(UncheckedReason::NoOrigin);
                 continue;
             };
             let Some(current) = identity.version.as_ref() else {
-                report
-                    .unchecked
-                    .push(unchecked(UncheckedReason::UnknownToPlatform));
+                unchecked(UncheckedReason::UnknownToPlatform);
                 continue;
             };
+            if kind == ResourceKind::Mods && input.target.loader.is_none() {
+                unchecked(UncheckedReason::NoLoader);
+                continue;
+            }
+            let asked = Asked {
+                kind,
+                file,
+                current,
+                slot: outcomes.len(),
+            };
+            // Up to date until the answer says otherwise.
+            outcomes.push((key, Outcome::UpToDate));
             if kind == ResourceKind::Mods {
-                if input.target.loader.is_none() {
-                    report.unchecked.push(unchecked(UncheckedReason::NoLoader));
-                } else {
-                    mods.push(Asked {
-                        kind,
-                        file,
-                        current,
-                    });
-                }
+                mods.push(asked);
             } else {
-                others.push(Asked {
-                    kind,
-                    file,
-                    current,
-                });
+                others.push(asked);
             }
         }
     }
@@ -294,6 +329,9 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
                     ) =>
                 {
                     latest.insert(new.id.clone(), new.clone());
+                    if let Some(slot) = outcomes.get_mut(asked.slot) {
+                        slot.1 = Outcome::Update;
+                    }
                     found.push((asked, new.clone()));
                 }
                 _ => up_to_date += 1,
@@ -307,6 +345,7 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
             file: asked.file.file.clone(),
             enabled: asked.file.enabled,
             name: asked.file.name.clone(),
+            provider: input.source.provider(),
             project_id: asked.current.project_id.clone(),
             current: label(asked.current),
             latest: label(&new),
@@ -319,6 +358,7 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
         scanned,
         latest,
         pack_files,
+        outcomes,
     })
 }
 
@@ -425,6 +465,172 @@ fn matches(file: &InstalledFile, selector: &str) -> bool {
             .any(|id| normalize_id(id) == normalize_id(wanted))
 }
 
+/// The checks of several platforms, merged so that every file is reported once.
+struct Combined {
+    report: UpdateReport,
+    /// Each platform's inspection, in the order asked; `None` for one that was skipped.
+    inspections: Vec<Option<Inspection>>,
+    /// The platform (index) that takes each file.
+    owners: HashMap<FileKey, usize>,
+}
+
+/// Errors that skip one platform of a combined check instead of failing it: no key, a refused
+/// key, no network.
+fn skippable(error: &Error) -> bool {
+    matches!(
+        error.kind,
+        ErrorKind::NoApiKey | ErrorKind::Auth | ErrorKind::Network
+    )
+}
+
+fn platform_name(provider: Provider) -> &'static str {
+    match provider {
+        Provider::CurseForge => "CurseForge",
+        _ => "Modrinth",
+    }
+}
+
+fn inspect_all(inputs: &[UpdateInput<'_>], options: UpdateOptions) -> Result<Combined> {
+    let mut inspections = Vec::new();
+    let mut skipped = Vec::new();
+    let mut first_error = None;
+    for input in inputs {
+        match inspect(input, options) {
+            Ok(inspection) => inspections.push(Some(inspection)),
+            Err(e) if skippable(&e) => {
+                skipped.push(format!(
+                    "{} was not checked: {}",
+                    platform_name(input.source.provider()),
+                    e.message
+                ));
+                first_error.get_or_insert(e);
+                inspections.push(None);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    let Some(first) = inspections.iter().flatten().next() else {
+        return Err(first_error.unwrap_or_else(|| Error::invalid_input("no platform to check")));
+    };
+    let mut report = UpdateReport {
+        game_version: first.report.game_version.clone(),
+        loader: first.report.loader.clone(),
+        ..UpdateReport::default()
+    };
+    for warning in inspections
+        .iter()
+        .flatten()
+        .flat_map(|i| &i.report.warnings)
+        .chain(&skipped)
+    {
+        if !report.warnings.contains(warning) {
+            report.warnings.push(warning.clone());
+        }
+    }
+
+    // Every file once, in the order the platforms list them.
+    let mut order: Vec<&FileKey> = Vec::new();
+    let mut said: HashMap<&FileKey, Vec<(usize, Outcome)>> = HashMap::new();
+    for (index, inspection) in inspections.iter().enumerate() {
+        for (key, outcome) in inspection.iter().flat_map(|i| &i.outcomes) {
+            let seen = said.entry(key).or_default();
+            if seen.is_empty() {
+                order.push(key);
+            }
+            seen.push((index, *outcome));
+        }
+    }
+    let mut owners = HashMap::new();
+    for key in order {
+        let outcomes = said.get(key).map_or(&[][..], Vec::as_slice);
+        let (kind, file) = (key.0, key.1.clone());
+        let Some(&(owner, outcome)) = outcomes.iter().find(|(_, o)| o.taken()) else {
+            // Nobody takes it: recorded as a platform's that was not asked, or unknown.
+            let reason = if outcomes
+                .iter()
+                .any(|(_, o)| *o == Outcome::Unchecked(UncheckedReason::OtherPlatform))
+            {
+                UncheckedReason::OtherPlatform
+            } else {
+                UncheckedReason::NoOrigin
+            };
+            report.unchecked.push(UncheckedFile { kind, file, reason });
+            continue;
+        };
+        owners.insert(key.clone(), owner);
+        match outcome {
+            Outcome::Update => {
+                let candidate = inspections
+                    .get(owner)
+                    .and_then(Option::as_ref)
+                    .and_then(|i| {
+                        i.report
+                            .updates
+                            .iter()
+                            .find(|c| c.kind == kind && c.file == file)
+                    });
+                if let Some(candidate) = candidate {
+                    report.updates.push(candidate.clone());
+                }
+            }
+            Outcome::UpToDate => report.up_to_date += 1,
+            Outcome::FromPack => report.from_pack.push(PackFile { kind, file }),
+            Outcome::Unchecked(reason) => {
+                report.unchecked.push(UncheckedFile { kind, file, reason });
+            }
+        }
+    }
+    Ok(Combined {
+        report,
+        inspections,
+        owners,
+    })
+}
+
+/// [`check`] on several platforms at once, in order of preference (Modrinth first). A file
+/// with an origin record goes to the platform of its record; a file without one goes to the
+/// first platform that knows it. Every file is reported once, so no update is offered twice. A
+/// platform that cannot be asked (no key, a refused key, no network) is skipped with a warning
+/// while another one answers.
+///
+/// # Errors
+///
+/// The error of the first skipped platform when none could be asked; `Cancelled`, `Io`.
+pub fn check_all(inputs: &[UpdateInput<'_>], options: UpdateOptions) -> Result<UpdateReport> {
+    Ok(inspect_all(inputs, options)?.report)
+}
+
+/// The files of `inspection` that `selector` names; a file name wins over a looser match.
+fn selected<'i>(
+    inspection: &'i Inspection,
+    target: &Target,
+    selector: &str,
+) -> Vec<(ResourceKind, &'i InstalledFile)> {
+    let mut hits: Vec<(ResourceKind, &InstalledFile)> = kinds(target)
+        .iter()
+        .flat_map(|k| {
+            inspection
+                .scanned
+                .get(k)
+                .into_iter()
+                .flatten()
+                .map(move |f| (*k, f))
+        })
+        .filter(|(_, f)| matches(f, selector))
+        .collect();
+    if hits.len() > 1 {
+        let exact: Vec<_> = hits
+            .iter()
+            .filter(|(_, f)| f.file.eq_ignore_ascii_case(selector))
+            .copied()
+            .collect();
+        if !exact.is_empty() {
+            hits = exact;
+        }
+    }
+    hits
+}
+
 /// What updating `selection` would do: the plan of the new versions with their new required
 /// dependencies. With `version`, the one selected file is switched to that version instead
 /// (older ones included).
@@ -434,10 +640,27 @@ fn matches(file: &InstalledFile, selector: &str) -> bool {
 /// - `NotFound`: nothing matches a selector;
 /// - `InvalidInput`: `version` without exactly one selected file;
 /// - `Conflict`: a selected file came with the modpack and `include_pack_files` is off;
-/// - `Unsupported`: the file's origin is unknown, so no project can be named;
+/// - `Unsupported`: the file's origin is unknown, or recorded as another platform's, so no
+///   project can be named here;
 /// - the errors of the planner and the network.
 pub fn plan_update(
     input: &UpdateInput<'_>,
+    options: UpdateOptions,
+    selection: Selection<'_>,
+    version: Option<&str>,
+) -> Result<InstallPlan> {
+    plan_update_all(std::slice::from_ref(input), options, selection, version)
+}
+
+/// [`plan_update`] on several platforms at once, with the files shared out as [`check_all`]
+/// does: each file is updated from the platform that takes it, and the plans of the platforms
+/// are put together into one.
+///
+/// # Errors
+///
+/// As [`plan_update`].
+pub fn plan_update_all(
+    inputs: &[UpdateInput<'_>],
     options: UpdateOptions,
     selection: Selection<'_>,
     version: Option<&str>,
@@ -447,52 +670,67 @@ pub fn plan_update(
             "choosing a version needs exactly one mod",
         ));
     }
-    let inspection = inspect(input, options)?;
-    let mut warnings = inspection.report.warnings.clone();
-    let mut pins: Vec<(String, String)> = Vec::new();
-    let mut pin = |project: &str, version: &str| {
-        if !pins.iter().any(|(p, _)| p == project) {
-            pins.push((project.to_owned(), version.to_owned()));
+    let combined = inspect_all(inputs, options)?;
+    let mut warnings = combined.report.warnings.clone();
+    let mut pins: Vec<Vec<(String, String)>> = vec![Vec::new(); inputs.len()];
+    let mut pin = |owner: usize, project: &str, version: &str| {
+        if let Some(list) = pins.get_mut(owner)
+            && !list.iter().any(|(p, _)| p == project)
+        {
+            list.push((project.to_owned(), version.to_owned()));
         }
     };
+    let owner_of =
+        |kind: ResourceKind, file: &str| combined.owners.get(&(kind, file.to_owned())).copied();
 
     match selection {
         Selection::All => {
-            for c in &inspection.report.updates {
-                pin(&c.project_id, &c.latest.id);
+            for c in &combined.report.updates {
+                if let Some(owner) = owner_of(c.kind, &c.file) {
+                    pin(owner, &c.project_id, &c.latest.id);
+                }
             }
         }
         Selection::Files(selectors) => {
             for selector in selectors {
-                let mut hits: Vec<(ResourceKind, &InstalledFile)> = kinds(input.target)
-                    .iter()
-                    .flat_map(|k| {
-                        inspection
-                            .scanned
-                            .get(k)
-                            .into_iter()
-                            .flatten()
-                            .map(move |f| (*k, f))
-                    })
-                    .filter(|(_, f)| matches(f, selector))
-                    .collect();
-                // A file name wins over a looser match.
-                if hits.len() > 1 {
-                    let exact: Vec<_> = hits
-                        .iter()
-                        .filter(|(_, f)| f.file.eq_ignore_ascii_case(selector))
-                        .copied()
-                        .collect();
-                    if !exact.is_empty() {
-                        hits = exact;
+                let mut hits: Vec<(usize, ResourceKind, &InstalledFile)> = Vec::new();
+                let mut unowned: Option<&InstalledFile> = None;
+                for (index, inspection) in combined.inspections.iter().enumerate() {
+                    let (Some(inspection), Some(input)) = (inspection, inputs.get(index)) else {
+                        continue;
+                    };
+                    for (kind, file) in selected(inspection, input.target, selector) {
+                        match owner_of(kind, &file.file) {
+                            Some(owner) if owner == index => hits.push((index, kind, file)),
+                            Some(_) => {}
+                            None => {
+                                unowned.get_or_insert(file);
+                            }
+                        }
                     }
                 }
                 if hits.is_empty() {
-                    return Err(Error::not_found(format!(
-                        "no mod, pack or shader matches {selector}"
-                    )));
+                    return Err(match unowned {
+                        Some(file) => match file.foreign {
+                            Some(provider) => Error::unsupported(format!(
+                                "{} was installed from {}; update it there",
+                                file.file,
+                                platform_name(provider)
+                            )),
+                            None => Error::unsupported(format!(
+                                "{} has no known origin, so its project is unknown",
+                                file.file
+                            )),
+                        },
+                        None => {
+                            Error::not_found(format!("no mod, pack or shader matches {selector}"))
+                        }
+                    });
                 }
-                for (kind, file) in hits {
+                for (owner, kind, file) in hits {
+                    let Some(Some(inspection)) = combined.inspections.get(owner) else {
+                        continue;
+                    };
                     if inspection.pack_files.contains(&(kind, file.file.clone()))
                         && !options.include_pack_files
                     {
@@ -515,7 +753,7 @@ pub fn plan_update(
                         if wanted == identity.version_id {
                             warnings.push(format!("{} is already that version", file.file));
                         } else {
-                            pin(&identity.project_id, wanted);
+                            pin(owner, &identity.project_id, wanted);
                         }
                     } else if let Some(c) = inspection
                         .report
@@ -523,7 +761,7 @@ pub fn plan_update(
                         .iter()
                         .find(|c| c.kind == kind && c.file == file.file)
                     {
-                        pin(&c.project_id, &c.latest.id);
+                        pin(owner, &c.project_id, &c.latest.id);
                     } else {
                         warnings.push(format!("{} has no newer version", file.file));
                     }
@@ -532,18 +770,58 @@ pub fn plan_update(
         }
     }
 
-    let plan_input = PlanInput {
-        source: input.source,
-        resources: input.resources,
-        origins: input.origins,
-        target: input.target,
-        control: input.control,
-    };
-    let mut planner = Planner::new(&plan_input, options.min);
-    planner.seed(inspection.scanned.clone(), inspection.latest.clone());
-    planner.add_pinned(&pins)?;
-    let mut plan = planner.finish();
-    warnings.extend(plan.warnings);
+    // One plan per platform with something to do; with nothing to do, the first platform
+    // that answered gives the empty plan.
+    let mut planned: Vec<usize> = (0..inputs.len())
+        .filter(|&i| pins.get(i).is_some_and(|p| !p.is_empty()))
+        .collect();
+    if planned.is_empty()
+        && let Some(first) = combined.inspections.iter().position(Option::is_some)
+    {
+        planned.push(first);
+    }
+    let mut merged: Option<InstallPlan> = None;
+    for index in planned {
+        let (Some(input), Some(Some(inspection)), Some(pins)) = (
+            inputs.get(index),
+            combined.inspections.get(index),
+            pins.get(index),
+        ) else {
+            continue;
+        };
+        let plan_input = PlanInput {
+            source: input.source,
+            resources: input.resources,
+            origins: input.origins,
+            target: input.target,
+            control: input.control,
+        };
+        let mut planner = Planner::new(&plan_input, options.min);
+        planner.seed(inspection.scanned.clone(), inspection.latest.clone());
+        planner.add_pinned(pins)?;
+        let plan = planner.finish();
+        merged = Some(match merged {
+            None => plan,
+            Some(mut all) => {
+                for item in plan.items {
+                    // A file both platforms plan (a shared dependency) is taken once.
+                    if !all
+                        .items
+                        .iter()
+                        .any(|i| i.kind == item.kind && i.file.filename == item.file.filename)
+                    {
+                        all.items.push(item);
+                    }
+                }
+                all.satisfied.extend(plan.satisfied);
+                all.recommended.extend(plan.recommended);
+                all.warnings.extend(plan.warnings);
+                all
+            }
+        });
+    }
+    let mut plan = merged.ok_or_else(|| Error::internal("no platform was planned"))?;
+    warnings.append(&mut plan.warnings);
     plan.warnings = warnings;
     Ok(plan)
 }

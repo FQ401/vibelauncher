@@ -1,4 +1,4 @@
-//! `catalog search | project | versions | lookup | install`.
+//! `catalog search | project | versions | lookup | install | key`.
 
 use std::io::{BufRead, IsTerminal};
 use std::time::Duration;
@@ -24,6 +24,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         ["project", id] => project(facade, id, out),
         ["versions", id, flags @ ..] => versions(facade, id, flags, out),
         ["lookup", hashes @ ..] if !hashes.is_empty() => lookup(facade, hashes, out),
+        ["key", rest @ ..] => super::api_key::run(facade, rest, out),
         _ => Err(USAGE.into()),
     }
 }

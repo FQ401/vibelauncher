@@ -405,9 +405,11 @@ pub struct PackExport {
 pub struct UpdateCheckRequest {
     /// The instance.
     pub instance: InstanceId,
-    /// The platform.
+    /// The platform; `None` checks every platform: a file with an origin record goes to the
+    /// platform of its record, a file without one to the first platform that knows it (Modrinth
+    /// first), so no file is offered twice.
     #[serde(default)]
-    pub provider: Provider,
+    pub provider: Option<Provider>,
     /// The least stable channel an update may come from. Releases only by default.
     #[serde(default = "default_update_stability")]
     pub min_stability: MinStability,
@@ -430,7 +432,7 @@ impl UpdateCheckRequest {
     pub fn new(instance: InstanceId) -> Self {
         Self {
             instance,
-            provider: Provider::default(),
+            provider: None,
             min_stability: MinStability::Release,
             include_pack_files: false,
             world: None,
@@ -460,6 +462,9 @@ pub struct UpdateCandidate {
     pub enabled: bool,
     /// What to call it: the mod's name when the jar says one, else the file name.
     pub name: String,
+    /// The platform the update comes from.
+    #[serde(default)]
+    pub provider: Provider,
     /// Project id on the platform.
     pub project_id: String,
     /// The version in the folder.
