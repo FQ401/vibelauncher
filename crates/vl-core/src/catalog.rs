@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::install::InstallRequest;
+use crate::install::{InstallRequest, PackInstallRequest};
 
 /// The most results one search page may ask for.
 pub const MAX_SEARCH_LIMIT: u32 = 100;
@@ -478,6 +478,10 @@ pub enum CatalogCommand {
     /// Installs a project and its required dependencies into an instance as a task
     /// → `Response::Task`. The plan is worked out again when the task starts.
     Install(InstallRequest),
+    /// Installs a modpack (`.mrpack`) as a new instance, as a task → `Response::Task`. The new
+    /// instance is announced with `InstanceEvent::Added` when the task succeeds; when it fails
+    /// or is cancelled no instance is left.
+    InstallPack(PackInstallRequest),
 }
 
 #[cfg(test)]

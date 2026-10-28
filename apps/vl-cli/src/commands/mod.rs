@@ -7,6 +7,7 @@ mod instances;
 mod java;
 mod launch;
 mod mods;
+mod packs;
 mod versions;
 
 use std::fmt;
@@ -51,7 +52,10 @@ commands:
   catalog lookup <sha1>...            find which versions own files with these hashes
   catalog install <slug|id> --instance <id> [--version <id>] [--channel <release|beta|alpha>] [--yes]
                                       install a project and its required dependencies into an
-                                      instance; prints the plan first, --yes skips the question";
+                                      instance; prints the plan first, --yes skips the question
+  packs install <file.mrpack|slug> [--name <n>] [--version <id>] [--group <g>] [--channel <c>]
+                                      install a Modrinth modpack as a new instance (name, Minecraft
+                                      version and loader come from the pack)";
 
 /// A failed command line.
 #[derive(Debug)]
@@ -94,6 +98,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         ["java", rest @ ..] => java::run(facade, rest, out),
         ["launch", rest @ ..] => launch::run(facade, rest, out),
         ["catalog", rest @ ..] => catalog::run(facade, rest, out),
+        ["packs", rest @ ..] => packs::run(facade, rest, out),
         _ => Err(USAGE.into()),
     }
 }

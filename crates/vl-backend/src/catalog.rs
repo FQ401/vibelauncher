@@ -12,12 +12,14 @@ use std::sync::Arc;
 use std::thread;
 
 use vl_core::catalog::CatalogCommand;
-use vl_core::install::InstallRequest;
-use vl_core::instance::Loader;
+use vl_core::component::ComponentKind;
+use vl_core::install::{InstallRequest, PackInstallRequest, PackSource};
+use vl_core::instance::{InstanceEvent, InstanceSummary, Loader, LoaderRequest, NewInstance};
 use vl_core::log::{LogLevel, LogLine, LogSource};
 use vl_core::task::TaskKind;
 use vl_core::{Error, Event, Replier, Response, Result};
 use vl_install::{ApplyInput, OriginStore, PlanInput, Target};
+use vl_modrinth::mrpack::PackLoader;
 use vl_net::{Client, Control, NetConfig};
 use vl_platforms::Platforms;
 use vl_tasks::TaskSpec;
@@ -52,6 +54,9 @@ pub(crate) fn handle(backend: &Backend, command: CatalogCommand, replier: Replie
     match command {
         CatalogCommand::PlanInstall(request) => return plan_install(backend, request, replier),
         CatalogCommand::Install(request) => return replier.send(install(backend, request)),
+        CatalogCommand::InstallPack(request) => {
+            return replier.send(install_pack(backend, request));
+        }
         _ => {}
     }
     let platforms = Arc::clone(&backend.catalog.platforms);
@@ -168,6 +173,174 @@ fn install(backend: &Backend, request: InstallRequest) -> Result<Response> {
     Ok(Response::Task(handle.id()))
 }
 
+/// Installs a modpack as a new instance. Nothing is visible until the pack is fully installed:
+/// any failure or cancel removes the half-made instance.
+fn install_pack(backend: &Backend, request: PackInstallRequest) -> Result<Response> {
+    let instances = backend.instances.clone();
+    let loaders = backend.launch.loaders().clone();
+    let platforms = Arc::clone(&backend.catalog.platforms);
+    let client = backend.catalog.client.clone();
+    let events = Arc::clone(&backend.events);
+    let subject = match &request.source {
+        PackSource::File { path } => path.clone(),
+        PackSource::Catalog { project, .. } => project.clone(),
+        _ => return Err(Error::unsupported("this pack source")),
+    };
+    let handle = backend.tasks().spawn(
+        TaskSpec::new(TaskKind::InstallPack).subject(&subject),
+        move |ctx| {
+            crate::launch::with_job(ctx, |wired| {
+                let control = crate::java::job_control(wired);
+                let work = PackWork {
+                    instances: &instances,
+                    loaders: &loaders,
+                    platforms: &platforms,
+                    client: &client,
+                    control: &control,
+                };
+                let (created, warnings) = run_pack(&work, &request, || wired.check())?;
+                events.publish(&Event::Instance(InstanceEvent::Added(created)));
+                for text in warnings {
+                    events.publish(&Event::Log(LogLine {
+                        source: LogSource::Launcher,
+                        level: LogLevel::Info,
+                        text,
+                    }));
+                }
+                Ok(())
+            })
+        },
+    );
+    Ok(Response::Task(handle.id()))
+}
+
+struct PackWork<'a> {
+    instances: &'a vl_instance::Instances,
+    loaders: &'a vl_loaders::Loaders,
+    platforms: &'a Platforms,
+    client: &'a Client,
+    control: &'a Control,
+}
+
+/// Removes a directory when dropped, unless it was marked to keep.
+struct Cleanup(std::path::PathBuf, bool);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if !self.1 {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+fn run_pack(
+    work: &PackWork<'_>,
+    request: &PackInstallRequest,
+    check: impl Fn() -> Result<()>,
+) -> Result<(InstanceSummary, Vec<String>)> {
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let scratch = work.instances.root().join(format!(
+        ".pack-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _scratch = Cleanup(scratch.clone(), false);
+    let (file, source) = match &request.source {
+        PackSource::File { path } => (std::path::PathBuf::from(path), None),
+        PackSource::Catalog {
+            provider,
+            project,
+            version,
+        } => {
+            let source = work.platforms.source(*provider)?;
+            let (file, record) = vl_install::mrpack::fetch(
+                source,
+                work.client,
+                project,
+                version.as_deref(),
+                request.min_stability,
+                &scratch,
+                work.control,
+            )?;
+            (file, Some(record))
+        }
+        _ => return Err(Error::unsupported("this pack source")),
+    };
+    check()?;
+    let pack = vl_install::mrpack::Pack::open(&file)?;
+    let game_version = pack
+        .index
+        .game_version()
+        .ok_or_else(|| Error::invalid_input("the pack does not name a Minecraft version"))?
+        .to_owned();
+    let loader = match pack.index.loader() {
+        None => None,
+        Some((kind, version)) => {
+            let component = match kind {
+                PackLoader::Fabric => ComponentKind::Fabric,
+                PackLoader::Quilt => ComponentKind::Quilt,
+                PackLoader::NeoForge => ComponentKind::NeoForge,
+                PackLoader::Forge => ComponentKind::Forge,
+            };
+            let chosen = work
+                .loaders
+                .pick(component, &game_version, Some(version), work.control)
+                .map_err(|e| {
+                    if e.kind == vl_core::ErrorKind::Unsupported {
+                        Error::unsupported(format!(
+                            "the pack needs {} {version}, which the launcher does not support yet",
+                            kind.display_name()
+                        ))
+                    } else {
+                        e
+                    }
+                })?;
+            Some(LoaderRequest {
+                kind: component,
+                version: Some(chosen.version),
+            })
+        }
+    };
+    check()?;
+    let name = request
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&pack.index.name)
+        .to_owned();
+    let created = work.instances.create(&NewInstance {
+        name,
+        game_version,
+        group: request.group.clone(),
+        loader,
+    })?;
+    let dir = work.instances.dir(&created.id)?;
+    let mut undo = Cleanup(dir.clone(), false);
+    let meta = dir.join(META_DIR);
+    let report = vl_install::mrpack::install(
+        &pack,
+        &vl_install::mrpack::InstallInput {
+            client: work.client,
+            game_dir: &work.instances.game_dir(&created.id)?,
+            staging: &meta.join("staging"),
+            control: work.control,
+        },
+    )?;
+    check()?;
+    vl_install::mrpack::PackRecord::new(&pack, &report, source).save(&meta)?;
+    // The instance is complete: keep it.
+    undo.1 = true;
+    let mut notes = Vec::new();
+    if !report.optional.is_empty() {
+        notes.push(format!(
+            "installed optional files of the pack: {}",
+            report.optional.join(", ")
+        ));
+    }
+    Ok((created, notes))
+}
+
 fn run(platforms: &Platforms, command: CatalogCommand) -> Result<Response> {
     let control = Control::default();
     match command {
@@ -227,5 +400,117 @@ mod tests {
         }
         drop(backend);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    struct Offline;
+
+    impl vl_net::HttpTransport for Offline {
+        fn get(
+            &self,
+            _: &vl_net::HttpRequest,
+        ) -> std::result::Result<vl_net::HttpResponse, vl_net::NetError> {
+            Ok(vl_net::HttpResponse {
+                status: 404,
+                headers: Vec::new(),
+                body: Box::new(std::io::Cursor::new(Vec::new())),
+            })
+        }
+    }
+
+    fn pack(path: &std::path::Path, dependencies: &str, files: &str) {
+        use std::io::Write;
+        let index = format!(
+            r#"{{"formatVersion":1,"game":"minecraft","versionId":"1","name":"Mini Pack","files":[{files}],"dependencies":{{{dependencies}}}}}"#
+        );
+        let mut w = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        let o = zip::write::SimpleFileOptions::default();
+        w.start_file("modrinth.index.json", o).unwrap();
+        w.write_all(index.as_bytes()).unwrap();
+        w.start_file("overrides/config/a.txt", o).unwrap();
+        w.write_all(b"hello").unwrap();
+        w.finish().unwrap();
+    }
+
+    fn run_pack_file(
+        root: &std::path::Path,
+        pack_file: &std::path::Path,
+    ) -> (
+        Result<(InstanceSummary, Vec<String>)>,
+        vl_instance::Instances,
+    ) {
+        let client = Client::with_transport(NetConfig::new("0.0.0"), std::sync::Arc::new(Offline));
+        let instances = vl_instance::Instances::open(&root.join("instances")).unwrap();
+        let loaders = vl_loaders::Loaders::new(
+            client.clone(),
+            root.join("profiles"),
+            vl_loaders::LoadersOptions::default(),
+        );
+        let platforms = Platforms::new(client.clone());
+        let control = Control::default();
+        let work = PackWork {
+            instances: &instances,
+            loaders: &loaders,
+            platforms: &platforms,
+            client: &client,
+            control: &control,
+        };
+        let request = PackInstallRequest {
+            source: PackSource::File {
+                path: pack_file.to_string_lossy().into_owned(),
+            },
+            name: None,
+            group: None,
+            min_stability: Default::default(),
+        };
+        let result = run_pack(&work, &request, || Ok(()));
+        (result, instances)
+    }
+
+    #[test]
+    fn a_pack_becomes_an_instance_and_a_failed_one_leaves_nothing() {
+        let root = std::env::temp_dir().join(format!("vl-backend-pack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("p.mrpack");
+
+        pack(&file, r#""minecraft":"1.21.1""#, "");
+        let (result, instances) = run_pack_file(&root, &file);
+        let (summary, _) = result.unwrap();
+        assert_eq!(summary.name, "Mini Pack");
+        assert_eq!(summary.game_version, "1.21.1");
+        let dir = instances.dir(&summary.id).unwrap();
+        assert_eq!(
+            std::fs::read(dir.join("minecraft/config/a.txt")).unwrap(),
+            b"hello"
+        );
+        assert!(dir.join(".vibelauncher/pack.json").is_file());
+        assert!(!dir.join(".vibelauncher/staging").exists());
+        assert_eq!(instances.list().unwrap().len(), 1);
+
+        // A file that cannot be downloaded: no new instance remains.
+        let missing = format!(
+            r#"{{"path":"mods/a.jar","hashes":{{"sha1":"{}","sha512":"{}"}},"downloads":["https://cdn.modrinth.com/a.jar"],"fileSize":3}}"#,
+            "a".repeat(40),
+            "b".repeat(128)
+        );
+        pack(&file, r#""minecraft":"1.21.1""#, &missing);
+        let (result, instances) = run_pack_file(&root, &file);
+        assert!(result.is_err());
+        let names: Vec<_> = std::fs::read_dir(instances.root())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(instances.list().unwrap().len(), 1, "{names:?}");
+        assert_eq!(names.len(), 1, "{names:?}");
+
+        // A loader the launcher cannot install yet is a clear error and creates nothing.
+        pack(&file, r#""minecraft":"1.21.1","neoforge":"21.1.1""#, "");
+        let (result, instances) = run_pack_file(&root, &file);
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, vl_core::ErrorKind::Unsupported);
+        assert!(err.message.contains("NeoForge"), "{err:?}");
+        assert_eq!(instances.list().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

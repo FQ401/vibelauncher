@@ -4089,6 +4089,7 @@ dependencies = [
 name = "vl-backend"
 version = "0.0.0"
 dependencies = [
+ "flate2",
  "vl-auth",
  "vl-core",
  "vl-install",
@@ -4097,12 +4098,14 @@ dependencies = [
  "vl-launch",
  "vl-loaders",
  "vl-meta",
+ "vl-modrinth",
  "vl-net",
  "vl-platforms",
  "vl-resources",
  "vl-settings",
  "vl-store",
  "vl-tasks",
+ "zip",
 ]
 
 [[package]]
@@ -4142,6 +4145,7 @@ dependencies = [
  "sha1",
  "sha2",
  "vl-core",
+ "vl-modrinth",
  "vl-net",
  "vl-platforms",
  "vl-resources",
