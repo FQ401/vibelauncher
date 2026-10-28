@@ -1,0 +1,21 @@
+[package]
+name = "vl-platforms"
+description = "Online mod platforms: Modrinth over vl-net with rate limiting and caching."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-modrinth.workspace = true
+vl-net.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

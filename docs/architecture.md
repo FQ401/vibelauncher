@@ -43,8 +43,8 @@ layer = "native"
 
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
-| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
-| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
+| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-modrinth` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
+| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
 | `app` | `vl-cli`, the desktop app | `core`, `backend`, `ui` | Binaries: choose a backend, own the window or the terminal. Live in `apps/`. |
@@ -63,9 +63,9 @@ Cargo itself rejects dependency cycles, including cycles inside a layer.
 app       vl-cli · vibelauncher          → core, backend, ui
 ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
-native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-launch
+native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-launch
                                          → core, native
-core      vl-core · vl-meta · vl-mods · vl-crash → core
+core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
 ```
 
 ## Crates
@@ -89,6 +89,8 @@ core      vl-core · vl-meta · vl-mods · vl-crash → core
 | `vl-backend` | backend | The real facade: routes each command domain to its module, converts native errors into `vl_core::Error`, publishes events. |
 | `vl-mock` | backend | The facade on synthetic in-memory data, with simulated tasks, launches and game logs. No files, network or processes. |
 | `vl-ui-egui` | ui | The shared egui interface. |
+| `vl-modrinth` | core | Modrinth API v2 as pure functions: request URLs with search facets, filters and hash lookups, and tolerant parsing of responses into the catalog types of `vl-core` (size limits, unknown fields ignored, damaged list entries skipped, unsafe file names and non-`https` download URLs dropped). |
+| `vl-platforms` | native | Online mod platforms behind the `CatalogSource` trait; `ModrinthSource` fetches through `vl-net` (HTTP cache, retries, size caps) and paces itself with a rate limiter that follows the server's `X-Ratelimit-*` headers. A second platform adds a module and a `Provider` variant. |
 | `vl-cli` | app | The headless command line. |
 
 Third-party crates are declared once in `[workspace.dependencies]` and used with
@@ -110,7 +112,8 @@ pub trait Facade: Send + Sync {
 
 - A `Command` is grouped by domain: `Hello`, `Instances(InstanceCommand)`,
   `Versions(VersionCommand)`, `Accounts(AccountCommand)`, `Java(JavaCommand)`,
-  `Settings(SettingsCommand)`, `Launch(LaunchCommand)`, `Tasks(TaskCommand)`. Each domain's
+  `Settings(SettingsCommand)`, `Launch(LaunchCommand)`, `Tasks(TaskCommand)`,
+  `Catalog(CatalogCommand)`. Each domain's
   command enum lives in that domain's module of `vl-core` and documents the `Response` variant it
   answers.
 - `call` returns at once with a `Reply` that receives exactly one `Result<Response, Error>`. A UI
@@ -256,6 +259,16 @@ The data directory holds:
   `LoaderProfile` (main class, libraries with hashes, arguments, the game it inherits from),
   merges it with the vanilla version JSON, and wraps it for the cache (`CachedProfile`, with the
   `ETag`; a stale entry is used when upstream is unreachable). Loader sources only add parsers;
+- the online catalog (`vl_core::catalog`, `vl-modrinth`, `vl-platforms`): `CatalogCommand` searches
+  projects (type, game version, loader and category facets, sort order, paging), reads a project
+  by id or slug, lists its versions (loader and game version filters) with files, hashes and
+  dependencies, and finds the versions that own given file hashes (SHA-1 or SHA-512, batched
+  500 per request), which tells where an installed file came from. Modrinth is read without a
+  key at `api.modrinth.com/v2` with the launcher's `User-Agent`; requests stay below the 300 a
+  minute per address limit (a window budget plus the `X-Ratelimit-*` headers; a `429` waits for
+  the reset), a `410` means the API version was retired and is reported as `Unsupported`. Answers
+  go through the HTTP cache: young ones are reused, old ones serve offline. Catalog data is shown
+  as the platform's data, with its name and links, and is not used to train models;
 - mod loaders (`vl-loaders`): Fabric (`meta.fabricmc.net/v2`) and Quilt (`meta.quiltmc.org/v3`)
   share one API shape, `versions/loader/<game>` (versions for a game version, empty or an error
   status when the game is not supported) and `versions/loader/<game>/<loader>/profile/json` (a

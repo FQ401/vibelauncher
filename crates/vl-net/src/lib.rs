@@ -22,7 +22,7 @@ mod error;
 mod hash;
 mod transport;
 
-pub use client::{CacheStatus, Client, Fetched, GetOptions};
+pub use client::{CacheStatus, Client, Fetched, GetOptions, RequestHooks};
 pub use config::{NetConfig, ProxyConfig, RetryPolicy};
 pub use control::{CancelToken, Control, Progress, ProgressFn};
 pub use download::{Download, Downloaded};

@@ -25,6 +25,8 @@ vl-java = { path = "crates/vl-java" }
 vl-instance = { path = "crates/vl-instance" }
 vl-launch = { path = "crates/vl-launch" }
 vl-loaders = { path = "crates/vl-loaders" }
+vl-modrinth = { path = "crates/vl-modrinth" }
+vl-platforms = { path = "crates/vl-platforms" }
 vl-backend = { path = "crates/vl-backend" }
 vl-mock = { path = "crates/vl-mock" }
 vl-ui-egui = { path = "crates/vl-ui-egui" }
