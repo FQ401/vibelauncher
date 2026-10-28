@@ -33,10 +33,8 @@ pub const PROMOTIONS_URL: &str =
 /// Mirrors of the FML libraries that FML for Minecraft 1.5.2 downloaded from
 /// `files.minecraftforge.net/fmllibs/`, which no longer serves them. Every file is checked
 /// against the SHA-1 the Forge jar names.
-pub const FML_LIBRARY_MIRRORS: [&str; 2] = [
-    "https://files.prismlauncher.org/fmllibs/",
-    "https://web.archive.org/web/2015/http://files.minecraftforge.net/fmllibs/",
-];
+pub const FML_LIBRARY_MIRRORS: [&str; 1] =
+    ["https://web.archive.org/web/2015/http://files.minecraftforge.net/fmllibs/"];
 
 /// The Forge repository, promotions and FML library mirrors.
 #[derive(Debug, Clone, PartialEq, Eq)]
