@@ -69,6 +69,14 @@ pub enum LaunchCommand {
         /// The instance.
         instance: InstanceId,
     },
+    /// Checks every file of a stopped instance's game version and loader against its checksum
+    /// and downloads the damaged or missing ones again → `Response::Task` (kind `VerifyFiles`,
+    /// cancellable). Libraries a loader's installer made cannot be downloaded: a damaged one
+    /// fails the task with a message to install the loader again.
+    Verify {
+        /// The instance.
+        instance: InstanceId,
+    },
 }
 
 /// Game process lifecycle.

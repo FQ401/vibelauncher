@@ -23,8 +23,6 @@ sysinfo.workspace = true
 zip.workspace = true
 # Selects the pure-Rust deflate backend that `zip` needs.
 flate2.workspace = true
-
-[dev-dependencies]
 sha1.workspace = true
 
 [lints]

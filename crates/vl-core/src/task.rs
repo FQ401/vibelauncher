@@ -35,6 +35,8 @@ pub enum TaskKind {
     JavaDownload,
     /// Moving a storage section to another folder.
     MoveStorage,
+    /// Checking an instance's game files and repairing them.
+    VerifyFiles,
 }
 
 /// A task as announced when it starts.
