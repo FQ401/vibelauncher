@@ -287,3 +287,17 @@ fn a_damaged_session_is_rejected() {
     let damaged: Session = serde_json::from_value(json).unwrap();
     assert!(damaged.validate().is_err());
 }
+
+#[test]
+fn without_drops_the_files_and_what_needs_them() {
+    let candidates = vec![
+        cand("lib.jar", &[]),
+        cand("a.jar", &["lib"]),
+        cand("b.jar", &["a"]),
+        cand("c.jar", &[]),
+    ];
+    let session = Session::new(candidates, &[]).unwrap();
+    assert_eq!(session.without(&["a.jar".to_owned()]), ["lib.jar", "c.jar"]);
+    assert_eq!(session.without(&["lib.jar".to_owned()]), ["c.jar"]);
+    assert_eq!(session.without(&[]).len(), 4);
+}

@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use vl_core::bisect::{BisectOutcome, BisectVerdict};
 use vl_core::{Error, ErrorKind};
 
+pub mod auto;
 #[cfg(test)]
 mod tests;
 
@@ -527,5 +528,22 @@ impl Session {
     /// Every file under test.
     pub fn candidate_files(&self) -> Vec<String> {
         self.candidates.iter().map(|c| c.file.clone()).collect()
+    }
+
+    /// Every file under test except `files` and the files that require them, directly or not:
+    /// the set that checks a verdict.
+    pub fn without(&self, files: &[String]) -> Vec<String> {
+        let graph = self.graph();
+        self.all()
+            .into_iter()
+            .filter(|&i| {
+                Self::closure(&graph, &[i])
+                    .iter()
+                    .filter_map(|&j| self.candidates.get(j))
+                    .all(|c| !files.contains(&c.file))
+            })
+            .filter_map(|i| self.candidates.get(i))
+            .map(|c| c.file.clone())
+            .collect()
     }
 }

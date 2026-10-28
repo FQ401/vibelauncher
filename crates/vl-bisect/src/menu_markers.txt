@@ -1,0 +1,8 @@
+# Game output lines that show the game finished loading and opens the main menu.
+# One text per line; a line of the game output that contains it is a match. `#` starts a comment.
+#
+# The sound engine starts at the end of the first resource reload, right before the title screen:
+# vanilla, Fabric and Quilt from 1.13 on, and 1.12 and older through the paulscode library.
+Sound engine started
+# The same moment when no audio device is available.
+Error starting SoundSystem

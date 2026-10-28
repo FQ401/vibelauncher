@@ -13,6 +13,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -103,14 +104,43 @@ impl Bisect {
         remove_file(&self.file)
     }
 
-    /// The enabled mod jars with what they provide and require.
+    /// How many mod jars a new session would search (the enabled ones).
+    pub fn enabled_count(&self) -> vl_core::Result<usize> {
+        Ok(self.candidates()?.len())
+    }
+
+    /// Enables exactly `enabled` of the session's files and disables its other files, outside
+    /// the steps of the search (a check before or after it). The session must exist; ending it
+    /// restores the mods as usual.
+    pub fn apply_set(&self, enabled: &[String]) -> vl_core::Result<()> {
+        let session = self.load()?;
+        for file in session.candidate_files() {
+            let on = enabled.contains(&file);
+            self.resources.set_enabled(ResourceKind::Mods, &file, on)?;
+        }
+        Ok(())
+    }
+
+    /// The session's files without `files` and the files that require them.
+    pub fn without(&self, files: &[String]) -> vl_core::Result<Vec<String>> {
+        Ok(self.load()?.without(files))
+    }
+
+    /// The enabled mod jars with what they provide and require. A jar provides its own mods and
+    /// the mods of the jars bundled in it (Fabric API bundles its modules this way).
     fn candidates(&self) -> vl_core::Result<Vec<Candidate>> {
         let entries = self.resources.list(ResourceKind::Mods)?;
+        let dir = self.resources.dir(ResourceKind::Mods);
         Ok(entries
             .into_iter()
             .filter(|e| e.enabled && !e.is_dir && e.file.to_ascii_lowercase().ends_with(".jar"))
             .map(|e| Candidate {
-                provides: e.mods.iter().map(|m| m.id.clone()).collect(),
+                provides: e
+                    .mods
+                    .iter()
+                    .map(|m| m.id.clone())
+                    .chain(bundled_mod_ids(&dir.join(&e.file), &e.nested_jars))
+                    .collect(),
                 requires: e
                     .mods
                     .iter()
@@ -220,6 +250,56 @@ impl Bisect {
             io_err(&self.file, e)
         })
     }
+}
+
+/// Most bytes of one bundled jar that are read for its metadata.
+const MAX_BUNDLED_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The mod ids declared by the bundled jars `nested` (paths inside the jar at `path`), one level
+/// deep. Unreadable jars and metadata are skipped: a missing id only makes the search keep fewer
+/// files together.
+fn bundled_mod_ids(path: &Path, nested: &[String]) -> Vec<String> {
+    if nested.is_empty() {
+        return Vec::new();
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(mut outer) = zip::ZipArchive::new(file) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for name in nested {
+        let mut bytes = Vec::new();
+        let read = outer.by_name(name).map(|entry| {
+            entry
+                .take(MAX_BUNDLED_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .is_ok()
+        });
+        if !matches!(read, Ok(true)) || bytes.len() as u64 > MAX_BUNDLED_BYTES {
+            continue;
+        }
+        let Ok(mut inner) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+            continue;
+        };
+        for (meta_path, _) in vl_mods::METADATA_FILES {
+            let mut meta = Vec::new();
+            let read = inner.by_name(meta_path).map(|entry| {
+                entry
+                    .take(crate::jar::MAX_METADATA_BYTES)
+                    .read_to_end(&mut meta)
+                    .is_ok()
+            });
+            if !matches!(read, Ok(true)) {
+                continue;
+            }
+            if let Some(Ok(mods)) = vl_mods::parse_file(meta_path, &meta) {
+                ids.extend(mods.into_iter().map(|m| m.id));
+            }
+        }
+    }
+    ids
 }
 
 fn remove_file(path: &Path) -> vl_core::Result<()> {

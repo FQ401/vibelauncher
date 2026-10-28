@@ -22,10 +22,12 @@ vl-instance.workspace = true
 vl-launch.workspace = true
 vl-resources.workspace = true
 vl-crash.workspace = true
+vl-bisect.workspace = true
 vl-loaders.workspace = true
 vl-platforms.workspace = true
 vl-install.workspace = true
 vl-modrinth.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 zip.workspace = true

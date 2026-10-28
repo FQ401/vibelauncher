@@ -2,6 +2,7 @@
 
 mod accounts;
 mod bisect;
+mod bisect_auto;
 mod catalog;
 mod datapacks;
 mod diagnose;
@@ -56,7 +57,20 @@ commands:
   instances bisect good|bad|skip <instance>
                                       report how the game ran with the current mods
   instances bisect status|stop <instance>
-                                      show the step; stop restores every mod
+                                      show the step; stop restores every mod (and a world
+                                      left by an automatic search)
+  instances bisect auto <instance> [--world <name>] [--stage menu|world] [--stable-secs <n>]
+                        [--repeats <k>] [--timeout-secs <n>] [--after-crash] [--offline]
+                                      the same search with the launcher starting the game for
+                                      every step: a run is good when the game reaches the main
+                                      menu (or enters the world with Quick Play, 1.20+; older
+                                      versions: you close the game when it works) and keeps
+                                      running --stable-secs (20); bad only when it crashes the
+                                      same way; a set is good after --repeats (1) clean runs;
+                                      --after-crash takes the newest crash as the problem.
+                                      The world is copied and put back after every run;
+                                      Ctrl+C cancels and restores everything
+  instances bisect report <instance>  the result of the last automatic search
   versions list [--snapshots] [--old] list game versions
   versions install <version> [--loader <fabric|quilt|neoforge|forge>] [--loader-version <v>]
                                       download a version's files without starting it

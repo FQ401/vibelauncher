@@ -158,52 +158,95 @@ struct Plan {
     accounts: crate::accounts::Service,
     java: crate::java::JavaService,
     instances: vl_instance::Instances,
+    /// Arguments added after the game arguments of the version.
+    extra_args: Vec<String>,
 }
 
 fn launch(backend: &Backend, request: LaunchRequest) -> vl_core::Result<Response> {
-    let service = backend.launch.clone();
-    let id = request.instance.clone();
-    let config = backend.instances.load(&id)?;
-    let components =
-        ComponentSet::from_pairs(config.components.iter().map(|c| (&*c.uid, &*c.version)))
-            .map_err(|e| Error::new(e.kind, format!("instance {id}: {}", e.message)))?;
-    let plan = Plan {
-        game_dir: backend.instances.game_dir(&id)?,
-        log_dir: backend.instances.dir(&id)?.join("logs"),
-        settings: backend.settings().effective(&id).value,
-        accounts: backend.accounts.clone(),
-        java: backend.java.clone(),
-        instances: backend.instances.clone(),
-        components,
-        request,
-    };
+    Launcher::new(backend)
+        .launch(request, Vec::new())
+        .map(Response::Task)
+}
 
-    let mut active = service.active();
-    if active.contains_key(&id) {
-        return Err(Error::conflict(format!("instance {id} is already running")));
+/// What starting the game needs from the backend, detached from it so a task can launch too.
+#[derive(Clone)]
+pub(crate) struct Launcher {
+    service: Service,
+    instances: vl_instance::Instances,
+    settings: vl_settings::SettingsStore,
+    accounts: crate::accounts::Service,
+    java: crate::java::JavaService,
+    tasks: vl_tasks::TaskEngine,
+}
+
+impl Launcher {
+    pub(crate) fn new(backend: &Backend) -> Self {
+        Self {
+            service: backend.launch.clone(),
+            instances: backend.instances.clone(),
+            settings: backend.settings().clone(),
+            accounts: backend.accounts.clone(),
+            java: backend.java.clone(),
+            tasks: backend.tasks().clone(),
+        }
     }
-    // The task waits for this signal, so `Preparing` is published before anything it causes.
-    let (go_tx, go_rx) = mpsc::channel::<()>();
-    let worker = service.clone();
-    let handle = backend.tasks().spawn(
-        TaskSpec::new(TaskKind::Launch).subject(&config.name),
-        move |ctx| {
-            let _ = go_rx.recv();
-            let id = plan.request.instance.clone();
-            let result = run_launch(&worker, ctx, &plan);
-            if result.is_err() {
-                worker.active().remove(&id);
-                worker.state(&id, InstanceState::Stopped);
-            }
-            result
-        },
-    );
-    let task = handle.id();
-    active.insert(id.clone(), Active::Preparing(handle));
-    drop(active);
-    service.state(&id, InstanceState::Preparing { task });
-    let _ = go_tx.send(());
-    Ok(Response::Task(task))
+
+    /// Stops the instance's game, or cancels its launch.
+    pub(crate) fn stop(&self, instance: &InstanceId) -> vl_core::Result<()> {
+        stop(&self.service, instance).map(|_| ())
+    }
+
+    /// Starts the `Launch` task; `extra_args` go after the game arguments of the version.
+    pub(crate) fn launch(
+        &self,
+        request: LaunchRequest,
+        extra_args: Vec<String>,
+    ) -> vl_core::Result<vl_core::TaskId> {
+        let service = self.service.clone();
+        let id = request.instance.clone();
+        let config = self.instances.load(&id)?;
+        let components =
+            ComponentSet::from_pairs(config.components.iter().map(|c| (&*c.uid, &*c.version)))
+                .map_err(|e| Error::new(e.kind, format!("instance {id}: {}", e.message)))?;
+        let plan = Plan {
+            game_dir: self.instances.game_dir(&id)?,
+            log_dir: self.instances.dir(&id)?.join("logs"),
+            settings: self.settings.effective(&id).value,
+            accounts: self.accounts.clone(),
+            java: self.java.clone(),
+            instances: self.instances.clone(),
+            components,
+            request,
+            extra_args,
+        };
+
+        let mut active = service.active();
+        if active.contains_key(&id) {
+            return Err(Error::conflict(format!("instance {id} is already running")));
+        }
+        // The task waits for this signal, so `Preparing` is published before anything it causes.
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let worker = service.clone();
+        let handle = self.tasks.spawn(
+            TaskSpec::new(TaskKind::Launch).subject(&config.name),
+            move |ctx| {
+                let _ = go_rx.recv();
+                let id = plan.request.instance.clone();
+                let result = run_launch(&worker, ctx, &plan);
+                if result.is_err() {
+                    worker.active().remove(&id);
+                    worker.state(&id, InstanceState::Stopped);
+                }
+                result
+            },
+        );
+        let task = handle.id();
+        active.insert(id.clone(), Active::Preparing(handle));
+        drop(active);
+        service.state(&id, InstanceState::Preparing { task });
+        let _ = go_tx.send(());
+        Ok(task)
+    }
 }
 
 fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Result<()> {
@@ -275,6 +318,11 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
         };
         vl_launch::prepare(&service.installer, &input, job)
     })?;
+    let mut prepared = prepared;
+    prepared
+        .command
+        .args
+        .extend(plan.extra_args.iter().cloned());
     ctx.check()?;
 
     service.log(
