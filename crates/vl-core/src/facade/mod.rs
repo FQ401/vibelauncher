@@ -30,7 +30,7 @@ use crate::launch::{LaunchCommand, LaunchEvent};
 use crate::log::{LogBatch, LogLine};
 use crate::resources::{ResourceCommand, ResourceEntry, WorldInfo};
 use crate::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
-use crate::storage::{CleanupReport, PathCheck, StorageCommand, StorageInfo};
+use crate::storage::{CleanupReport, PathCheck, StorageCommand, StorageInfo, StorageSuggestion};
 use crate::task::{TaskCommand, TaskEvent, TaskSnapshot};
 use crate::version::{GameVersion, LoaderVersionInfo, VersionCommand, VersionEvent};
 
@@ -148,6 +148,8 @@ pub enum Response {
     PathCheck(PathCheck),
     /// What a storage cleanup did.
     StorageCleaned(CleanupReport),
+    /// The suggested data folder.
+    StorageSuggestion(StorageSuggestion),
 }
 
 /// Something that happened in the launcher.

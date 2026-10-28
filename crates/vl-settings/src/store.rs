@@ -404,6 +404,28 @@ mod tests {
     }
 
     #[test]
+    fn advanced_limits_round_trip_and_a_bad_value_resets_the_group() {
+        let d = Dir::new("advanced");
+        let s = SettingsStore::new(&d.0);
+        let mut v = Settings::default();
+        v.advanced.log_max_files = 7;
+        v.advanced.cache_max_mib = 512;
+        s.set_global(&v).unwrap();
+        assert_eq!(s.global().value.advanced, v.advanced);
+        v.advanced.cache_max_mib = 1;
+        assert!(s.set_global(&v).is_err());
+        write(
+            s.global_path(),
+            "[advanced]
+log_max_files = 0
+",
+        );
+        let l = s.global();
+        assert_eq!(l.value.advanced.log_max_files, 30);
+        assert_eq!(l.warnings.len(), 1);
+    }
+
+    #[test]
     fn invalid_values_are_refused_and_nothing_is_written() {
         let d = Dir::new("refuse");
         let s = SettingsStore::new(&d.0);

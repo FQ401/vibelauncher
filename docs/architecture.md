@@ -276,7 +276,7 @@ unavailable the backend refuses every command except storage, tasks and `Hello`.
 without `storage.json` uses the default folders, which is the layout of data written before
 sections existed.
 
-**Storage commands** (`StorageCommand`, `vl-cli storage show|check|move|reset|cleanup`):
+**Storage commands** (`StorageCommand`, `vl-cli storage show|check|suggest|move|reset|cleanup`):
 
 - `Show { sizes }` returns `StorageInfo`: the data folder and its source, every section (folder,
   default or explicit, available, size), the old copies, and whether a restart is required.
@@ -291,6 +291,16 @@ sections existed.
   nearest existing parent), a network drive (UNC path, a mapped drive that resolves to one, or a
   network file system), a removable drive, on Windows a path longer than 100 characters or with
   characters outside ASCII, and less than 5 GiB free.
+- `Suggest` returns a `StorageSuggestion`: the local fixed drives (removable and network drives
+  and drives of size 0 are left out) with capacity, free space and whether each is the system
+  drive; the suggested data folder; the OS-convention folder; whether the suggested folder and
+  the folder in use now are on the system drive; the typical need (`StorageEstimate::TYPICAL`:
+  10 GiB, made of 6 GiB for three instances, 3 GiB of shared game files and 1 GiB of Java); and
+  whether the suggested drive has room for it. On Windows the drive other than the system drive
+  with the most free space, above 20 GiB and the typical need, gets `<drive>:\VibeLauncher`;
+  otherwise the OS convention is suggested. On macOS and Linux the OS convention is always
+  suggested, and a separate volume under it (such as `/home`) is reported as not being the system
+  drive. The drives come from a `DiskSource`, so the choice is tested on synthetic lists.
 - `Move(MoveRequest { section, target, mode })` answers `Response::Task` (`MoveStorage`,
   cancellable). It is refused while a game or another task runs; `target: None` is the default
   folder (for the data folder: the OS convention, and the pointer is removed). A copy measures
@@ -309,7 +319,10 @@ sections existed.
   and the trash of every instance.
 
 **Growth.** When the store opens and on cleanup, the oldest files are removed until launcher logs
-fit 30 files and 64 MiB and the cache fits 2 GiB. Game logs are limited per instance (see the
+and the cache fit their limits. The limits are the global `advanced` settings group
+(`log_max_files` 30, `log_max_mib` 64, `cache_max_mib` 2048 by default); instances cannot override
+it. The store opens with the default limits and the backend prunes again with the configured ones
+as soon as the settings are read. Game logs are limited per instance (see the
 launch flow).
 
 **Long paths.** File operations use the Rust standard library, which passes paths longer than
@@ -526,6 +539,9 @@ group is the instance's override if it has one, else the global group, which sta
 built-in defaults. An instance overrides a whole group or inherits it (`Option` per group in
 `Overrides`); `Settings::with_overrides` computes the effective settings. Every group has range
 checks (`validate`) and every type keeps unknown fields (`Extra`).
+
+A ninth group, `advanced`, is global only (`Settings::with_overrides` always takes it from the global
+settings): the limits of launcher logs and the cache.
 
 On disk (`vl-settings`, TOML, written with `vl_store::write_atomic`):
 

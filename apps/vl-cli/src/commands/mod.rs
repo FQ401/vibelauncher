@@ -108,6 +108,8 @@ commands:
                                       restart; the old copy stays until a cleanup;
                                       --switch-only uses files you copied yourself; --yes
                                       moves despite warnings
+  storage suggest                     suggest a data folder off the system drive, with the drives,
+                                      free space and the space a typical set of data takes
   storage reset <section> [--switch-only]
                                       move a section back to its default place
   storage cleanup [--trash]           remove old copies left by moves, prune logs and the

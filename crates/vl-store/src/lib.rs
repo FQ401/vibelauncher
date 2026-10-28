@@ -8,6 +8,7 @@
 //! - Checks of a folder before data goes there: see [`check`].
 //! - Moving a section by copying with rollback, and removing old copies: see [`mover`].
 //! - Size limits of logs and the cache: see [`retention`].
+//! - Suggesting a data folder off the system drive: see [`suggest`].
 //! - The on-disk format version and the migration chain, with a snapshot before each migration:
 //!   see [`format`].
 //! - A lock that keeps a second launcher process out of the same data folder: see [`lock`].
@@ -26,11 +27,13 @@ pub mod mover;
 pub mod paths;
 pub mod pointer;
 pub mod retention;
+pub mod suggest;
 
 use std::path::{Path, PathBuf};
 
 use vl_core::storage::{
     CleanupReport, Leftover, MoveRequest, PathCheck, RootSource, Section, SectionInfo, StorageInfo,
+    StorageSuggestion,
 };
 
 pub use atomic::{write_atomic, write_atomic_with};
@@ -95,21 +98,21 @@ impl Store {
             CURRENT_FORMAT,
             &snapshots,
         )?;
-        for (section, limits) in [
-            (Section::Logs, retention::LOG_LIMITS),
-            (Section::Cache, retention::CACHE_LIMITS),
-        ] {
-            if !unavailable.contains(&section) {
-                retention::prune(&layout.path(section), limits);
-            }
-        }
-        Ok(Self {
+        let store = Self {
             env: env.clone(),
             layout,
             unavailable,
             _lock: lock,
             migration,
-        })
+        };
+        store.prune(&retention::Policy::default());
+        Ok(store)
+    }
+
+    /// Prunes launcher logs and the cache to `policy`; the settings are read after the store is
+    /// open, so the backend calls this again with the configured limits.
+    pub fn prune(&self, policy: &retention::Policy) {
+        self.view().prune(policy);
     }
 
     /// The layout: the data folder and the folder of every section.
@@ -201,9 +204,14 @@ impl Store {
         self.view().plan_move(request)
     }
 
-    /// Removes old copies left by moves and prunes logs and the cache.
-    pub fn cleanup(&self) -> Result<CleanupReport, StoreError> {
-        self.view().cleanup()
+    /// Removes old copies left by moves and prunes logs and the cache to `policy`.
+    pub fn cleanup(&self, policy: &retention::Policy) -> Result<CleanupReport, StoreError> {
+        self.view().cleanup(policy)
+    }
+
+    /// Suggests a data folder; see [`suggest::suggest`].
+    pub fn suggest(&self) -> StorageSuggestion {
+        self.view().suggest(&suggest::SystemDisks)
     }
 }
 
@@ -294,9 +302,24 @@ impl StoreView {
         mover::plan(&self.env, &self.layout, &self.unavailable, request)
     }
 
-    /// Removes old copies left by moves and prunes logs and the cache.
-    pub fn cleanup(&self) -> Result<CleanupReport, StoreError> {
-        mover::cleanup(&self.env, &self.layout)
+    /// Removes old copies left by moves and prunes logs and the cache to `policy`.
+    pub fn cleanup(&self, policy: &retention::Policy) -> Result<CleanupReport, StoreError> {
+        mover::cleanup(&self.env, &self.layout, policy)
+    }
+
+    /// Prunes launcher logs and the cache to `policy`.
+    pub fn prune(&self, policy: &retention::Policy) {
+        for (section, limits) in [(Section::Logs, policy.logs), (Section::Cache, policy.cache)] {
+            if !self.unavailable.contains(&section) {
+                retention::prune(&self.layout.path(section), limits);
+            }
+        }
+    }
+
+    /// Suggests a data folder from the drives of `disks`; the data folder in use is compared with
+    /// the system drive.
+    pub fn suggest(&self, disks: &dyn suggest::DiskSource) -> StorageSuggestion {
+        suggest::suggest(&self.env, disks, self.layout.root())
     }
 }
 

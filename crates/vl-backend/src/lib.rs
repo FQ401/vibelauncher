@@ -76,6 +76,7 @@ impl Backend {
         let store = Store::open(&config.store_options())?;
         let instances = open_instances(&store)?;
         let settings = SettingsStore::new(store.data_dir());
+        store.prune(&storage::retention_policy(&settings));
         let events = Arc::new(EventBus::default());
         let tasks = TaskEngine::new(Arc::clone(&events), MAX_PARALLEL_TASKS);
         let accounts = accounts::Service::new(&store, Arc::clone(&events))?;
