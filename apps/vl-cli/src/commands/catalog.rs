@@ -218,7 +218,8 @@ fn lookup(facade: &dyn Facade, hashes: &[&str], out: Out<'_>) -> Result<(), CliE
     }
 }
 
-/// `catalog install <slug|id> --instance <id> [--version <id>] [--channel <c>] [--yes]`: prints
+/// `catalog install <slug|id> --instance <id> [--world <name>] [--version <id>] [--channel <c>]
+/// [--yes]`: prints
 /// the plan, asks (or takes `--yes`), then follows the install task.
 fn install(
     facade: &dyn Facade,
@@ -228,6 +229,7 @@ fn install(
 ) -> Result<(), CliError> {
     let mut instance = None;
     let mut version = None;
+    let mut world = None;
     let mut min_stability = MinStability::default();
     let mut yes = false;
     let mut it = flags.iter();
@@ -240,6 +242,7 @@ fn install(
         match *flag {
             "--instance" => instance = Some((*value).to_owned()),
             "--version" => version = Some((*value).to_owned()),
+            "--world" => world = Some((*value).to_owned()),
             "--channel" => {
                 min_stability = MinStability::parse(value)
                     .ok_or_else(|| CliError::from("channel is release, beta or alpha"))?;
@@ -256,6 +259,7 @@ fn install(
         project: project.to_owned(),
         version,
         min_stability,
+        world,
     };
     let planned = call(
         facade,

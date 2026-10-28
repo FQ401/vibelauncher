@@ -4,13 +4,15 @@ use vl_core::instance::{InstanceCommand, LoaderRequest, NewInstance};
 use vl_core::{Command, Facade, InstanceId, Response};
 
 use super::{CliError, Out, USAGE, call, loader_flags, parse_loader, unexpected};
-use super::{bisect, diagnose, mods};
+use super::{bisect, datapacks, diagnose, mods};
 
 pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<(), CliError> {
     match args {
         ["mods", rest @ ..] => mods::run(facade, rest, out),
         ["bisect", rest @ ..] => bisect::run(facade, rest, out),
         ["diagnose", rest @ ..] => diagnose::run(facade, rest, out),
+        ["worlds", rest @ ..] => datapacks::run_worlds(facade, rest, out),
+        ["datapacks", rest @ ..] => datapacks::run(facade, rest, out),
         ["list"] => match call(facade, Command::Instances(InstanceCommand::List))? {
             Response::Instances(instances) => {
                 for i in instances {

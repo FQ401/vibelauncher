@@ -160,6 +160,7 @@ fn a_mod_in_an_instance_without_a_loader_cannot_be_checked() {
     let target = Target {
         game_version: "1.21.4".into(),
         loader: None,
+        world: false,
     };
     let meta = meta(&w);
     let report = check(&input(&w, &target, &meta), UpdateOptions::default()).unwrap();

@@ -41,6 +41,9 @@ const KINDS: [ResourceKind; 4] = [
     ResourceKind::DataPacks,
 ];
 
+/// The only folder looked at in a world.
+const WORLD_KINDS: [ResourceKind; 1] = [ResourceKind::DataPacks];
+
 /// What the operations here work on.
 pub struct UpdateInput<'a> {
     /// The platform.
@@ -144,6 +147,11 @@ struct Asked<'a> {
     current: &'a ProjectVersion,
 }
 
+/// The folders to look at: a world has only data packs.
+fn kinds(target: &Target) -> &'static [ResourceKind] {
+    if target.world { &WORLD_KINDS } else { &KINDS }
+}
+
 fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection> {
     let loaded = input.origins.load();
     let mut report = UpdateReport {
@@ -159,7 +167,7 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
     }
     let scanned = scan_many(
         input.resources,
-        &KINDS,
+        kinds(input.target),
         &loaded.origins,
         input.source,
         input.control,
@@ -169,7 +177,7 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
 
     let mut mods: Vec<Asked<'_>> = Vec::new();
     let mut others: Vec<Asked<'_>> = Vec::new();
-    for kind in KINDS {
+    for &kind in kinds(input.target) {
         for file in scanned.get(&kind).map_or(&[][..], Vec::as_slice) {
             if pack.contains(&file.hashes.sha1) || pack.contains(&file.hashes.sha512) {
                 pack_files.insert((kind, file.file.clone()));
@@ -306,7 +314,7 @@ pub fn identify(input: &UpdateInput<'_>) -> Result<IdentifyReport> {
     let loaded = input.origins.load();
     let scanned = scan_many(
         input.resources,
-        &KINDS,
+        kinds(input.target),
         &loaded.origins,
         input.source,
         input.control,
@@ -320,7 +328,7 @@ pub fn identify(input: &UpdateInput<'_>) -> Result<IdentifyReport> {
     }
     let provider = input.source.provider();
     let mut added = Vec::new();
-    for kind in KINDS {
+    for &kind in kinds(input.target) {
         for file in scanned.get(&kind).map_or(&[][..], Vec::as_slice) {
             match &file.identity {
                 None => report.unknown.push(PackFile {
@@ -428,7 +436,7 @@ pub fn plan_update(
         }
         Selection::Files(selectors) => {
             for selector in selectors {
-                let mut hits: Vec<(ResourceKind, &InstalledFile)> = KINDS
+                let mut hits: Vec<(ResourceKind, &InstalledFile)> = kinds(input.target)
                     .iter()
                     .flat_map(|k| {
                         inspection

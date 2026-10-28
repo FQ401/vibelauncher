@@ -440,6 +440,7 @@ fn fabric() -> Target {
     Target {
         game_version: "1.21.4".into(),
         loader: Some("fabric".into()),
+        world: false,
     }
 }
 
@@ -521,6 +522,7 @@ fn ignores_versions_for_other_games_and_loaders_and_honors_a_pinned_version() {
     let none = Target {
         game_version: "1.19".into(),
         loader: Some("fabric".into()),
+        world: false,
     };
     let err = w
         .plan_with(&none, "sodium", None, MinStability::Beta)
@@ -544,6 +546,7 @@ fn quilt_takes_fabric_mods_but_prefers_its_own() {
     let quilt = Target {
         game_version: "1.21.4".into(),
         loader: Some("quilt".into()),
+        world: false,
     };
     let a = w.plan_with(&quilt, "a", None, MinStability::Beta).unwrap();
     assert_eq!(a.items[0].version_id, "a-fabric");
@@ -566,6 +569,7 @@ fn a_mod_needs_a_loader_but_a_pack_does_not() {
     let vanilla = Target {
         game_version: "1.21.4".into(),
         loader: None,
+        world: false,
     };
     let err = w
         .plan_with(&vanilla, "sodium", None, MinStability::Beta)
@@ -964,3 +968,4 @@ fn origin_records_survive_damage_and_manual_changes() {
 }
 
 mod updates_cases;
+mod world_cases;

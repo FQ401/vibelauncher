@@ -515,6 +515,9 @@ pub enum CatalogCommand {
         /// The platform.
         #[serde(default)]
         provider: Provider,
+        /// Look at the data packs of this world instead of the instance's folders.
+        #[serde(default)]
+        world: Option<String>,
     },
 }
 

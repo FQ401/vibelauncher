@@ -5,6 +5,8 @@
 //! - lists a folder, reading mod metadata from jars ([`jar::read_jar`]);
 //! - enables and disables a file by renaming it to `<name>.disabled` and back;
 //! - copies a file in (never replacing one);
+//! - lists the worlds in `saves/` and opens one as [`Resources`] of its data packs;
+//! - reads `pack.mcmeta` of resource packs and data packs;
 //! - removes a file by moving it into the instance's trash directory (nothing is erased).
 //!
 //! [`Resources::class_index`] builds the [`ModClassIndex`] that `vl-crash` uses to attribute a
@@ -13,11 +15,14 @@
 pub mod bisect;
 mod index;
 pub mod jar;
+mod pack;
 mod store;
+mod worlds;
 
 pub use bisect::Bisect;
 pub use index::ModClassIndex;
 pub use store::{DISABLED_SUFFIX, Resources};
+pub use worlds::SAVES_DIR;
 
 #[cfg(test)]
 mod tests;

@@ -76,6 +76,10 @@ pub struct InstallRequest {
     /// The least stable channel allowed when choosing.
     #[serde(default)]
     pub min_stability: MinStability,
+    /// The world (folder name in `saves/`) whose data packs the install goes into. Data packs
+    /// need one; other projects must not name one.
+    #[serde(default)]
+    pub world: Option<String>,
 }
 
 /// Why an item is in the plan.
@@ -410,6 +414,10 @@ pub struct UpdateCheckRequest {
     /// the pack is updated as a whole).
     #[serde(default)]
     pub include_pack_files: bool,
+    /// Check the data packs of this world (folder name in `saves/`) instead of the instance's
+    /// folders.
+    #[serde(default)]
+    pub world: Option<String>,
 }
 
 fn default_update_stability() -> MinStability {
@@ -424,6 +432,7 @@ impl UpdateCheckRequest {
             provider: Provider::default(),
             min_stability: MinStability::Release,
             include_pack_files: false,
+            world: None,
         }
     }
 }

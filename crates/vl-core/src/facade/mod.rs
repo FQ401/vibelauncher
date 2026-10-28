@@ -28,7 +28,7 @@ use crate::instance::{InstanceCommand, InstanceEvent, InstanceSummary};
 use crate::java::{JavaCommand, JavaEvent, JavaRuntime};
 use crate::launch::{LaunchCommand, LaunchEvent};
 use crate::log::{LogBatch, LogLine};
-use crate::resources::{ResourceCommand, ResourceEntry};
+use crate::resources::{ResourceCommand, ResourceEntry, WorldInfo};
 use crate::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
 use crate::task::{TaskCommand, TaskEvent, TaskSnapshot};
 use crate::version::{GameVersion, LoaderVersionInfo, VersionCommand, VersionEvent};
@@ -113,6 +113,8 @@ pub enum Response {
     Tasks(Vec<TaskSnapshot>),
     /// The entries of a resource folder.
     Resources(Vec<ResourceEntry>),
+    /// The worlds of an instance.
+    Worlds(Vec<WorldInfo>),
     /// A bisection session.
     Bisect(BisectStatus),
     /// A page of catalog search results.

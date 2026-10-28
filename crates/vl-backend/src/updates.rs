@@ -61,7 +61,7 @@ pub(crate) fn spawn_reply(
 }
 
 pub(crate) fn check(backend: &Backend, request: UpdateCheckRequest, replier: Replier) {
-    let (job, _) = match context(backend, &request.instance) {
+    let (job, _) = match context(backend, &request.instance, request.world.as_deref()) {
         Ok(j) => j,
         Err(e) => return replier.send(Err(e)),
     };
@@ -73,7 +73,11 @@ pub(crate) fn check(backend: &Backend, request: UpdateCheckRequest, replier: Rep
 }
 
 pub(crate) fn plan(backend: &Backend, request: UpdateRequest, replier: Replier) {
-    let (job, _) = match context(backend, &request.check.instance) {
+    let (job, _) = match context(
+        backend,
+        &request.check.instance,
+        request.check.world.as_deref(),
+    ) {
         Ok(j) => j,
         Err(e) => return replier.send(Err(e)),
     };
@@ -92,7 +96,11 @@ pub(crate) fn plan(backend: &Backend, request: UpdateRequest, replier: Replier) 
 
 pub(crate) fn update(backend: &Backend, request: UpdateRequest) -> Result<Response> {
     selection(&request)?;
-    let (job, name) = context(backend, &request.check.instance)?;
+    let (job, name) = context(
+        backend,
+        &request.check.instance,
+        request.check.world.as_deref(),
+    )?;
     let events = Arc::clone(&backend.events);
     let handle = backend.tasks().spawn(
         TaskSpec::new(TaskKind::InstallResource).subject(&name),
@@ -134,9 +142,10 @@ pub(crate) fn identify(
     backend: &Backend,
     instance: &InstanceId,
     provider: Provider,
+    world: Option<&str>,
     replier: Replier,
 ) {
-    let (job, _) = match context(backend, instance) {
+    let (job, _) = match context(backend, instance, world) {
         Ok(j) => j,
         Err(e) => return replier.send(Err(e)),
     };
