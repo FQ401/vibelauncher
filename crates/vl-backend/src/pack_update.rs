@@ -149,7 +149,8 @@ fn components(setup: &Setup, prepared: &Prepared, control: &Control) -> Result<O
     let same = match (config.loader(), component) {
         (Loader::Fabric(v), ComponentKind::Fabric)
         | (Loader::Quilt(v), ComponentKind::Quilt)
-        | (Loader::NeoForge(v), ComponentKind::NeoForge) => v == chosen.version,
+        | (Loader::NeoForge(v), ComponentKind::NeoForge)
+        | (Loader::Forge(v), ComponentKind::Forge) => v == chosen.version,
         _ => false,
     };
     if same && !game_changed {
