@@ -16,6 +16,7 @@ vl-meta = { path = "crates/vl-meta" }
 vl-mods = { path = "crates/vl-mods" }
 vl-resources = { path = "crates/vl-resources" }
 vl-crash = { path = "crates/vl-crash" }
+vl-bisect = { path = "crates/vl-bisect" }
 vl-store = { path = "crates/vl-store" }
 vl-net = { path = "crates/vl-net" }
 vl-tasks = { path = "crates/vl-tasks" }

@@ -43,7 +43,7 @@ layer = "native"
 
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
-| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-modrinth` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
+| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-bisect`, `vl-modrinth` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
 | `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-install`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
@@ -65,7 +65,7 @@ ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
 native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-install · vl-launch
                                          → core, native
-core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
+core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth → core
 ```
 
 ## Crates
@@ -76,6 +76,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
 | `vl-meta` | core | Game metadata: parsing and normalizing upstream documents (version manifest, version JSON, rules, arguments, libraries and natives, asset indexes, loader profiles, installer profiles with their processor plans, the NeoForge and Forge version lists) from bytes into the launcher's own types. Platform rules take a `Platform` argument, so every OS is testable on any host. |
 | `vl-mods` | core | Mod metadata: parsing `fabric.mod.json`, `quilt.mod.json`, `META-INF/mods.toml`, `META-INF/neoforge.mods.toml` and `mcmod.info` from bytes into `ModMetadata` (id, name, version, authors, description, icon path, dependencies, loader, game versions). |
 | `vl-crash` | core | Crash diagnosis: text of `latest.log`, a crash report or `hs_err` plus a class-to-mod index in, a `Diagnosis` out (confidence level, signature, suspect mods, localization keys, evidence lines). Signatures are data (`signatures.toml`); a mod is named with certainty only when a signature matched. |
+| `vl-bisect` | core | Mod bisection engine: a serializable `Session` over the enabled mod files (provided and required mod ids) hands out the next set of files to enable and takes the answer (bad, good, skipped). Delta debugging with dependency closure (a file is never disabled while an enabled one requires it), libraries kept enabled until the other mods are cleared, optional hints from a crash diagnosis, several culprits at once, and a verdict (found, not reproduced, inconclusive). About `log2(n)` steps for one culprit. |
 | `vl-store` | native | Data, cache and log directories by OS convention or one portable directory; the on-disk format version and migrations; the lock against a second launcher process; atomic writes. |
 | `vl-net` | native | HTTP and downloads: parallelism limit, retries, timeouts, size caps, hash checks, HTTP cache (`ETag`, `Last-Modified`), offline reads, proxies, the launcher's `User-Agent`. |
 | `vl-tasks` | native | The task engine: stages with weights, nested subtasks, overall progress, cooperative cancellation, timeouts, a concurrency limit; publishes task events. |
@@ -84,7 +85,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-modrinth → core
 | `vl-java` | native | Java runtimes: discovery on each OS, probing with a timeout, managed downloads, choosing a runtime for a game version. |
 | `vl-instance` | native | Instances on disk: format, create, list, rename, delete; damaged instances are listed with a problem. |
 | `vl-loaders` | native | Mod loader sources: version lists per game version and launch profiles of Fabric, Quilt, NeoForge and Forge through `vl-net`, the on-disk store of the profiles in use, and the installation of NeoForge and Forge (installer, its libraries, processors run with Java behind the `ProcessorRunner` trait). |
-| `vl-resources` | native | Instance resource folders (`mods`, `resourcepacks`, `shaderpacks`, `datapacks`, `global_packs/required_data`): listing with mod metadata read from jars (capped entries and sizes, bundled jars listed not opened, damaged jars reported as a problem), enable and disable by renaming to `<name>.disabled`, add by copy without replacing, remove into `<instance>/.trash/`, and the `ClassIndex` of `vl-crash` built from the packages of the enabled jars. |
+| `vl-resources` | native | Instance resource folders (`mods`, `resourcepacks`, `shaderpacks`, `datapacks`, `global_packs/required_data`): listing with mod metadata read from jars (capped entries and sizes, bundled jars listed not opened, damaged jars reported as a problem), enable and disable by renaming to `<name>.disabled`, add by copy without replacing, remove into `<instance>/.trash/`, and the `ClassIndex` of `vl-crash` built from the packages of the enabled jars. `Bisect` runs a `vl-bisect` session on the mods folder: the session file `<instance>/.vibelauncher/bisect.json` is saved before any file is renamed, and ending the session in any way (finish, stop, a failed step) re-enables every file it started with. The game is run by the user between steps. |
 | `vl-launch` | native | Preparing game files, building the command line, running and stopping the game process, streaming its log, detecting crashes. |
 | `vl-backend` | backend | The real facade: routes each command domain to its module, converts native errors into `vl_core::Error`, publishes events. |
 | `vl-mock` | backend | The facade on synthetic in-memory data, with simulated tasks, launches and game logs. No files, network or processes. |

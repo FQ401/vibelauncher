@@ -9,6 +9,7 @@
 //! yet answers [`vl_core::ErrorKind::Unsupported`].
 
 mod accounts;
+mod bisect;
 mod catalog;
 mod instances;
 mod java;
@@ -137,6 +138,7 @@ impl Facade for Backend {
             Command::Catalog(vl_core::catalog::CatalogCommand::ExportPack(r)) => {
                 pack_export::handle(self, r, replier)
             }
+            Command::Bisect(c) => bisect::handle(self, c, replier),
             Command::Catalog(c) => catalog::handle(self, c, replier),
             other => replier.send(Err(Error::unsupported(format!("{other:?}")))),
         }

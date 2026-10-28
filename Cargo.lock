@@ -4109,6 +4109,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vl-bisect"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vl-core",
+]
+
+[[package]]
 name = "vl-cli"
 version = "0.0.0"
 dependencies = [
@@ -4273,6 +4282,9 @@ name = "vl-resources"
 version = "0.0.0"
 dependencies = [
  "flate2",
+ "serde",
+ "serde_json",
+ "vl-bisect",
  "vl-core",
  "vl-crash",
  "vl-mods",

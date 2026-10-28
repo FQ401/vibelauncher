@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 pub use channel::{EventBus, EventStream, Replier, Reply, reply_channel};
 
 use crate::account::{Account, AccountCommand, AccountEvent};
+use crate::bisect::{BisectCommand, BisectStatus};
 use crate::catalog::{CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage};
 use crate::ids::TaskId;
 use crate::install::{
@@ -65,6 +66,8 @@ pub enum Command {
     Tasks(TaskCommand),
     /// Mods, packs and other instance resources.
     Resources(ResourceCommand),
+    /// Mod bisection.
+    Bisect(BisectCommand),
     /// The online mod catalog.
     Catalog(CatalogCommand),
 }
@@ -109,6 +112,8 @@ pub enum Response {
     Tasks(Vec<TaskSnapshot>),
     /// The entries of a resource folder.
     Resources(Vec<ResourceEntry>),
+    /// A bisection session.
+    Bisect(BisectStatus),
     /// A page of catalog search results.
     CatalogSearch(SearchPage),
     /// One catalog project.
