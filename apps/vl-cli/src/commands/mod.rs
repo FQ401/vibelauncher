@@ -62,6 +62,13 @@ commands:
   packs install <file.mrpack|slug> [--name <n>] [--version <id>] [--group <g>] [--channel <c>]
                                       install a Modrinth modpack as a new instance (name, Minecraft
                                       version and loader come from the pack)
+  packs export <instance> --out <file.mrpack> [--name <n>] [--version <v>] [--summary <t>]
+               [--include <config,kubejs,resourcepacks,shaderpacks,options|none>]
+                                      export the instance as a Modrinth modpack; files the catalog
+                                      knows become download links, the rest goes inside the pack
+                                      (you answer for their licenses). Disabled mods, saves, logs
+                                      and screenshots are never included; default is config,
+                                      resourcepacks, shaderpacks
   packs updates <instance> [--channel <release|beta|alpha>]
                                       look for a newer version of the instance's modpack
   packs update <instance> [--version <id>] [--file <pack.mrpack>] [--channel <c>] [--reset] [--yes]
