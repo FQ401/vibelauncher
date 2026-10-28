@@ -20,6 +20,7 @@ vl-auth.workspace = true
 vl-java.workspace = true
 vl-instance.workspace = true
 vl-launch.workspace = true
+vl-resources.workspace = true
 vl-loaders.workspace = true
 
 [lints]

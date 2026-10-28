@@ -12,6 +12,7 @@ mod accounts;
 mod instances;
 mod java;
 mod launch;
+mod resources;
 mod settings;
 mod tasks;
 mod versions;
@@ -125,6 +126,7 @@ impl Facade for Backend {
             Command::Settings(c) => settings::handle(self, c, replier),
             Command::Launch(c) => launch::handle(self, c, replier),
             Command::Tasks(c) => tasks::handle(self, c, replier),
+            Command::Resources(c) => resources::handle(self, c, replier),
             other => replier.send(Err(Error::unsupported(format!("{other:?}")))),
         }
         reply

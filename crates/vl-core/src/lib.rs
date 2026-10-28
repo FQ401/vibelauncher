@@ -18,6 +18,7 @@ pub mod java;
 pub mod launch;
 pub mod log;
 pub mod platform;
+pub mod resources;
 pub mod settings;
 pub mod task;
 pub mod version;

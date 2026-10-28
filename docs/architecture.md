@@ -43,8 +43,8 @@ layer = "native"
 
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
-| `core` | `vl-core`, `vl-meta`, `vl-crash` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
-| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
+| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
+| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
 | `app` | `vl-cli`, the desktop app | `core`, `backend`, `ui` | Binaries: choose a backend, own the window or the terminal. Live in `apps/`. |
@@ -63,9 +63,9 @@ Cargo itself rejects dependency cycles, including cycles inside a layer.
 app       vl-cli · vibelauncher          → core, backend, ui
 ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
-native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-launch
+native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-launch
                                          → core, native
-core      vl-core · vl-meta · vl-crash   → core
+core      vl-core · vl-meta · vl-mods · vl-crash → core
 ```
 
 ## Crates
@@ -74,6 +74,7 @@ core      vl-core · vl-meta · vl-crash   → core
 |---|---|---|
 | `vl-core` | core | Domain types and the facade contract: ids, errors, platform, instances, versions, accounts, Java runtimes, settings model and override rules, tasks and progress, log lines; `Command`, `Response`, `Event`, the `Facade` trait, replies and the event bus. One module per domain. |
 | `vl-meta` | core | Game metadata: parsing and normalizing upstream documents (version manifest, version JSON, rules, arguments, libraries and natives, asset indexes) from bytes into the launcher's own types. Platform rules take a `Platform` argument, so every OS is testable on any host. |
+| `vl-mods` | core | Mod metadata: parsing `fabric.mod.json`, `quilt.mod.json`, `META-INF/mods.toml`, `META-INF/neoforge.mods.toml` and `mcmod.info` from bytes into `ModMetadata` (id, name, version, authors, description, icon path, dependencies, loader, game versions). |
 | `vl-crash` | core | Crash diagnosis: text of `latest.log`, a crash report or `hs_err` plus a class-to-mod index in, a `Diagnosis` out (confidence level, signature, suspect mods, localization keys, evidence lines). Signatures are data (`signatures.toml`); a mod is named with certainty only when a signature matched. |
 | `vl-store` | native | Data, cache and log directories by OS convention or one portable directory; the on-disk format version and migrations; the lock against a second launcher process; atomic writes. |
 | `vl-net` | native | HTTP and downloads: parallelism limit, retries, timeouts, size caps, hash checks, HTTP cache (`ETag`, `Last-Modified`), offline reads, proxies, the launcher's `User-Agent`. |
@@ -83,6 +84,7 @@ core      vl-core · vl-meta · vl-crash   → core
 | `vl-java` | native | Java runtimes: discovery on each OS, probing with a timeout, managed downloads, choosing a runtime for a game version. |
 | `vl-instance` | native | Instances on disk: format, create, list, rename, delete; damaged instances are listed with a problem. |
 | `vl-loaders` | native | Mod loader sources: version lists per game version and launch profiles of Fabric and Quilt through `vl-net`, and the on-disk store of the profiles in use. |
+| `vl-resources` | native | Instance resource folders (`mods`, `resourcepacks`, `shaderpacks`, `datapacks`, `global_packs/required_data`): listing with mod metadata read from jars (capped entries and sizes, bundled jars listed not opened, damaged jars reported as a problem), enable and disable by renaming to `<name>.disabled`, add by copy without replacing, remove into `<instance>/.trash/`, and the `ClassIndex` of `vl-crash` built from the packages of the enabled jars. |
 | `vl-launch` | native | Preparing game files, building the command line, running and stopping the game process, streaming its log, detecting crashes. |
 | `vl-backend` | backend | The real facade: routes each command domain to its module, converts native errors into `vl_core::Error`, publishes events. |
 | `vl-mock` | backend | The facade on synthetic in-memory data, with simulated tasks, launches and game logs. No files, network or processes. |
