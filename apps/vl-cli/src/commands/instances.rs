@@ -22,7 +22,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
                         .unwrap_or_default();
                     writeln!(
                         out,
-                        "{:<16} {:<24} {:<10} {:?}{problem}",
+                        "{:<16} {:<24} {:<10} {}{problem}",
                         i.id, i.name, i.game_version, i.loader
                     )?;
                 }
@@ -39,7 +39,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
             }));
             match call(facade, command)? {
                 Response::Instance(i) => {
-                    writeln!(out, "created {} ({}) {:?}", i.id, i.name, i.loader)?;
+                    writeln!(out, "created {} ({}) {}", i.id, i.name, i.loader)?;
                     Ok(())
                 }
                 other => Err(unexpected(&other)),
@@ -67,7 +67,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
             });
             match call(facade, command)? {
                 Response::Instance(i) => {
-                    writeln!(out, "{} now runs {:?}", i.id, i.loader)?;
+                    writeln!(out, "{} now runs {}", i.id, i.loader)?;
                     Ok(())
                 }
                 other => Err(unexpected(&other)),

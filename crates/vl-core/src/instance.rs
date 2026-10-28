@@ -22,6 +22,19 @@ pub enum Loader {
     Forge(String),
 }
 
+impl std::fmt::Display for Loader {
+    /// `Fabric 0.20.1`, or `none` for the game without a loader.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Loader::Vanilla => f.write_str("none"),
+            Loader::Fabric(v) => write!(f, "Fabric {v}"),
+            Loader::Quilt(v) => write!(f, "Quilt {v}"),
+            Loader::NeoForge(v) => write!(f, "NeoForge {v}"),
+            Loader::Forge(v) => write!(f, "Forge {v}"),
+        }
+    }
+}
+
 /// What an instance's game process is doing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "state")]
@@ -130,4 +143,19 @@ pub enum InstanceEvent {
     Changed(InstanceSummary),
     /// An instance was deleted.
     Removed(InstanceId),
+}
+
+#[cfg(test)]
+mod loader_display_tests {
+    use super::Loader;
+
+    #[test]
+    fn loader_is_shown_in_plain_words() {
+        assert_eq!(Loader::Fabric("0.20.1".into()).to_string(), "Fabric 0.20.1");
+        assert_eq!(
+            Loader::NeoForge("21.1.5".into()).to_string(),
+            "NeoForge 21.1.5"
+        );
+        assert_eq!(Loader::Vanilla.to_string(), "none");
+    }
 }

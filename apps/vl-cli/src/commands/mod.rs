@@ -230,9 +230,12 @@ mod tests {
             "0.20.1",
         ])
         .unwrap();
-        assert!(out.contains("Fabric(\"0.20.1\")"), "{out}");
+        assert!(
+            out.contains("Fabric 0.20.1") && !out.contains("Fabric("),
+            "{out}"
+        );
         let out = run_mock(&["instances", "create", "Plain", "26.3"]).unwrap();
-        assert!(out.contains("Vanilla"), "{out}");
+        assert!(out.contains("none"), "{out}");
     }
 
     #[test]

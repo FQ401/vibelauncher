@@ -108,7 +108,7 @@ fn install(facade: &dyn Facade, pack: &str, flags: &[&str], out: Out<'_>) -> Res
                             let i: &vl_core::instance::InstanceSummary = i;
                             writeln!(
                                 out,
-                                "[pack] installed as instance {} ({}, Minecraft {}, {:?})",
+                                "[pack] installed as instance {} ({}, Minecraft {}, {})",
                                 i.id, i.name, i.game_version, i.loader
                             )?;
                         }
