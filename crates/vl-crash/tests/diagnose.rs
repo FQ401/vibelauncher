@@ -494,3 +494,53 @@ fn stack_levels_carry_a_cause() {
         (Level::Undetermined, Cause::Unknown)
     );
 }
+
+const LOADING_REPORT: &str = "---- Minecraft Crash Report ----
+// This is a synthetic loading report.
+
+Time: 1/1/26 12:00 AM
+Description: Mod loading state
+
+java.lang.Exception: THIS IS NOT A ERROR
+	at com.example.alpha.Loader.report(Loader.java:10)
+	at org.sample.beta.Boot.run(Boot.java:20)
+
+A detailed walkthrough of the error, its code path and all known details is as follows:
+
+-- System Details --
+Details:
+	Java Version: 1.8.0
+";
+
+#[test]
+fn forge_loading_report_in_the_log_is_not_a_crash() {
+    let text = format!(
+        "[00:00:01] [main/INFO]: Starting
+{LOADING_REPORT}[00:00:02] [main/INFO]: Done
+"
+    );
+    let d = diagnose(&log(&text), &mods());
+    assert_eq!(d.level, Level::Undetermined);
+    assert!(d.culprit_mods.is_empty());
+}
+
+#[test]
+fn forge_loading_report_file_is_not_a_crash() {
+    let input = CrashInput {
+        crash_report: LOADING_REPORT,
+        ..CrashInput::default()
+    };
+    let d = diagnose(&input, &mods());
+    assert_eq!(d.level, Level::Undetermined);
+    assert!(d.culprit_mods.is_empty());
+}
+
+#[test]
+fn real_report_after_a_loading_report_is_still_diagnosed() {
+    let text = format!(
+        "{LOADING_REPORT}[00:00:03] [main/ERROR]: java.lang.OutOfMemoryError: Java heap space
+"
+    );
+    let d = diagnose(&log(&text), &mods());
+    assert_eq!(d.signature.as_deref(), Some("out_of_memory"));
+}

@@ -43,12 +43,16 @@ impl Baseline {
 
     /// The new files in `game_dir`. `pid` prefers the `hs_err_pid<pid>.log` of that process.
     pub fn detect(&self, game_dir: &Path, pid: u32) -> Findings {
-        let report = newest(
+        let report = fresh(
             &game_dir.join("crash-reports"),
             is_crash_report,
             &self.reports,
             self.started,
-        );
+        )
+        .into_iter()
+        .filter(|(path, _)| !is_loading_report(path))
+        .max_by_key(|(_, time)| *time)
+        .map(|(path, _)| path);
         let mut errs = fresh(game_dir, is_hs_err, &self.hs_errs, self.started);
         let own = format!("hs_err_pid{pid}.log");
         let hs_err = errs
@@ -107,16 +111,13 @@ fn fresh(
         .collect()
 }
 
-fn newest(
-    dir: &Path,
-    wanted: fn(&str) -> bool,
-    known: &HashSet<OsString>,
-    started: SystemTime,
-) -> Option<PathBuf> {
-    fresh(dir, wanted, known, started)
-        .into_iter()
-        .max_by_key(|(_, time)| *time)
-        .map(|(path, _)| path)
+/// Forge 1.7.10 writes a "crash report" about loading on a normal start; it says
+/// `THIS IS NOT A ERROR` near its top and is no crash.
+fn is_loading_report(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = Vec::new();
+    let read = fs::File::open(path).and_then(|f| f.take(2048).read_to_end(&mut head));
+    read.is_ok() && String::from_utf8_lossy(&head).contains("THIS IS NOT A ERROR")
 }
 
 #[cfg(test)]
@@ -128,6 +129,21 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("crash-reports")).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_forge_loading_report_is_not_a_crash() {
+        let dir = temp("loading");
+        let base = Baseline::capture(&dir);
+        fs::write(
+            dir.join("crash-reports/crash-fml.txt"),
+            "---- Minecraft Crash Report ----
+Description: loading
+java.lang.Exception: THIS IS NOT A ERROR
+",
+        )
+        .unwrap();
+        assert_eq!(base.detect(&dir, 1).crash_report, None);
     }
 
     #[test]
