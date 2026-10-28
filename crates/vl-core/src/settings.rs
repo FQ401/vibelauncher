@@ -32,6 +32,19 @@ pub const CONSOLE_MIN_LINES: u32 = 100;
 /// Largest allowed console history, lines.
 pub const CONSOLE_MAX_LINES: u32 = 1_000_000;
 
+/// Smallest allowed number of launcher log files kept.
+pub const LOG_FILES_MIN: u32 = 1;
+/// Largest allowed number of launcher log files kept.
+pub const LOG_FILES_MAX: u32 = 10_000;
+/// Smallest allowed size limit of the launcher logs, MiB.
+pub const LOG_MIB_MIN: u32 = 1;
+/// Largest allowed size limit of the launcher logs, MiB (64 GiB).
+pub const LOG_MIB_MAX: u32 = 64 * 1024;
+/// Smallest allowed size limit of the cache, MiB.
+pub const CACHE_MIB_MIN: u32 = 16;
+/// Largest allowed size limit of the cache, MiB (1 TiB).
+pub const CACHE_MIB_MAX: u32 = 1 << 20;
+
 /// Fields a build does not know, kept so that saving does not lose them.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -193,6 +206,54 @@ pub struct NativesSettings {
     pub extra: Extra,
 }
 
+/// Limits of the folders that grow by themselves. Global only: an instance cannot override them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdvancedSettings {
+    /// Launcher log files kept; the oldest are removed beyond this.
+    pub log_max_files: u32,
+    /// Size limit of the launcher logs, MiB.
+    pub log_max_mib: u32,
+    /// Size limit of the cache, MiB.
+    pub cache_max_mib: u32,
+    /// Unknown fields, kept on save.
+    #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
+    pub extra: Extra,
+}
+
+impl Default for AdvancedSettings {
+    fn default() -> Self {
+        Self {
+            log_max_files: 30,
+            log_max_mib: 64,
+            cache_max_mib: 2048,
+            extra: Extra::default(),
+        }
+    }
+}
+
+impl AdvancedSettings {
+    /// Checks the ranges.
+    pub fn validate(&self) -> Result<(), Error> {
+        let a = "advanced";
+        check_range(
+            a,
+            "log_max_files",
+            self.log_max_files,
+            LOG_FILES_MIN,
+            LOG_FILES_MAX,
+        )?;
+        check_range(a, "log_max_mib", self.log_max_mib, LOG_MIB_MIN, LOG_MIB_MAX)?;
+        check_range(
+            a,
+            "cache_max_mib",
+            self.cache_max_mib,
+            CACHE_MIB_MIN,
+            CACHE_MIB_MAX,
+        )
+    }
+}
+
 fn check_range(group: &str, field: &str, value: u32, min: u32, max: u32) -> Result<(), Error> {
     if (min..=max).contains(&value) {
         Ok(())
@@ -307,6 +368,8 @@ pub struct Settings {
     pub performance: PerformanceSettings,
     /// Natives workarounds.
     pub natives: NativesSettings,
+    /// Limits of logs and the cache (global only).
+    pub advanced: AdvancedSettings,
     /// Unknown groups and fields, kept on save.
     #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
     pub extra: Extra,
@@ -346,6 +409,7 @@ impl Settings {
             ($($g:ident),*) => {
                 Self {
                     $($g: overrides.$g.clone().unwrap_or_else(|| self.$g.clone()),)*
+                    advanced: self.advanced.clone(),
                     extra: self.extra.clone(),
                 }
             };
@@ -367,7 +431,8 @@ impl Settings {
         self.memory.validate()?;
         self.window.validate()?;
         self.console.validate()?;
-        self.env.validate()
+        self.env.validate()?;
+        self.advanced.validate()
     }
 
     /// Replaces every invalid group with its default; returns a message for each one replaced.
@@ -381,7 +446,7 @@ impl Settings {
                 }
             )*};
         }
-        fix!(memory, window, console, env);
+        fix!(memory, window, console, env, advanced);
         problems
     }
 }
@@ -552,7 +617,8 @@ mod tests {
         s.window.width = 5;
         s.env.vars.insert("BAD=NAME".into(), "x".into());
         assert!(s.validate().is_err());
-        assert_eq!(s.sanitize().len(), 3);
+        s.advanced.cache_max_mib = 0;
+        assert_eq!(s.sanitize().len(), 4);
         assert_eq!(s, Settings::default());
 
         let mut o = Overrides {
@@ -565,6 +631,19 @@ mod tests {
         assert!(o.validate().is_err());
         assert_eq!(o.sanitize().len(), 1);
         assert!(o.memory.is_none());
+    }
+
+    #[test]
+    fn advanced_defaults_are_the_former_constants_and_global_only() {
+        let a = AdvancedSettings::default();
+        assert_eq!(
+            (a.log_max_files, a.log_max_mib, a.cache_max_mib),
+            (30, 64, 2048)
+        );
+        let mut global = Settings::default();
+        global.advanced.cache_max_mib = 512;
+        let effective = global.with_overrides(&Overrides::default());
+        assert_eq!(effective.advanced.cache_max_mib, 512);
     }
 
     #[test]

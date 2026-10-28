@@ -17,7 +17,7 @@ use vl_core::storage::{CleanupReport, MoveMode, MoveRequest, PathCheck, PathIssu
 use crate::check::check_path;
 use crate::layout::{GAME_ENTRIES, Layout, LeftoverRecord, StorageConfig};
 use crate::paths::{self, Env, is_within, normalize};
-use crate::retention::{self, CACHE_LIMITS, LOG_LIMITS};
+use crate::retention::{self, Policy};
 use crate::{StoreError, lock, pointer};
 
 /// Suffix of the temporary folder a copy is made in.
@@ -502,7 +502,7 @@ pub fn describe(issue: &PathIssue) -> String {
 /// Removes the old copies recorded in `storage.json` and, outside portable mode, the cache and
 /// logs folders of earlier versions; then prunes logs and the cache. A copy that overlaps a folder
 /// in use is never touched and stays listed.
-pub fn cleanup(env: &Env, layout: &Layout) -> Result<CleanupReport, StoreError> {
+pub fn cleanup(env: &Env, layout: &Layout, policy: &Policy) -> Result<CleanupReport, StoreError> {
     let mut report = CleanupReport::default();
     let mut config = StorageConfig::load(layout.root())?;
     let mut kept = Vec::new();
@@ -531,7 +531,7 @@ pub fn cleanup(env: &Env, layout: &Layout) -> Result<CleanupReport, StoreError> 
             }
         }
     }
-    for (section, limits) in [(Section::Logs, LOG_LIMITS), (Section::Cache, CACHE_LIMITS)] {
+    for (section, limits) in [(Section::Logs, policy.logs), (Section::Cache, policy.cache)] {
         report.freed += retention::prune(&layout.path(section), limits).bytes;
     }
     Ok(report)

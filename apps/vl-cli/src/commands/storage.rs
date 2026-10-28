@@ -6,6 +6,7 @@ use std::time::Duration;
 use vl_core::log::LogSource;
 use vl_core::storage::{
     MoveMode, MoveRequest, PathCheck, PathIssue, RootSource, Section, StorageCommand,
+    SuggestionReason,
 };
 use vl_core::task::TaskOutcome;
 use vl_core::{Command, Event, Facade, Response};
@@ -42,6 +43,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
             let (mode, _) = flags_of(flags)?;
             move_section(facade, section.parse()?, None, mode, out)
         }
+        ["suggest"] => suggest(facade, out),
         ["cleanup"] => cleanup(facade, false, out),
         ["cleanup", "--trash"] => cleanup(facade, true, out),
         _ => Err(USAGE.into()),
@@ -105,6 +107,57 @@ fn show(facade: &dyn Facade, sizes: bool, out: Out<'_>) -> Result<(), CliError> 
     }
     if info.restart_required {
         writeln!(out, "a section was moved: restart the launcher")?;
+    }
+    Ok(())
+}
+
+fn suggest(facade: &dyn Facade, out: Out<'_>) -> Result<(), CliError> {
+    let s = match call(facade, Command::Storage(StorageCommand::Suggest))? {
+        Response::StorageSuggestion(s) => s,
+        other => return Err(unexpected(&other)),
+    };
+    writeln!(out, "drives:")?;
+    for d in &s.drives {
+        let system = if d.system { "  [system]" } else { "" };
+        writeln!(
+            out,
+            "  {}  {} free of {}{system}",
+            d.mount.display(),
+            human_bytes(d.free),
+            human_bytes(d.total)
+        )?;
+    }
+    let reason = match s.reason {
+        SuggestionReason::OtherDrive => {
+            "the drive with the most free space besides the system drive"
+        }
+        _ => "the operating system folder",
+    };
+    writeln!(out, "suggested: {} ({reason})", s.folder.display())?;
+    writeln!(out, "operating system folder: {}", s.os_folder.display())?;
+    writeln!(out, "in use now: {}", s.current_root.display())?;
+    writeln!(
+        out,
+        "typical need: {} (instances {}, game files {}, Java {})",
+        human_bytes(s.estimate.total),
+        human_bytes(s.estimate.instances),
+        human_bytes(s.estimate.game),
+        human_bytes(s.estimate.java)
+    )?;
+    if s.on_system_drive {
+        writeln!(out, "warning: the suggested folder is on the system drive")?;
+    }
+    if s.current_on_system_drive {
+        writeln!(
+            out,
+            "warning: the data folder in use is on the system drive"
+        )?;
+    }
+    if !s.enough_space {
+        writeln!(
+            out,
+            "warning: the suggested drive may not have enough space"
+        )?;
     }
     Ok(())
 }

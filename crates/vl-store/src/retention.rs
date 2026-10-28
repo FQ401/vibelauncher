@@ -7,6 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use vl_core::settings::AdvancedSettings;
+
 /// How much a folder may hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -16,17 +18,38 @@ pub struct Limits {
     pub max_files: usize,
 }
 
-/// Launcher logs: 30 files, 64 MiB.
-pub const LOG_LIMITS: Limits = Limits {
-    max_bytes: 64 << 20,
-    max_files: 30,
-};
+/// The limits of the launcher logs and of the cache.
+///
+/// The default is 30 files and 64 MiB of logs and 2 GiB of cache, which are also the defaults of
+/// the advanced settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Policy {
+    /// Launcher logs.
+    pub logs: Limits,
+    /// The cache.
+    pub cache: Limits,
+}
 
-/// The cache: 2 GiB.
-pub const CACHE_LIMITS: Limits = Limits {
-    max_bytes: 2 << 30,
-    max_files: usize::MAX,
-};
+impl From<&AdvancedSettings> for Policy {
+    fn from(a: &AdvancedSettings) -> Self {
+        Self {
+            logs: Limits {
+                max_bytes: u64::from(a.log_max_mib) << 20,
+                max_files: a.log_max_files as usize,
+            },
+            cache: Limits {
+                max_bytes: u64::from(a.cache_max_mib) << 20,
+                max_files: usize::MAX,
+            },
+        }
+    }
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self::from(&AdvancedSettings::default())
+    }
+}
 
 /// What a prune removed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -107,6 +130,22 @@ mod tests {
     }
 
     #[test]
+    fn the_policy_follows_the_settings_and_defaults_to_the_former_constants() {
+        let p = Policy::default();
+        assert_eq!((p.logs.max_files, p.logs.max_bytes), (30, 64 << 20));
+        assert_eq!(p.cache.max_bytes, 2 << 30);
+        let a = AdvancedSettings {
+            log_max_files: 5,
+            log_max_mib: 1,
+            cache_max_mib: 100,
+            ..AdvancedSettings::default()
+        };
+        let p = Policy::from(&a);
+        assert_eq!((p.logs.max_files, p.logs.max_bytes), (5, 1 << 20));
+        assert_eq!(p.cache.max_bytes, 100 << 20);
+    }
+
+    #[test]
     fn keeps_the_newest_files_within_the_limits() {
         let dir = TempDir::new();
         let d = dir.path();
@@ -138,6 +177,9 @@ mod tests {
         assert_eq!(pruned.files, 1);
         assert!(d.join("new.log").exists() && !d.join("mid.log").exists());
         assert_eq!(size_of(d), 10);
-        assert_eq!(prune(&d.join("missing"), LOG_LIMITS), Pruned::default());
+        assert_eq!(
+            prune(&d.join("missing"), Policy::default().logs),
+            Pruned::default()
+        );
     }
 }

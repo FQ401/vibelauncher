@@ -277,6 +277,87 @@ pub struct CleanupReport {
     pub failed: Vec<(PathBuf, String)>,
 }
 
+/// A local drive as the launcher sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriveInfo {
+    /// Where it is mounted (`D:\` on Windows).
+    pub mount: PathBuf,
+    /// Capacity in bytes.
+    pub total: u64,
+    /// Free bytes.
+    pub free: u64,
+    /// The drive holding the operating system.
+    pub system: bool,
+    /// A removable drive.
+    pub removable: bool,
+    /// A network file system.
+    pub network: bool,
+}
+
+/// How much space the data of a typical user needs; see [`StorageEstimate::TYPICAL`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageEstimate {
+    /// Instances.
+    pub instances: u64,
+    /// Shared game files: versions, libraries, assets and loaders.
+    pub game: u64,
+    /// Managed Java runtimes.
+    pub java: u64,
+    /// The sum.
+    pub total: u64,
+}
+
+impl StorageEstimate {
+    /// A typical amount for a few instances: three instances of 2 GiB each (a vanilla instance
+    /// with worlds and resource packs; a large modpack takes several times that), 3 GiB of shared
+    /// game files (a handful of versions with their libraries and asset indexes, plus loaders) and
+    /// 1 GiB of Java runtimes (two or three at about 0.4 GiB). The numbers only decide whether a
+    /// drive is roomy enough to be suggested; they are not limits.
+    pub const TYPICAL: Self = Self {
+        instances: 6 << 30,
+        game: 3 << 30,
+        java: 1 << 30,
+        total: 10 << 30,
+    };
+}
+
+/// Why a folder was suggested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SuggestionReason {
+    /// A local fixed drive other than the system drive has the most free space.
+    OtherDrive,
+    /// No other drive is roomy enough, or the OS keeps its volumes elsewhere: the OS convention.
+    OsFolder,
+}
+
+/// The suggested data folder for a first run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageSuggestion {
+    /// The suggested data folder.
+    pub folder: PathBuf,
+    /// Why it was chosen.
+    pub reason: SuggestionReason,
+    /// The drive the folder is on, when it is known.
+    pub drive: Option<DriveInfo>,
+    /// Whether the suggested folder is on the system drive.
+    pub on_system_drive: bool,
+    /// The OS-convention folder, the alternative.
+    pub os_folder: PathBuf,
+    /// The data folder in use now.
+    pub current_root: PathBuf,
+    /// Whether the data folder in use now is on the system drive, so the system drive grows with
+    /// every instance.
+    pub current_on_system_drive: bool,
+    /// Local fixed drives, the system drive included, by mount point.
+    pub drives: Vec<DriveInfo>,
+    /// What the data of a typical user takes.
+    pub estimate: StorageEstimate,
+    /// Whether the suggested drive has room for [`Self::estimate`].
+    pub enough_space: bool,
+}
+
 /// Storage commands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -308,6 +389,9 @@ pub enum StorageCommand {
         #[serde(default)]
         trash: bool,
     },
+    /// Suggests a data folder: the local fixed drive other than the system drive with the most
+    /// free space, if it has enough, else the OS folder -> `Response::StorageSuggestion`.
+    Suggest,
 }
 
 #[cfg(test)]

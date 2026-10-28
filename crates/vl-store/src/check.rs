@@ -331,6 +331,11 @@ pub struct DiskInfo {
     pub network: bool,
 }
 
+/// Whether a file system name (any case) is a network file system.
+pub fn is_network_fs(name: &str) -> bool {
+    NETWORK_FS.contains(&name.to_lowercase().as_str())
+}
+
 /// The drive of `path`: the mounted disk with the longest mount point that contains it.
 pub fn disk_of(path: &Path) -> Option<DiskInfo> {
     let path = existing(path)?;
@@ -346,7 +351,7 @@ pub fn disk_of(path: &Path) -> Option<DiskInfo> {
             DiskInfo {
                 free: d.available_space(),
                 removable: d.is_removable(),
-                network: NETWORK_FS.contains(&fs_name.as_str()),
+                network: is_network_fs(&fs_name),
             }
         })
 }

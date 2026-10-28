@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use vl_core::platform::Os;
 use vl_core::storage::{MoveMode, MoveRequest, RootSource, Section};
 
+use super::retention::Policy;
 use super::testutil::TempDir;
 use super::*;
 
@@ -167,7 +168,7 @@ fn a_moved_section_is_used_after_reopening_and_the_old_copy_waits_for_cleanup() 
             .ends_with(".vl-moving")
     }));
 
-    let cleaned = store.cleanup().unwrap();
+    let cleaned = store.cleanup(&Policy::default()).unwrap();
     assert!(cleaned.failed.is_empty(), "{cleaned:?}");
     assert_eq!(cleaned.removed, [old.join("survival")]);
     assert!(!old.exists());
@@ -319,7 +320,7 @@ fn shared_game_files_move_out_and_back() {
         store.plan_move(&back),
         Err(StoreError::InvalidInput(_))
     ));
-    store.cleanup().unwrap();
+    store.cleanup(&Policy::default()).unwrap();
     assert!(!root.join("libraries").exists());
     assert!(root.join("instances/survival").is_dir());
     run(&store, &back).unwrap();
@@ -447,7 +448,7 @@ fn the_data_folder_moves_through_the_pointer() {
     let info = store.info(false);
     assert!(info.leftovers.iter().any(|l| l.section == Section::Data));
 
-    let cleaned = store.cleanup().unwrap();
+    let cleaned = store.cleanup(&Policy::default()).unwrap();
     assert!(cleaned.failed.is_empty(), "{cleaned:?}");
     assert!(!default_root.exists());
     assert!(!sandbox.path().join("legacy-cache/vibelauncher").exists());

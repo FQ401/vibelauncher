@@ -13,6 +13,9 @@ use vl_core::log::{LogLevel, LogLine, LogSource};
 use vl_core::storage::{CleanupReport, MoveRequest, Section, StorageCommand};
 use vl_core::task::TaskKind;
 use vl_core::{Command, Error, Event, Replier, Response};
+use vl_settings::SettingsStore;
+use vl_store::retention::Policy;
+use vl_store::suggest::SystemDisks;
 use vl_store::{StoreError, mover, retention};
 use vl_tasks::TaskSpec;
 
@@ -26,6 +29,11 @@ const REQUIRED: [Section; 4] = [
     Section::Java,
     Section::Cache,
 ];
+
+/// The limits of logs and the cache from the global settings.
+pub(crate) fn retention_policy(settings: &SettingsStore) -> Policy {
+    Policy::from(&settings.global().value.advanced)
+}
 
 /// Whether commands may run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -135,12 +143,19 @@ pub(crate) fn handle(backend: &Backend, command: StorageCommand, replier: Replie
             }
             let view = backend.store.view();
             let instances = backend.store.instances_dir();
+            let policy = retention_policy(backend.settings());
             spawn_reply("storage-cleanup", replier, move || {
-                let mut report = view.cleanup().map_err(Error::from)?;
+                let mut report = view.cleanup(&policy).map_err(Error::from)?;
                 if trash {
                     empty_trash(&instances, &mut report);
                 }
                 Ok(Response::StorageCleaned(report))
+            });
+        }
+        StorageCommand::Suggest => {
+            let view = backend.store.view();
+            spawn_reply("storage-suggest", replier, move || {
+                Ok(Response::StorageSuggestion(view.suggest(&SystemDisks)))
             });
         }
         other => crate::not_yet(replier, "storage", &other),
@@ -347,6 +362,53 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(show(&backend).leftovers.is_empty());
+    }
+
+    #[test]
+    fn log_and_cache_limits_come_from_the_settings() {
+        let root = dir("limits");
+        let data = root.0.join("data");
+        let logs = data.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        for n in 0..4 {
+            fs::write(logs.join(format!("launcher-{n}.log")), "x").unwrap();
+        }
+        let mut settings = vl_core::settings::Settings::default();
+        settings.advanced.log_max_files = 2;
+        vl_settings::SettingsStore::new(&data)
+            .set_global(&settings)
+            .unwrap();
+        let backend = Backend::new(BackendConfig {
+            data_dir: Some(data.clone()),
+        })
+        .unwrap();
+        assert_eq!(fs::read_dir(&logs).unwrap().count(), 2);
+        fs::write(logs.join("launcher-9.log"), "x").unwrap();
+        backend
+            .call(Command::Storage(StorageCommand::Cleanup { trash: false }))
+            .wait()
+            .unwrap();
+        assert_eq!(fs::read_dir(&logs).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn a_suggestion_names_a_folder_and_the_drives() {
+        let root = dir("suggest");
+        let backend = Backend::new(BackendConfig {
+            data_dir: Some(root.0.join("data")),
+        })
+        .unwrap();
+        match backend
+            .call(Command::Storage(StorageCommand::Suggest))
+            .wait()
+            .unwrap()
+        {
+            Response::StorageSuggestion(s) => {
+                assert!(s.folder.is_absolute());
+                assert_eq!(s.current_root, backend.store().data_dir());
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
