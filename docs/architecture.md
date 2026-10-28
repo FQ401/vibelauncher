@@ -325,6 +325,20 @@ The data directory holds:
   backups are kept), applies the changes, rewrites `pack.json` and `resources.json`, then changes
   the instance's game version and loader as the last step; a failure or a cancel before the end
   restores every file and both records;
+- modpack export (`vl-install::mrpack_export`): `ExportPack` writes an instance as an `.mrpack`
+  (answered from a worker thread; the target file must not exist). The pack's dependencies are
+  the instance's game version and loader. The enabled mods are always carried; `include`
+  adds `config` (`config/`, `defaultconfigs/`), `kubejs`, `resourcepacks`, `shaderpacks` and
+  `options` (`options.txt`), by default config, resource packs and shaders. Disabled files
+  (`*.disabled`) are left out, and `saves/`, `logs/`, `crash-reports/`, `screenshots/`,
+  `.vibelauncher/` and caches are never walked. Mods, resource packs and shaders are hashed and
+  looked up in the catalog (SHA-512, then SHA-1): a file whose version lists a matching file with
+  an allowed download link becomes an index entry (path, SHA-1, SHA-512, size, link; `env` is
+  client required and server optional for mods, server unsupported otherwise); every other file
+  goes into `overrides/`, and the report lists the unknown mods, resource packs and shaders and
+  warns that the right to distribute them is the author's. A catalog that cannot be reached fails
+  the export. The archive is deterministic: the index first, then `overrides/` sorted by path,
+  every entry deflated with the same date and mode;
 - mod loaders (`vl-loaders`): Fabric (`meta.fabricmc.net/v2`) and Quilt (`meta.quiltmc.org/v3`)
   share one API shape, `versions/loader/<game>` (versions for a game version, empty or an error
   status when the game is not supported) and `versions/loader/<game>/<loader>/profile/json` (a

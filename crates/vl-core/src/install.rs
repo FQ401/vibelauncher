@@ -279,6 +279,122 @@ pub struct PackInstallRequest {
     pub min_stability: MinStability,
 }
 
+/// A part of an instance's game directory that an export may carry, beyond the mods.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ExportInclude {
+    /// `config/` and `defaultconfigs/`.
+    Config,
+    /// `kubejs/`.
+    Kubejs,
+    /// `resourcepacks/`.
+    ResourcePacks,
+    /// `shaderpacks/`.
+    ShaderPacks,
+    /// `options.txt`.
+    Options,
+}
+
+impl ExportInclude {
+    /// What an export carries unless told otherwise.
+    pub const DEFAULT: [ExportInclude; 3] = [Self::Config, Self::ResourcePacks, Self::ShaderPacks];
+
+    /// The name used on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Config => "config",
+            Self::Kubejs => "kubejs",
+            Self::ResourcePacks => "resourcepacks",
+            Self::ShaderPacks => "shaderpacks",
+            Self::Options => "options",
+        }
+    }
+
+    /// Parses [`ExportInclude::name`].
+    pub fn parse(name: &str) -> Option<Self> {
+        [
+            Self::Config,
+            Self::Kubejs,
+            Self::ResourcePacks,
+            Self::ShaderPacks,
+            Self::Options,
+        ]
+        .into_iter()
+        .find(|i| i.name().eq_ignore_ascii_case(name))
+    }
+
+    /// The paths in the game directory it covers: folders end in `/`.
+    pub fn paths(self) -> &'static [&'static str] {
+        match self {
+            Self::Config => &["config/", "defaultconfigs/"],
+            Self::Kubejs => &["kubejs/"],
+            Self::ResourcePacks => &["resourcepacks/"],
+            Self::ShaderPacks => &["shaderpacks/"],
+            Self::Options => &["options.txt"],
+        }
+    }
+}
+
+fn default_include() -> Vec<ExportInclude> {
+    ExportInclude::DEFAULT.to_vec()
+}
+
+/// Exporting an instance as a Modrinth modpack (`.mrpack`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackExportRequest {
+    /// The instance.
+    pub instance: InstanceId,
+    /// The file to write; it must not exist yet.
+    pub out: String,
+    /// The pack's name; the instance's name when `None`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The pack's version label; `1.0.0` when `None`.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// A short description.
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// What to carry besides the enabled mods.
+    #[serde(default = "default_include")]
+    pub include: Vec<ExportInclude>,
+}
+
+impl PackExportRequest {
+    /// An export of `instance` to `out` with the default contents.
+    pub fn new(instance: InstanceId, out: String) -> Self {
+        Self {
+            instance,
+            out,
+            name: None,
+            version: None,
+            summary: None,
+            include: default_include(),
+        }
+    }
+}
+
+/// What an export wrote.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PackExport {
+    /// The file written.
+    pub path: String,
+    /// Files listed in the index with a catalog download link.
+    pub linked: usize,
+    /// Files carried inside the pack (`overrides/`).
+    pub bundled: usize,
+    /// Bundled mods, resource packs and shaders the catalog does not know; the author answers
+    /// for the right to distribute them.
+    pub unlisted: Vec<String>,
+    /// Disabled files that were left out.
+    pub disabled: usize,
+    /// Size of the written file in bytes.
+    pub size: u64,
+    /// Things worth saying.
+    pub warnings: Vec<String>,
+}
+
 /// Checking an instance's mods, packs and shaders for newer versions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateCheckRequest {

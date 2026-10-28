@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::ids::InstanceId;
 use crate::install::{
-    InstallRequest, PackInstallRequest, PackUpdateRequest, UpdateCheckRequest, UpdateRequest,
+    InstallRequest, PackExportRequest, PackInstallRequest, PackUpdateRequest, UpdateCheckRequest,
+    UpdateRequest,
 };
 
 /// The most results one search page may ask for.
@@ -504,6 +505,9 @@ pub enum CatalogCommand {
     /// them, and every touched file is backed up under `.vibelauncher/backup/`; on failure or
     /// cancel the instance is put back as it was.
     UpdatePack(PackUpdateRequest),
+    /// Writes the instance as a Modrinth modpack file → `Response::PackExported`. Files the
+    /// catalog knows by hash become download links; the rest is carried inside the pack.
+    ExportPack(PackExportRequest),
     /// Finds the origin of files added by hand (by hash) and records it → `Response::Identified`.
     IdentifyMods {
         /// The instance.

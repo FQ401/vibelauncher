@@ -16,6 +16,9 @@
 //!
 //! [`mrpack`] installs a Modrinth modpack (`.mrpack`) into a fresh game directory.
 //!
+//! [`mrpack_export`] writes an instance as a `.mrpack`: files the catalog knows by hash become
+//! download links, everything else is carried in `overrides/`.
+//!
 //! [`mrpack_update`] updates an installed modpack to another version, keeping what the user
 //! deleted, disabled, changed or added.
 //!
@@ -24,6 +27,7 @@
 mod apply;
 mod hashing;
 pub mod mrpack;
+pub mod mrpack_export;
 pub mod mrpack_origins;
 pub mod mrpack_update;
 pub mod origin;
@@ -45,3 +49,6 @@ mod mrpack_tests;
 
 #[cfg(test)]
 mod mrpack_update_tests;
+
+#[cfg(test)]
+mod mrpack_export_tests;

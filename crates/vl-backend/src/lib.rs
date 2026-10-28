@@ -13,6 +13,7 @@ mod catalog;
 mod instances;
 mod java;
 mod launch;
+mod pack_export;
 mod pack_update;
 mod resources;
 mod settings;
@@ -133,6 +134,9 @@ impl Facade for Backend {
             Command::Launch(c) => launch::handle(self, c, replier),
             Command::Tasks(c) => tasks::handle(self, c, replier),
             Command::Resources(c) => resources::handle(self, c, replier),
+            Command::Catalog(vl_core::catalog::CatalogCommand::ExportPack(r)) => {
+                pack_export::handle(self, r, replier)
+            }
             Command::Catalog(c) => catalog::handle(self, c, replier),
             other => replier.send(Err(Error::unsupported(format!("{other:?}")))),
         }

@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use vl_core::catalog::{CatalogCommand, Provider};
 use vl_core::install::{
-    MinStability, PackAction, PackChange, PackChanges, PackInstallRequest, PackSource,
-    PackUpdateInfo, PackUpdateRequest,
+    ExportInclude, MinStability, PackAction, PackChange, PackChanges, PackExportRequest,
+    PackInstallRequest, PackSource, PackUpdateInfo, PackUpdateRequest,
 };
 use vl_core::instance::InstanceEvent;
 use vl_core::task::TaskOutcome;
@@ -32,6 +32,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
             }
         }
         ["update", instance, flags @ ..] => update(facade, instance, flags, out),
+        ["export", instance, flags @ ..] => export(facade, instance, flags, out),
         _ => Err(USAGE.into()),
     }
 }
@@ -125,6 +126,75 @@ fn install(facade: &dyn Facade, pack: &str, flags: &[&str], out: Out<'_>) -> Res
             _ => {}
         }
     }
+}
+
+/// The request of `packs export`.
+fn parse_export(instance: &str, flags: &[&str]) -> Result<PackExportRequest, CliError> {
+    let id = InstanceId::new(instance).ok_or(CliError::from(USAGE))?;
+    let mut request = PackExportRequest::new(id, String::new());
+    let mut out = None;
+    let mut it = flags.iter();
+    while let Some(flag) = it.next() {
+        let value = (*it.next().ok_or(CliError::from(USAGE))?).to_owned();
+        match *flag {
+            "--out" => {
+                let path = std::path::absolute(&value)
+                    .map_err(|e| CliError::from(format!("{value}: {e}")))?;
+                out = Some(path.to_string_lossy().into_owned());
+            }
+            "--name" => request.name = Some(value),
+            "--version" => request.version = Some(value),
+            "--summary" => request.summary = Some(value),
+            "--include" => {
+                request.include = value
+                    .split(',')
+                    .filter(|p| !p.is_empty() && *p != "none")
+                    .map(|p| {
+                        ExportInclude::parse(p).ok_or_else(|| {
+                            CliError::from(
+                                "include is a comma-separated list of config, kubejs,                                  resourcepacks, shaderpacks, options (or none)",
+                            )
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+            }
+            _ => return Err(USAGE.into()),
+        }
+    }
+    request.out = out.ok_or(CliError::from(USAGE))?;
+    Ok(request)
+}
+
+/// `export <instance> --out <file>`: writes the pack and says what went in.
+fn export(
+    facade: &dyn Facade,
+    instance: &str,
+    flags: &[&str],
+    out: Out<'_>,
+) -> Result<(), CliError> {
+    let request = parse_export(instance, flags)?;
+    let command = Command::Catalog(CatalogCommand::ExportPack(request));
+    let Response::PackExported(report) = call(facade, command)? else {
+        return Err("unexpected answer to the export".into());
+    };
+    writeln!(
+        out,
+        "wrote {} ({} KiB): {} files linked to the catalog, {} files inside the pack",
+        report.path,
+        report.size.div_ceil(1024),
+        report.linked,
+        report.bundled
+    )?;
+    if report.disabled > 0 {
+        writeln!(out, "{} disabled files were left out", report.disabled)?;
+    }
+    for path in &report.unlisted {
+        writeln!(out, "not in the catalog, carried inside the pack: {path}")?;
+    }
+    for w in &report.warnings {
+        writeln!(out, "warning: {w}")?;
+    }
+    Ok(())
 }
 
 /// The request and `--yes` of `packs update`.
@@ -320,6 +390,29 @@ fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_export_flags() {
+        let r = parse_export(
+            "inst",
+            &[
+                "--out",
+                "a.mrpack",
+                "--name",
+                "N",
+                "--include",
+                "config,kubejs",
+            ],
+        )
+        .unwrap();
+        assert!(r.out.ends_with("a.mrpack"));
+        assert_eq!(r.name.as_deref(), Some("N"));
+        assert_eq!(r.include, [ExportInclude::Config, ExportInclude::Kubejs]);
+        assert!(parse_export("inst", &["--name", "N"]).is_err());
+        assert!(parse_export("inst", &["--out", "a", "--include", "saves"]).is_err());
+        let r = parse_export("inst", &["--out", "a", "--include", "none"]).unwrap();
+        assert!(r.include.is_empty());
+    }
 
     #[test]
     fn tells_files_from_projects() {

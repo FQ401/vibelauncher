@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use vl_core::{Error, ErrorKind, Result};
 
@@ -50,6 +50,15 @@ pub enum Support {
 }
 
 impl Support {
+    /// The word used in the index.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Optional => "optional",
+            Self::Unsupported => "unsupported",
+        }
+    }
+
     fn parse(text: Option<&str>) -> Self {
         match text {
             Some("optional") => Self::Optional,
@@ -146,6 +155,99 @@ impl PackIndex {
         .into_iter()
         .find_map(|l| self.dependencies.get(l.key()).map(|v| (l, v.as_str())))
     }
+}
+
+/// Writes `index` as a `modrinth.index.json` document (`formatVersion` 1, game `minecraft`).
+/// The output is deterministic: files sorted by path, dependencies sorted by key, fixed field
+/// order. Every file is checked with the same rules [`parse_index`] applies, so what is written
+/// can be read back.
+///
+/// # Errors
+///
+/// `Integrity` when a path, hash, size or download URL would not be accepted when reading, or the
+/// index is not within the limits of this module.
+pub fn write_index(index: &PackIndex) -> Result<Vec<u8>> {
+    #[derive(Serialize)]
+    struct Env {
+        client: &'static str,
+        server: &'static str,
+    }
+    #[derive(Serialize)]
+    struct Hashes<'a> {
+        sha1: &'a str,
+        sha512: &'a str,
+    }
+    #[derive(Serialize)]
+    struct OutFile<'a> {
+        path: &'a str,
+        hashes: Hashes<'a>,
+        env: Env,
+        downloads: &'a [String],
+        #[serde(rename = "fileSize")]
+        file_size: u64,
+    }
+    #[derive(Serialize)]
+    struct Out<'a> {
+        #[serde(rename = "formatVersion")]
+        format_version: u32,
+        game: &'static str,
+        #[serde(rename = "versionId")]
+        version_id: &'a str,
+        name: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<&'a str>,
+        files: Vec<OutFile<'a>>,
+        dependencies: &'a BTreeMap<String, String>,
+    }
+    if index.files.len() > MAX_FILES {
+        return Err(bad(format!("more than {MAX_FILES} files")));
+    }
+    let mut sorted: Vec<&PackFile> = index.files.iter().collect();
+    sorted.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut seen = HashSet::new();
+    let mut files = Vec::with_capacity(sorted.len());
+    for f in sorted {
+        if safe_path(&f.path).is_none() || !seen.insert(f.path.to_ascii_lowercase()) {
+            return Err(bad(format!("unusable path {:?}", f.path)));
+        }
+        if !is_hex(&f.sha1, 40) || !is_hex(&f.sha512, 128) {
+            return Err(bad(format!("{} has no valid hashes", f.path)));
+        }
+        if f.size > MAX_FILE_BYTES {
+            return Err(bad(format!("{} is too large", f.path)));
+        }
+        if f.downloads.is_empty() || !f.downloads.iter().all(|u| is_allowed_download(u)) {
+            return Err(bad(format!("{} has no allowed download", f.path)));
+        }
+        files.push(OutFile {
+            path: &f.path,
+            hashes: Hashes {
+                sha1: &f.sha1,
+                sha512: &f.sha512,
+            },
+            env: Env {
+                client: f.client.name(),
+                server: f.server.name(),
+            },
+            downloads: &f.downloads,
+            file_size: f.size,
+        });
+    }
+    let out = Out {
+        format_version: 1,
+        game: "minecraft",
+        version_id: &index.version_id,
+        name: &index.name,
+        summary: index.summary.as_deref(),
+        files,
+        dependencies: &index.dependencies,
+    };
+    let bytes = serde_json::to_vec_pretty(&out)
+        .map_err(|e| Error::internal(format!("{INDEX_NAME}: {e}")))?;
+    if bytes.len() > MAX_INDEX_BYTES {
+        return Err(bad(format!("larger than {MAX_INDEX_BYTES} bytes")));
+    }
+    Ok(bytes)
 }
 
 fn bad(why: impl std::fmt::Display) -> Error {
@@ -358,6 +460,27 @@ mod tests {
             "a".repeat(40),
             "B".repeat(128)
         )
+    }
+
+    #[test]
+    fn written_index_reads_back_and_is_sorted() {
+        let text = index(&format!(
+            "{},{}",
+            file("mods/b.jar", "https://cdn.modrinth.com/data/x/b.jar"),
+            file("mods/a.jar", "https://cdn.modrinth.com/data/x/a.jar")
+        ));
+        let parsed = parse_index(text.as_bytes()).unwrap();
+        let bytes = write_index(&parsed).unwrap();
+        let again = parse_index(&bytes).unwrap();
+        assert_eq!(again.files[0].path, "mods/a.jar");
+        assert_eq!(again.files.len(), 2);
+        assert_eq!(again.dependencies, parsed.dependencies);
+        assert_eq!(again.summary, parsed.summary);
+        assert_eq!(write_index(&again).unwrap(), bytes);
+
+        let mut bad = parsed;
+        bad.files[0].downloads = vec!["http://cdn.modrinth.com/a.jar".into()];
+        assert_eq!(write_index(&bad).unwrap_err().kind, ErrorKind::Integrity);
     }
 
     #[test]

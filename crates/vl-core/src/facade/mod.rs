@@ -19,7 +19,9 @@ pub use channel::{EventBus, EventStream, Replier, Reply, reply_channel};
 use crate::account::{Account, AccountCommand, AccountEvent};
 use crate::catalog::{CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage};
 use crate::ids::TaskId;
-use crate::install::{IdentifyReport, InstallPlan, PackChanges, PackUpdateInfo, UpdateReport};
+use crate::install::{
+    IdentifyReport, InstallPlan, PackChanges, PackExport, PackUpdateInfo, UpdateReport,
+};
 use crate::instance::{InstanceCommand, InstanceEvent, InstanceSummary};
 use crate::java::{JavaCommand, JavaEvent, JavaRuntime};
 use crate::launch::{LaunchCommand, LaunchEvent};
@@ -125,6 +127,8 @@ pub enum Response {
     PackUpdate(PackUpdateInfo),
     /// What updating a modpack would change.
     PackChanges(PackChanges),
+    /// What a modpack export wrote.
+    PackExported(PackExport),
 }
 
 /// Something that happened in the launcher.
