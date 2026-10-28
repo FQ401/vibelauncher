@@ -4306,7 +4306,9 @@ dependencies = [
 name = "vl-store"
 version = "0.0.0"
 dependencies = [
+ "serde",
  "serde_json",
+ "sysinfo",
  "vl-core",
 ]
 

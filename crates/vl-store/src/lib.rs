@@ -1,98 +1,302 @@
 //! Where the launcher keeps its files.
 //!
-//! - Data, cache and log directories by OS convention (Windows `%APPDATA%`, macOS
-//!   `Application Support`, Linux XDG), or one portable directory (`--dir <path>` or a marker file
-//!   next to the executable): see [`paths`].
+//! - The data folder (the root): `--dir`, the `VIBELAUNCHER_DIR` variable, the portable marker
+//!   next to the executable, the pointer file in the OS folder for settings, or the OS convention:
+//!   see [`paths`] and [`pointer`].
+//! - The sections with folders of their own (instances, shared game files, Java, cache, backups,
+//!   logs), by default inside the root: see [`layout`].
+//! - Checks of a folder before data goes there: see [`check`].
+//! - Moving a section by copying with rollback, and removing old copies: see [`mover`].
+//! - Size limits of logs and the cache: see [`retention`].
 //! - The on-disk format version and the migration chain, with a snapshot before each migration:
 //!   see [`format`].
-//! - A lock that keeps a second launcher process out of the same data directory: see [`lock`].
+//! - A lock that keeps a second launcher process out of the same data folder: see [`lock`].
 //! - Atomic file writes (temporary file, then rename) for every other native crate: see
 //!   [`write_atomic`].
 //!
-//! [`Store::open`] ties them together. The directory layout is described in
-//! `docs/architecture.md`.
+//! [`Store::open`] ties them together. The layout is described in `docs/architecture.md`.
 
 mod atomic;
+pub mod check;
 mod error;
 pub mod format;
+pub mod layout;
 pub mod lock;
+pub mod mover;
 pub mod paths;
+pub mod pointer;
+pub mod retention;
 
 use std::path::{Path, PathBuf};
+
+use vl_core::storage::{
+    CleanupReport, Leftover, MoveRequest, PathCheck, RootSource, Section, SectionInfo, StorageInfo,
+};
 
 pub use atomic::{write_atomic, write_atomic_with};
 pub use error::StoreError;
 pub use format::{CURRENT_FORMAT, FORMAT_FILE, Migration, MigrationReport};
+pub use layout::{Layout, StorageConfig};
 pub use lock::DirLock;
-pub use paths::{Dirs, Env, PORTABLE_MARKER};
+pub use mover::{MovePlan, MoveProgress, MoveReport};
+pub use paths::{DIR_VAR, Env, PORTABLE_MARKER};
 
-/// How to choose the directories.
+/// How to choose the data folder.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StoreOptions {
-    /// A portable directory (`--dir`); beats the marker file and the OS conventions.
+    /// The data folder from `--dir`; beats every other source.
     pub portable_dir: Option<PathBuf>,
 }
 
-/// An opened data directory: located, locked and migrated to the current format.
+/// An opened data folder: located, locked and migrated to the current format, with the folder of
+/// every section.
 ///
 /// Dropping the store releases the lock.
 #[derive(Debug)]
 pub struct Store {
-    dirs: Dirs,
+    env: Env,
+    layout: Layout,
+    unavailable: Vec<Section>,
     _lock: DirLock,
     migration: Option<MigrationReport>,
 }
 
 impl Store {
-    /// Opens the store for this process: picks the directories from the process environment,
-    /// creates them, takes the lock and migrates the data to [`CURRENT_FORMAT`].
+    /// Opens the store for this process: picks the data folder from the process environment,
+    /// creates it, takes the lock, migrates the data to [`CURRENT_FORMAT`] and
+    /// prunes logs and the cache to their limits.
     pub fn open(options: &StoreOptions) -> Result<Self, StoreError> {
         Self::open_with(&Env::from_process(), options)
     }
 
     /// [`Store::open`] with an explicit environment.
+    ///
+    /// A section with an explicit folder that does not exist is not created again (its drive may
+    /// be disconnected); it is listed by [`Store::unavailable`].
     pub fn open_with(env: &Env, options: &StoreOptions) -> Result<Self, StoreError> {
-        let dirs = paths::resolve(env, options.portable_dir.as_deref())?;
-        for dir in [&dirs.data, &dirs.cache, &dirs.logs] {
-            std::fs::create_dir_all(dir).map_err(|e| StoreError::io(dir, e))?;
+        let root = paths::resolve(env, options.portable_dir.as_deref())?;
+        std::fs::create_dir_all(&root.dir).map_err(|e| StoreError::io(&root.dir, e))?;
+        let dir = paths::normalize(&root.dir)?;
+        let lock = DirLock::acquire(&dir)?;
+        let config = StorageConfig::load(&dir)?;
+        let layout = Layout::new(dir, root.source, config);
+        let unavailable: Vec<Section> = Section::ALL
+            .into_iter()
+            .filter(|s| !layout.is_default(*s) && !layout.path(*s).is_dir())
+            .collect();
+        let snapshots = if unavailable.contains(&Section::Backups) {
+            layout.default_path(Section::Backups)
+        } else {
+            layout.path(Section::Backups)
+        };
+        let migration = format::migrate_with_snapshots(
+            layout.root(),
+            format::MIGRATIONS,
+            CURRENT_FORMAT,
+            &snapshots,
+        )?;
+        for (section, limits) in [
+            (Section::Logs, retention::LOG_LIMITS),
+            (Section::Cache, retention::CACHE_LIMITS),
+        ] {
+            if !unavailable.contains(&section) {
+                retention::prune(&layout.path(section), limits);
+            }
         }
-        let lock = DirLock::acquire(&dirs.data)?;
-        let migration = format::migrate(&dirs.data, format::MIGRATIONS, CURRENT_FORMAT)?;
         Ok(Self {
-            dirs,
+            env: env.clone(),
+            layout,
+            unavailable,
             _lock: lock,
             migration,
         })
     }
 
-    /// All three directories.
-    pub fn dirs(&self) -> &Dirs {
-        &self.dirs
+    /// The layout: the data folder and the folder of every section.
+    pub fn layout(&self) -> &Layout {
+        &self.layout
     }
 
-    /// Settings, instances, shared game files, Java runtimes, metadata cache, accounts.
+    /// The data folder: settings, accounts, the format version, the layout.
     pub fn data_dir(&self) -> &Path {
-        &self.dirs.data
+        self.layout.root()
+    }
+
+    /// The folder of `section`.
+    pub fn dir(&self, section: Section) -> PathBuf {
+        self.layout.path(section)
+    }
+
+    /// Instances.
+    pub fn instances_dir(&self) -> PathBuf {
+        self.dir(Section::Instances)
+    }
+
+    /// Shared game files: the folder with `versions/`, `libraries/`, `assets/` and `loaders/`.
+    pub fn game_dir(&self) -> PathBuf {
+        self.dir(Section::Game)
+    }
+
+    /// Managed Java runtimes.
+    pub fn java_dir(&self) -> PathBuf {
+        self.dir(Section::Java)
     }
 
     /// Files that can be deleted at any time (HTTP cache).
-    pub fn cache_dir(&self) -> &Path {
-        &self.dirs.cache
+    pub fn cache_dir(&self) -> PathBuf {
+        self.dir(Section::Cache)
+    }
+
+    /// Backups and snapshots.
+    pub fn backups_dir(&self) -> PathBuf {
+        self.dir(Section::Backups)
     }
 
     /// Launcher logs.
-    pub fn logs_dir(&self) -> &Path {
-        &self.dirs.logs
+    pub fn logs_dir(&self) -> PathBuf {
+        self.dir(Section::Logs)
     }
 
-    /// Whether everything lives under one portable directory.
+    /// What chose the data folder.
+    pub fn source(&self) -> RootSource {
+        self.layout.source()
+    }
+
+    /// Whether the data folder is fixed from outside (`--dir`, the variable or the marker).
     pub fn is_portable(&self) -> bool {
-        self.dirs.portable
+        self.source().is_fixed()
+    }
+
+    /// Sections whose explicit folder does not exist.
+    pub fn unavailable(&self) -> &[Section] {
+        &self.unavailable
     }
 
     /// What the migration run while opening did, if any ran.
     pub fn migration(&self) -> Option<&MigrationReport> {
         self.migration.as_ref()
+    }
+
+    /// A detached copy of the layout for work on other threads (it does not hold the lock).
+    pub fn view(&self) -> StoreView {
+        StoreView {
+            env: self.env.clone(),
+            layout: self.layout.clone(),
+            unavailable: self.unavailable.clone(),
+        }
+    }
+
+    /// The layout for front ends; with `sizes` every folder and old copy is measured.
+    pub fn info(&self, sizes: bool) -> StorageInfo {
+        self.view().info(sizes)
+    }
+
+    /// Checks `path` as a new folder for `section`.
+    pub fn check(&self, section: Section, path: &Path) -> PathCheck {
+        self.view().check(section, path)
+    }
+
+    /// Checks a move and measures what it copies; [`mover::execute`] runs it.
+    pub fn plan_move(&self, request: &MoveRequest) -> Result<(MovePlan, PathCheck), StoreError> {
+        self.view().plan_move(request)
+    }
+
+    /// Removes old copies left by moves and prunes logs and the cache.
+    pub fn cleanup(&self) -> Result<CleanupReport, StoreError> {
+        self.view().cleanup()
+    }
+}
+
+/// The layout of an opened store, detached from its lock: cheap to clone and to send to a worker
+/// thread.
+#[derive(Debug, Clone)]
+pub struct StoreView {
+    env: Env,
+    layout: Layout,
+    unavailable: Vec<Section>,
+}
+
+impl StoreView {
+    fn is_portable(&self) -> bool {
+        self.layout.source().is_fixed()
+    }
+
+    /// The layout for front ends; with `sizes` every folder and old copy is measured.
+    pub fn info(&self, sizes: bool) -> StorageInfo {
+        let measure =
+            |paths: &[PathBuf]| sizes.then(|| paths.iter().map(|p| retention::size_of(p)).sum());
+        let sections = Section::ALL
+            .into_iter()
+            .map(|section| {
+                let path = self.layout.path(section);
+                let size = if section == Section::Data {
+                    // The data folder without the default sections inside it.
+                    sizes.then(|| {
+                        let inner: u64 = Section::ALL
+                            .into_iter()
+                            .filter(|s| *s != Section::Data && self.layout.is_default(*s))
+                            .flat_map(|s| self.layout.owned(s))
+                            .map(|p| retention::size_of(&p))
+                            .sum();
+                        retention::size_of(&path).saturating_sub(inner)
+                    })
+                } else {
+                    measure(&self.layout.owned(section))
+                };
+                SectionInfo {
+                    section,
+                    default: self.layout.is_default(section),
+                    available: !self.unavailable.contains(&section),
+                    path,
+                    size,
+                }
+            })
+            .collect();
+        // Old copies as recorded now: a cleanup since opening changed them.
+        let recorded = StorageConfig::load(self.layout.root())
+            .map(|c| c.leftovers)
+            .unwrap_or_else(|_| self.layout.config().leftovers.clone());
+        let mut leftovers: Vec<Leftover> = recorded
+            .iter()
+            .map(|l| Leftover {
+                section: l.section,
+                path: l.path.clone(),
+                size: measure(&l.entries.iter().map(|e| l.path.join(e)).collect::<Vec<_>>()),
+            })
+            .collect();
+        if !self.is_portable() {
+            for (section, path) in paths::legacy_dirs(&self.env) {
+                if path.exists() && !self.layout.is_live(&path) {
+                    leftovers.push(Leftover {
+                        section,
+                        size: measure(std::slice::from_ref(&path)),
+                        path,
+                    });
+                }
+            }
+        }
+        StorageInfo {
+            root: self.layout.root().to_path_buf(),
+            source: self.layout.source(),
+            sections,
+            leftovers,
+            restart_required: false,
+        }
+    }
+
+    /// Checks `path` as a new folder for `section`.
+    pub fn check(&self, section: Section, path: &Path) -> PathCheck {
+        check::check_path(&self.env, &self.layout, section, path, None, None)
+    }
+
+    /// Checks a move and measures what it copies; [`mover::execute`] runs it.
+    pub fn plan_move(&self, request: &MoveRequest) -> Result<(MovePlan, PathCheck), StoreError> {
+        mover::plan(&self.env, &self.layout, &self.unavailable, request)
+    }
+
+    /// Removes old copies left by moves and prunes logs and the cache.
+    pub fn cleanup(&self) -> Result<CleanupReport, StoreError> {
+        mover::cleanup(&self.env, &self.layout)
     }
 }
 
@@ -131,62 +335,4 @@ pub(crate) mod testutil {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::testutil::TempDir;
-    use super::*;
-    use vl_core::platform::Os;
-
-    fn env() -> Env {
-        Env {
-            os: Os::Linux,
-            ..Env::default()
-        }
-    }
-
-    fn portable(dir: PathBuf) -> StoreOptions {
-        StoreOptions {
-            portable_dir: Some(dir),
-        }
-    }
-
-    #[test]
-    fn portable_mode_writes_only_inside_its_directory() {
-        let sandbox = TempDir::new();
-        let root = sandbox.path().join("portable");
-        let store = Store::open_with(&env(), &portable(root.clone())).unwrap();
-        assert!(store.is_portable());
-        write_atomic(&store.data_dir().join("settings.toml"), b"x = 1\n").unwrap();
-        for dir in [store.data_dir(), store.cache_dir(), store.logs_dir()] {
-            assert!(dir.starts_with(&root), "{dir:?}");
-        }
-        drop(store);
-        let siblings: Vec<_> = std::fs::read_dir(sandbox.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        assert_eq!(siblings, ["portable"]);
-    }
-
-    #[test]
-    fn a_second_store_on_the_same_directory_is_refused() {
-        let sandbox = TempDir::new();
-        let options = portable(sandbox.path().join("p"));
-        let first = Store::open_with(&env(), &options).unwrap();
-        let second = Store::open_with(&env(), &options).unwrap_err();
-        assert!(matches!(second, StoreError::Locked { .. }), "{second}");
-        drop(first);
-        Store::open_with(&env(), &options).unwrap();
-    }
-
-    #[test]
-    fn a_new_store_gets_the_current_format_without_a_snapshot() {
-        let sandbox = TempDir::new();
-        let store = Store::open_with(&env(), &portable(sandbox.path().join("p"))).unwrap();
-        assert_eq!(
-            format::read_version(store.data_dir()).unwrap(),
-            Some(CURRENT_FORMAT)
-        );
-        assert!(store.migration().is_none());
-        assert!(!store.data_dir().join(format::SNAPSHOT_DIR).exists());
-    }
-}
+mod tests;

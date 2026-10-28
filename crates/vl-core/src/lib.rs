@@ -24,6 +24,7 @@ pub mod log;
 pub mod platform;
 pub mod resources;
 pub mod settings;
+pub mod storage;
 pub mod task;
 pub mod version;
 

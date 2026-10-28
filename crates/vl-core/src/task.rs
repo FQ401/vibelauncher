@@ -33,6 +33,8 @@ pub enum TaskKind {
     JavaScan,
     /// Downloading a Java runtime.
     JavaDownload,
+    /// Moving a storage section to another folder.
+    MoveStorage,
 }
 
 /// A task as announced when it starts.

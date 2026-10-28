@@ -4,7 +4,8 @@
 //! vl-cli [--mock] [--dir <path>] <command>
 //! ```
 //! `--mock` runs on synthetic data (`vl-mock`); otherwise the real backend (`vl-backend`) serves
-//! the commands. `--dir` selects a portable data directory.
+//! the commands. `--dir` selects the data folder (as does the `VIBELAUNCHER_DIR` variable);
+//! otherwise the portable marker, the pointer file or the OS convention decides.
 
 mod commands;
 mod progress;

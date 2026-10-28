@@ -91,6 +91,17 @@ pub fn migrate(
     chain: &[Migration],
     current: u32,
 ) -> Result<Option<MigrationReport>, StoreError> {
+    migrate_with_snapshots(data, chain, current, &data.join(SNAPSHOT_DIR))
+}
+
+/// [`migrate`] with the snapshots in `snapshots` (the backups section) instead of
+/// `<data>/snapshots`.
+pub fn migrate_with_snapshots(
+    data: &Path,
+    chain: &[Migration],
+    current: u32,
+    snapshots: &Path,
+) -> Result<Option<MigrationReport>, StoreError> {
     let from = match read_version(data)? {
         Some(v) => v,
         None if is_new(data)? => {
@@ -119,7 +130,7 @@ pub fn migrate(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let snapshot = snapshot(data, from)?;
+    let snapshot = snapshot(data, snapshots, from)?;
     for step in steps {
         let failed = |detail: String| StoreError::Migration {
             from: step.from,
@@ -148,9 +159,8 @@ fn is_new(data: &Path) -> Result<bool, StoreError> {
 }
 
 /// Copies the data (not cache, logs, the lock or older snapshots) to
-/// `snapshots/format-<from>[-<n>]`.
-fn snapshot(data: &Path, from: u32) -> Result<PathBuf, StoreError> {
-    let root = data.join(SNAPSHOT_DIR);
+/// `<snapshots>/format-<from>[-<n>]`.
+fn snapshot(data: &Path, root: &Path, from: u32) -> Result<PathBuf, StoreError> {
     let mut target = root.join(format!("format-{from}"));
     let mut n = 1;
     while target.exists() {
@@ -315,8 +325,8 @@ mod tests {
     #[test]
     fn snapshots_do_not_overwrite_each_other() {
         let dir = legacy_dir();
-        let a = snapshot(dir.path(), 0).unwrap();
-        let b = snapshot(dir.path(), 0).unwrap();
+        let a = snapshot(dir.path(), &dir.path().join(SNAPSHOT_DIR), 0).unwrap();
+        let b = snapshot(dir.path(), &dir.path().join(SNAPSHOT_DIR), 0).unwrap();
         assert_ne!(a, b);
     }
 

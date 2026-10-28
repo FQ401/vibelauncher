@@ -44,6 +44,12 @@ pub enum StoreError {
         /// The cause.
         detail: String,
     },
+    /// The operation was cancelled; nothing was changed.
+    Cancelled,
+    /// The request cannot be carried out as given.
+    InvalidInput(String),
+    /// The request conflicts with the current state.
+    Conflict(String),
 }
 
 impl StoreError {
@@ -88,6 +94,8 @@ impl fmt::Display for StoreError {
                 }
                 Ok(())
             }
+            Self::Cancelled => f.write_str("cancelled"),
+            Self::InvalidInput(why) | Self::Conflict(why) => f.write_str(why),
         }
     }
 }
@@ -111,6 +119,9 @@ impl From<StoreError> for vl_core::Error {
             StoreError::Locked { .. } => ErrorKind::Conflict,
             StoreError::FormatTooNew { .. } => ErrorKind::Unsupported,
             StoreError::Corrupt { .. } => ErrorKind::Integrity,
+            StoreError::Cancelled => ErrorKind::Cancelled,
+            StoreError::InvalidInput(_) => ErrorKind::InvalidInput,
+            StoreError::Conflict(_) => ErrorKind::Conflict,
         };
         vl_core::Error::new(kind, e.to_string())
     }
