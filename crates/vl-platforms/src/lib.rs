@@ -2,16 +2,22 @@
 //!
 //! A platform is a [`CatalogSource`]: search, one project, the versions of a project, and the
 //! versions that own given files (to tell where an installed file came from). [`ModrinthSource`]
-//! is the one implemented; a second platform adds a module with its own source and a variant of
-//! `vl_core::catalog::Provider`, and [`Platforms::source`] hands it out.
+//! and [`CurseForgeSource`] are implemented; a platform is a module with its own source and a
+//! variant of `vl_core::catalog::Provider`, and [`Platforms::source`] hands it out. CurseForge
+//! needs the user's API key ([`curseforge::ApiKeySource`]); without one its calls fail with
+//! `ErrorKind::NoApiKey` and Modrinth works as before.
 //!
 //! Requests go through `vl-net` (HTTP cache, retries, size caps, offline reads); the request URLs
-//! and the parsing of responses live in the pure crate `vl-modrinth`. A source paces itself with a
+//! and the parsing of responses live in the pure crates `vl-modrinth` and `vl-curseforge`. A
+//! source paces itself with a
 //! [`RateLimiter`] that follows the server's rate-limit headers, so the launcher never exceeds
 //! the allowed rate. The client is blocking: callers run it inside a task or on a worker thread.
 
+pub mod curseforge;
 pub mod modrinth;
 pub mod rate;
+
+use std::sync::Arc;
 
 use vl_core::catalog::{
     HashAlgorithm, HashMatch, Project, ProjectVersion, Provider, ReleaseChannel, SearchPage,
@@ -20,6 +26,7 @@ use vl_core::catalog::{
 use vl_core::{Error, Result};
 use vl_net::{Client, Control};
 
+pub use curseforge::{CurseForgeOptions, CurseForgeSource, KeyringApiKey};
 pub use modrinth::{ModrinthOptions, ModrinthSource};
 pub use rate::{Clock, RateConfig, RateLimiter, SystemClock};
 
@@ -70,24 +77,39 @@ pub trait CatalogSource: Send + Sync {
 /// Every platform the launcher can ask.
 pub struct Platforms {
     modrinth: ModrinthSource,
+    curseforge: CurseForgeSource,
 }
 
 impl Platforms {
-    /// All platforms over one network client.
+    /// All platforms over one network client. CurseForge reads its key from the environment
+    /// variable, then from the OS keyring (opened on first use).
     pub fn new(client: Client) -> Self {
-        Self::with_modrinth(ModrinthSource::new(client, ModrinthOptions::default()))
+        let keys = curseforge::default_api_keys(Arc::new(KeyringApiKey::os()));
+        Self::with_sources(
+            ModrinthSource::new(client.clone(), ModrinthOptions::default()),
+            CurseForgeSource::new(client, CurseForgeOptions::default(), Arc::new(keys)),
+        )
     }
 
-    /// All platforms with a prepared Modrinth source (tests point it at another server).
-    pub fn with_modrinth(modrinth: ModrinthSource) -> Self {
-        Self { modrinth }
+    /// All platforms with prepared sources (tests point them at another server).
+    pub fn with_sources(modrinth: ModrinthSource, curseforge: CurseForgeSource) -> Self {
+        Self {
+            modrinth,
+            curseforge,
+        }
     }
 
     /// The source of `provider`.
     pub fn source(&self, provider: Provider) -> Result<&dyn CatalogSource> {
         match provider {
             Provider::Modrinth => Ok(&self.modrinth),
+            Provider::CurseForge => Ok(&self.curseforge),
             other => Err(Error::unsupported(format!("platform {other:?}"))),
         }
+    }
+
+    /// CurseForge with what only it offers: categories, single files, fingerprint lookups.
+    pub fn curseforge(&self) -> &CurseForgeSource {
+        &self.curseforge
     }
 }

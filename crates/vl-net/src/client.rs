@@ -65,6 +65,12 @@ pub trait RequestHooks: Send + Sync {
     /// Called with the status and the lowercase-named headers of every response, whatever its
     /// status.
     fn after_response(&self, status: u16, headers: &[(String, String)]);
+
+    /// Headers added to every request of the call (such as an API key). The values are sent
+    /// only; they are never logged, cached or put into errors.
+    fn headers(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
 }
 
 pub(crate) struct Inner {
@@ -209,7 +215,7 @@ impl Client {
             }
             let response = self.inner.transport.post(&PostRequest {
                 url: url.to_string(),
-                headers: Vec::new(),
+                headers: hooks.map(|h| h.headers()).unwrap_or_default(),
                 content_type: Some(content_type.to_string()),
                 body: body.to_vec(),
                 body_timeout: self.inner.config.request_timeout,
@@ -281,6 +287,9 @@ impl Client {
             if let Some(modified) = &entry.meta.last_modified {
                 headers.push(("If-Modified-Since".to_string(), modified.clone()));
             }
+        }
+        if let Some(h) = hooks {
+            headers.extend(h.headers());
         }
         let request = HttpRequest {
             url: url.to_string(),

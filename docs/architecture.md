@@ -43,7 +43,7 @@ layer = "native"
 
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
-| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-bisect`, `vl-modrinth` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
+| `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-bisect`, `vl-modrinth`, `vl-curseforge` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
 | `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-install`, `vl-launch` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
@@ -65,7 +65,7 @@ ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
 native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-install · vl-launch
                                          → core, native
-core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth → core
+core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth · vl-curseforge → core
 ```
 
 ## Crates
@@ -91,7 +91,8 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth 
 | `vl-mock` | backend | The facade on synthetic in-memory data, with simulated tasks, launches and game logs. No files, network or processes. |
 | `vl-ui-egui` | ui | The shared egui interface. |
 | `vl-modrinth` | core | Modrinth API v2 as pure functions: request URLs with search facets, filters and hash lookups, and tolerant parsing of responses into the catalog types of `vl-core` (size limits, unknown fields ignored, damaged list entries skipped, unsafe file names and non-`https` download URLs dropped). The `mrpack` module parses `modrinth.index.json` (`https` downloads from `cdn.modrinth.com`, `github.com`, `raw.githubusercontent.com` and `gitlab.com` only, safe relative paths, capped sizes and counts). |
-| `vl-platforms` | native | Online mod platforms behind the `CatalogSource` trait; `ModrinthSource` fetches through `vl-net` (HTTP cache, retries, size caps) and paces itself with a rate limiter that follows the server's `X-Ratelimit-*` headers. A second platform adds a module and a `Provider` variant. |
+| `vl-curseforge` | core | CurseForge API v1 as pure functions: request URLs (search of Minecraft projects by class — mods `6`, modpacks `4471`, resource packs, shaders, data packs — with game version, loader, category ids, sort and paging cut to 50 a page and to the 10 000-result window; project, project files with one game version and one loader filter, one file, categories, fingerprint lookup), the `ApiKey` type (masked `Debug` and `Display`), the CurseForge fingerprint (MurmurHash2, seed 1, over the bytes without tab, line feed, carriage return and space), and tolerant parsing of `{"data": ...}` answers into the catalog types of `vl-core` (a file is a version with one file; game version labels split into game versions and loaders; a file without `downloadUrl` gets `https://edge.forgecdn.net/files/{id / 1000}/{id % 1000}/{encoded name}`; size limits, damaged entries skipped, unsafe file names and non-`https` links dropped). |
+| `vl-platforms` | native | Online mod platforms behind the `CatalogSource` trait; `ModrinthSource` and `CurseForgeSource` fetch through `vl-net` (HTTP cache, retries, size caps) and pace themselves with a rate limiter that follows the server's `X-Ratelimit-*` headers and `429`. A platform is a module and a `Provider` variant. The CurseForge key comes from an `ApiKeySource`: the `VL_CURSEFORGE_API_KEY` environment variable (development), then the user's key in the OS keyring (`KeyringApiKey`). |
 | `vl-install` | native | Installing a catalog project into an instance: picking the version for the instance's game version and loader, following required dependencies, recognizing what is installed, the plan, verified download, all-or-nothing add to the resource folders, and the origin records (`<instance>/.vibelauncher/resources.json`). The `mrpack` module installs a Modrinth modpack (`.mrpack`, from a file or a catalog project) into a new game directory: archive checks (entry names, symlinks, entry counts), verified downloads of the client files, `overrides/` then `client-overrides/`, and the pack record `<instance>/.vibelauncher/pack.json`. The `mrpack_update` module updates an installed pack while keeping the user's changes. |
 | `vl-cli` | app | The headless command line. |
 
@@ -255,8 +256,8 @@ the browser.
 
 - The facade reports `vl_core::Error { kind, message }`.
 - `ErrorKind` is what front ends act on and what the UI localizes: `InvalidInput`, `NotFound`,
-  `Conflict`, `Network`, `Io`, `Integrity`, `Auth`, `Java`, `Game`, `Cancelled`, `Unsupported`,
-  `Internal`.
+  `Conflict`, `Network`, `Io`, `Integrity`, `Auth`, `NoApiKey` (a platform needs a key the user
+  has not entered), `Java`, `Game`, `Cancelled`, `Unsupported`, `Internal`.
 - `message` is English technical detail for logs and "details" views. It never contains secrets.
 - Native crates keep their own detailed error types; `vl-backend` converts them into
   `vl_core::Error` at the facade boundary. A failed task carries its error in
@@ -396,7 +397,15 @@ The data folder and its sections hold:
   projects (type, game version, loader and category facets, sort order, paging), reads a project
   by id or slug, lists its versions (loader and game version filters) with files, hashes and
   dependencies, and finds the versions that own given file hashes (SHA-1 or SHA-512, batched
-  500 per request), which tells where an installed file came from. Modrinth is read without a
+  500 per request), which tells where an installed file came from. `Provider::CurseForge` serves
+  the same search, project and version calls (a project is a numeric mod id or a slug, looked up
+  by a search that prefers mods, then modpacks; versions are the project's files, read 50 a page,
+  at most 20 pages, filtered again on the answer and sorted newest first; category slugs and
+  names in a search are turned into ids from the category list, cached a day); files are found by
+  CurseForge fingerprint (`POST /v1/fingerprints/432`, 1 000 per request), not by SHA hash.
+  Every CurseForge request carries the user's key in `x-api-key`; without a key it fails with
+  `ErrorKind::NoApiKey` before anything is sent, and a key the server refuses (`401`, `403`) is
+  `ErrorKind::Auth`. Modrinth is read without a
   key at `api.modrinth.com/v2` with the launcher's `User-Agent`; requests stay below the 300 a
   minute per address limit (a window budget plus the `X-Ratelimit-*` headers; a `429` waits for
   the reset), a `410` means the API version was retired and is reported as `Unsupported`. Answers
@@ -561,7 +570,10 @@ messages. The launcher ships with no third-party API keys.
 
 The keyring is the Windows Credential Manager, the macOS Keychain, or the Secret Service over
 D-Bus on Linux (a pure-Rust client: no GTK, libsecret or libdbus). Each account has one entry under
-the service name `VibeLauncher`. Without a usable keyring, tokens are kept in memory only until the
+the service name `VibeLauncher`; the user's CurseForge key is the entry `api-key:curseforge`. The
+`VL_CURSEFORGE_API_KEY` environment variable, when set, is used instead (for development). A key
+is sent only in the `x-api-key` header of CurseForge requests; request `Debug` output in `vl-net`
+names headers without their values. Without a usable keyring, tokens are kept in memory only until the
 launcher closes and the user is told so; nothing secret is written to disk in the clear.
 
 The Microsoft application (client) ID is a build constant (`vl_auth::DEFAULT_CLIENT_ID`); the `VL_MS_CLIENT_ID` environment variable replaces it, so forks and development builds use their own registration.

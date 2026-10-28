@@ -4148,6 +4148,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vl-curseforge"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vl-core",
+]
+
+[[package]]
 name = "vl-install"
 version = "0.0.0"
 dependencies = [
@@ -4275,7 +4284,9 @@ name = "vl-platforms"
 version = "0.0.0"
 dependencies = [
  "serde_json",
+ "vl-auth",
  "vl-core",
+ "vl-curseforge",
  "vl-modrinth",
  "vl-net",
 ]

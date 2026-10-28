@@ -1,0 +1,54 @@
+{
+  "data": {
+    "id": 910001,
+    "gameId": 432,
+    "name": "Example Storage",
+    "slug": "example-storage",
+    "links": {
+      "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/example-storage",
+      "wikiUrl": "",
+      "issuesUrl": "https://git.example.org/storage/issues",
+      "sourceUrl": "javascript:alert(1)"
+    },
+    "summary": "Chests that sort themselves.",
+    "status": 4,
+    "downloadCount": 1234567,
+    "categories": [
+      {"id": 420, "name": "Storage", "slug": "storage", "classId": 6, "parentCategoryId": 6}
+    ],
+    "classId": 6,
+    "authors": [{"id": 1, "name": "example_author"}],
+    "logo": {"id": 5, "thumbnailUrl": null, "url": "https://media.forgecdn.net/avatars/0/5/logo.png"},
+    "mainFileId": 5100200,
+    "latestFiles": [
+      {
+        "id": 5100200,
+        "gameId": 432,
+        "modId": 910001,
+        "isAvailable": true,
+        "displayName": "Example Storage 2.0.0 (Fabric)",
+        "fileName": "example-storage-fabric-2.0.0.jar",
+        "releaseType": 1,
+        "fileStatus": 4,
+        "hashes": [{"value": "0123456789abcdef0123456789abcdef01234567", "algo": 1}],
+        "fileDate": "2026-09-30T11:59:00Z",
+        "fileLength": 524288,
+        "downloadCount": 1000,
+        "downloadUrl": "https://edge.forgecdn.net/files/5100/200/example-storage-fabric-2.0.0.jar",
+        "gameVersions": ["1.21.1", "Fabric", "Quilt", "Client", "Java 21"],
+        "dependencies": [],
+        "fileFingerprint": 123456789
+      }
+    ],
+    "latestFilesIndexes": [
+      {"gameVersion": "1.21.1", "fileId": 5100200, "filename": "example-storage-fabric-2.0.0.jar", "releaseType": 1, "modLoader": 4},
+      {"gameVersion": "1.20.1", "fileId": 5000100, "filename": "example-storage-forge-1.9.0.jar", "releaseType": 2, "modLoader": 1},
+      {"gameVersion": "1.12.2", "fileId": 2500000, "filename": "example-storage-1.0.jar", "releaseType": 1, "modLoader": null}
+    ],
+    "dateCreated": "2023-02-01T10:00:00Z",
+    "dateModified": "2026-09-30T12:00:00.123Z",
+    "allowModDistribution": true,
+    "isAvailable": true,
+    "thumbsUpCount": 42
+  }
+}

@@ -1,6 +1,6 @@
 [package]
 name = "vl-platforms"
-description = "Online mod platforms: Modrinth over vl-net with rate limiting and caching."
+description = "Online mod platforms: Modrinth and CurseForge over vl-net with rate limiting and caching."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,9 @@ publish.workspace = true
 layer = "native"
 
 [dependencies]
+vl-auth.workspace = true
 vl-core.workspace = true
+vl-curseforge.workspace = true
 vl-modrinth.workspace = true
 vl-net.workspace = true
 

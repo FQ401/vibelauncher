@@ -1,0 +1,62 @@
+{
+  "data": [
+    {
+      "id": 5100200,
+      "gameId": 432,
+      "modId": 910001,
+      "isAvailable": true,
+      "displayName": "Example Storage 2.0.0 (Fabric)",
+      "fileName": "example-storage-fabric-2.0.0.jar",
+      "releaseType": 1,
+      "fileStatus": 4,
+      "hashes": [
+        {"value": "0123456789ABCDEF0123456789ABCDEF01234567", "algo": 1},
+        {"value": "0123456789abcdef0123456789abcdef", "algo": 2}
+      ],
+      "fileDate": "2026-09-30T11:59:00Z",
+      "fileLength": 524288,
+      "downloadCount": 1000,
+      "downloadUrl": "https://edge.forgecdn.net/files/5100/200/example-storage-fabric-2.0.0.jar",
+      "gameVersions": ["Client", "1.21.1", "1.21", "Fabric", "Server"],
+      "dependencies": [
+        {"modId": 306612, "relationType": 3},
+        {"modId": 910050, "relationType": 2},
+        {"modId": 910051, "relationType": 5},
+        {"modId": 910052, "relationType": 1},
+        {"modId": 0, "relationType": 3}
+      ],
+      "fileFingerprint": 123456789
+    },
+    {
+      "id": 5000100,
+      "gameId": 432,
+      "modId": 910001,
+      "displayName": "Example Storage 1.9.0 beta",
+      "fileName": "example storage forge 1.9.0+beta.jar",
+      "releaseType": 2,
+      "hashes": [{"value": "not a sha1", "algo": 1}],
+      "fileDate": "2026-05-01T08:00:00Z",
+      "fileLength": 400000,
+      "downloadCount": 55.0,
+      "downloadUrl": null,
+      "gameVersions": ["1.20.1", "Forge", "NeoForge"],
+      "dependencies": "none",
+      "fileFingerprint": 4000000000
+    },
+    {
+      "id": 5000050,
+      "modId": 910001,
+      "displayName": "Bad link",
+      "fileName": "../escape.jar",
+      "releaseType": 3,
+      "downloadUrl": "https://edge.forgecdn.net/files/5000/50/escape.jar",
+      "gameVersions": ["1.20.1"]
+    },
+    {
+      "displayName": "No id",
+      "fileName": "no-id.jar"
+    },
+    "garbage"
+  ],
+  "pagination": {"index": 0, "pageSize": 50, "resultCount": 5, "totalCount": 5}
+}

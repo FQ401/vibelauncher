@@ -1,4 +1,4 @@
-//! The mod catalog: searching and reading projects of an online platform (Modrinth today).
+//! The mod catalog: searching and reading projects of an online platform (Modrinth, CurseForge).
 //!
 //! The types are platform-neutral: a platform crate converts what its API returns into them, so
 //! a second platform adds a [`Provider`] and a parser without changing any front end. Every
@@ -27,6 +27,9 @@ pub enum Provider {
     /// Modrinth.
     #[default]
     Modrinth,
+    /// CurseForge; needs the user's own API key.
+    #[serde(rename = "curseforge")]
+    CurseForge,
 }
 
 /// What a project is.

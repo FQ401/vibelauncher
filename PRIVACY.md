@@ -31,7 +31,7 @@ The launcher contacts the following services. Each request is made directly from
 | Xbox Live (`xboxlive.com`) | Xbox authentication and XSTS authorization | Microsoft access token |
 | Mojang / Minecraft services (`minecraftservices.com`, `mojang.com`, `minecraft.net`) | Minecraft sign-in, game ownership check, profile, skins, game version manifests and game files | Minecraft access token, profile and skin requests |
 | Modrinth (`modrinth.com`) | Searching and downloading mods and modpacks | Search queries and project identifiers |
-| CurseForge (`curseforge.com`) | Searching and downloading mods and modpacks | Search queries, project identifiers and the user's own CurseForge API key |
+| CurseForge (`curseforge.com`, `forgecdn.net`) | Searching and downloading mods and modpacks, identifying installed files | Search queries, project identifiers, fingerprints (32-bit hashes) of mod files, and the user's own CurseForge API key |
 | Adoptium (`adoptium.net`) | Downloading Java runtimes | Requested Java version, operating system and architecture |
 | mclo.gs | Log sharing | Log content, only when the user chooses to upload a log |
 

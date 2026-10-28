@@ -2,14 +2,15 @@
 //! tests and other crates can substitute it. [`UreqTransport`] is the real implementation
 //! (blocking, rustls, no OpenSSL).
 
+use std::fmt;
 use std::io::Read;
 use std::time::Duration;
 
 use crate::config::{NetConfig, ProxyConfig};
 use crate::error::{NetError, redact_url};
 
-/// A GET request.
-#[derive(Debug, Clone)]
+/// A GET request. Its `Debug` output names the headers without their values.
+#[derive(Clone)]
 pub struct HttpRequest {
     /// Absolute `http` / `https` URL.
     pub url: String,
@@ -19,8 +20,9 @@ pub struct HttpRequest {
     pub body_timeout: Duration,
 }
 
-/// A POST request with an in-memory body.
-#[derive(Debug, Clone)]
+/// A POST request with an in-memory body. Its `Debug` output names the headers without their
+/// values and gives the body's length only.
+#[derive(Clone)]
 pub struct PostRequest {
     /// Absolute `http` / `https` URL.
     pub url: String,
@@ -32,6 +34,39 @@ pub struct PostRequest {
     pub body: Vec<u8>,
     /// Longest the whole body transfer may take.
     pub body_timeout: Duration,
+}
+
+/// Header names only: a value may be a secret (an API key).
+struct HeaderNames<'a>(&'a [(String, String)]);
+
+impl fmt::Debug for HeaderNames<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|(name, _)| name))
+            .finish()
+    }
+}
+
+impl fmt::Debug for HttpRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpRequest")
+            .field("url", &redact_url(&self.url))
+            .field("headers", &HeaderNames(&self.headers))
+            .field("body_timeout", &self.body_timeout)
+            .finish()
+    }
+}
+
+impl fmt::Debug for PostRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PostRequest")
+            .field("url", &redact_url(&self.url))
+            .field("headers", &HeaderNames(&self.headers))
+            .field("content_type", &self.content_type)
+            .field("body_len", &self.body.len())
+            .field("body_timeout", &self.body_timeout)
+            .finish()
+    }
 }
 
 /// A response whose body is still to be read.
@@ -166,5 +201,32 @@ fn map_error(error: &ureq::Error, url: &str) -> NetError {
         ureq::Error::Io(e) => NetError::Connect(format!("{} ({url})", e.kind())),
         // Other variants may embed URLs with credentials; keep the message generic.
         _ => NetError::Connect(format!("request to {url} failed")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_output_hides_header_values_and_bodies() {
+        let headers = vec![("x-api-key".to_string(), "secret-value".to_string())];
+        let get = HttpRequest {
+            url: "https://api.example.test/v1?token=query-secret".into(),
+            headers: headers.clone(),
+            body_timeout: Duration::from_secs(1),
+        };
+        let post = PostRequest {
+            url: "https://api.example.test/v1".into(),
+            headers,
+            content_type: Some("application/json".into()),
+            body: b"body-secret".to_vec(),
+            body_timeout: Duration::from_secs(1),
+        };
+        let shown = format!("{get:?} {post:?}");
+        assert!(shown.contains("x-api-key"), "{shown}");
+        for secret in ["secret-value", "query-secret", "body-secret"] {
+            assert!(!shown.contains(secret), "{shown}");
+        }
     }
 }
