@@ -96,7 +96,7 @@ fn parse_request(pack: &str, flags: &[&str]) -> Result<PackInstallRequest, CliEr
     })
 }
 
-fn parse_provider(name: &str) -> Result<Provider, CliError> {
+pub(crate) fn parse_provider(name: &str) -> Result<Provider, CliError> {
     match name.to_ascii_lowercase().as_str() {
         "modrinth" => Ok(Provider::Modrinth),
         "curseforge" => Ok(Provider::CurseForge),

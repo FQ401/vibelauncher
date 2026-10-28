@@ -8,18 +8,21 @@
 //! affected. A key CurseForge refuses (`401`, `403`) is `ErrorKind::Auth`. The key is never part
 //! of a URL, so neither the HTTP cache nor an error message holds it.
 //!
+//! Local files are found by their CurseForge fingerprint, not by SHA hash
+//! ([`CatalogSource::file_hash`] is [`HashAlgorithm::Fingerprint`]).
+//!
 //! Answers go through the HTTP cache of the client like Modrinth's, and every network attempt
 //! goes through a [`RateLimiter`] (CurseForge publishes no limit; the window budget and its
 //! `429` handling apply).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use vl_auth::{AuthError, OsVault, SecretVault};
 use vl_core::catalog::{
-    HashAlgorithm, HashMatch, Project, ProjectType, ProjectVersion, Provider, SearchPage,
-    SearchQuery, VersionFilter,
+    HashAlgorithm, HashMatch, Project, ProjectType, ProjectVersion, Provider, ReleaseChannel,
+    SearchPage, SearchQuery, VersionFilter,
 };
 use vl_core::{Error, ErrorKind, Result};
 use vl_curseforge::parse::{
@@ -569,17 +572,123 @@ impl CatalogSource for CurseForgeSource {
         Ok(versions)
     }
 
+    fn file_hash(&self) -> HashAlgorithm {
+        HashAlgorithm::Fingerprint
+    }
+
+    /// The files with these fingerprints (decimal, [`HashAlgorithm::Fingerprint`]) through
+    /// [`fingerprints`](Self::fingerprints); the hash of a match is the fingerprint in decimal.
+    /// SHA hashes are `Unsupported`.
     fn versions_by_hashes(
         &self,
         algorithm: HashAlgorithm,
         hashes: &[String],
         control: &Control,
     ) -> Result<Vec<HashMatch>> {
-        let _ = (algorithm, hashes, control);
-        Err(Error::unsupported(
-            "CurseForge looks files up by fingerprint, not by SHA hash",
-        ))
+        let prints = parse_fingerprints(algorithm, hashes)?;
+        // The key is checked even for an empty list, so a missing key is reported at once.
+        self.key()?;
+        Ok(self
+            .fingerprints(&prints, control)?
+            .into_iter()
+            .map(|m| HashMatch {
+                hash: m.fingerprint.to_string(),
+                version: m.version,
+            })
+            .collect())
     }
+
+    /// CurseForge has no batched update lookup: the files are found by fingerprint in one
+    /// batch, then the files of each of their projects are listed once with the game versions
+    /// and loaders of `filter` ([`versions`](CatalogSource::versions)), and the newest one of an
+    /// allowed channel is the answer. A file that names no loader (resource packs, shaders,
+    /// some old mods) is matched against files that name none or one of the filter's. A project
+    /// CurseForge no longer has is left out.
+    fn latest_versions_by_hashes(
+        &self,
+        algorithm: HashAlgorithm,
+        hashes: &[String],
+        filter: &VersionFilter,
+        channels: &[ReleaseChannel],
+        control: &Control,
+    ) -> Result<Vec<HashMatch>> {
+        let owners = self.versions_by_hashes(algorithm, hashes, control)?;
+        let mut listed: HashMap<(String, bool), Vec<ProjectVersion>> = HashMap::new();
+        let mut out = Vec::new();
+        for owner in owners {
+            let project = owner.version.project_id.clone();
+            if numeric_id(&project).is_none() {
+                continue;
+            }
+            let unlabeled = owner.version.loaders.is_empty();
+            let key = (project, unlabeled);
+            if !listed.contains_key(&key) {
+                let sent = VersionFilter {
+                    loaders: if unlabeled {
+                        Vec::new()
+                    } else {
+                        filter.loaders.clone()
+                    },
+                    game_versions: filter.game_versions.clone(),
+                };
+                let versions = match self.versions(&key.0, &sent, control) {
+                    Ok(v) => v,
+                    Err(e) if e.kind == ErrorKind::NotFound => Vec::new(),
+                    Err(e) => return Err(e),
+                };
+                listed.insert(key.clone(), versions);
+            }
+            // The server filters too, but its answer is data: check it.
+            let games = VersionFilter {
+                loaders: Vec::new(),
+                game_versions: filter.game_versions.clone(),
+            };
+            let fits = |v: &ProjectVersion| {
+                parse::fits(v, &games)
+                    && (filter.loaders.is_empty()
+                        || (unlabeled && v.loaders.is_empty())
+                        || v.loaders
+                            .iter()
+                            .any(|l| filter.loaders.iter().any(|w| w.eq_ignore_ascii_case(l))))
+            };
+            // Listed newest first.
+            let newest = listed
+                .get(&key)
+                .into_iter()
+                .flatten()
+                .find(|v| (channels.is_empty() || channels.contains(&v.channel)) && fits(v));
+            if let Some(version) = newest {
+                out.push(HashMatch {
+                    hash: owner.hash,
+                    version: version.clone(),
+                });
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// The fingerprints in `hashes`, which must be of [`HashAlgorithm::Fingerprint`].
+fn parse_fingerprints(algorithm: HashAlgorithm, hashes: &[String]) -> Result<Vec<u32>> {
+    if algorithm != HashAlgorithm::Fingerprint {
+        return Err(Error::unsupported(
+            "CurseForge looks files up by fingerprint, not by SHA hash",
+        ));
+    }
+    hashes
+        .iter()
+        .map(|h| {
+            let h = h.trim();
+            if HashAlgorithm::Fingerprint.is_valid(h) {
+                h.parse::<u32>()
+                    .map_err(|_| Error::invalid_input("not a CurseForge fingerprint"))
+            } else {
+                Err(Error::invalid_input(format!(
+                    "{h:?} is not a CurseForge fingerprint"
+                )))
+            }
+        })
+        .collect()
 }
 
 /// Converts a network failure. The key is never in a URL, so no message holds it.

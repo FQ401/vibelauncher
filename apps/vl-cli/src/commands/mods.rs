@@ -1,11 +1,11 @@
 //! `instances mods …`: the files in an instance's mods, packs and shaders folders.
 
-use vl_core::catalog::CatalogCommand;
+use vl_core::catalog::{CatalogCommand, Provider};
 use vl_core::install::{
     IdentifyReport, MinStability, UncheckedReason, UpdateCheckRequest, UpdateReport, UpdateRequest,
 };
 use vl_core::resources::{ResourceCommand, ResourceEntry, ResourceKind};
-use vl_core::{Command, Facade, InstanceId, Response};
+use vl_core::{Command, ErrorKind, Facade, InstanceId, Response};
 
 use super::catalog::{confirmed, print_plan, run_task};
 use super::{CliError, Out, USAGE, call, unexpected};
@@ -76,25 +76,61 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
                 other => Err(unexpected(&other)),
             }
         }
-        ["identify", instance, flags @ ..] => {
-            let instance = InstanceId::new(instance).ok_or(CliError::from(USAGE))?;
-            let world = match flags {
-                [] => None,
-                ["--world", name] => Some((*name).to_owned()),
-                _ => return Err(USAGE.into()),
-            };
-            let command = Command::Catalog(CatalogCommand::IdentifyMods {
-                instance,
-                provider: Default::default(),
-                world,
-            });
-            match call(facade, command)? {
-                Response::Identified(report) => print_identified(&report, out),
-                other => Err(unexpected(&other)),
-            }
-        }
+        ["identify", instance, flags @ ..] => identify(facade, instance, flags, out),
         ["update", instance, flags @ ..] => update(facade, instance, flags, out),
         _ => Err(USAGE.into()),
+    }
+}
+
+/// `identify <instance> [--world <w>] [--provider <p>]`: without a provider, Modrinth is asked
+/// first and CurseForge second, so a file both know is recorded as Modrinth's; CurseForge is
+/// skipped with a note when no key is set.
+fn identify(
+    facade: &dyn Facade,
+    instance: &str,
+    flags: &[&str],
+    out: Out<'_>,
+) -> Result<(), CliError> {
+    let instance = InstanceId::new(instance).ok_or(CliError::from(USAGE))?;
+    let (mut world, mut provider) = (None, None);
+    let mut it = flags.iter();
+    while let Some(flag) = it.next() {
+        let value = it.next().ok_or(CliError::from(USAGE))?;
+        match *flag {
+            "--world" => world = Some((*value).to_owned()),
+            "--provider" => provider = Some(super::packs::parse_provider(value)?),
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let providers = match provider {
+        Some(p) => vec![p],
+        None => vec![Provider::Modrinth, Provider::CurseForge],
+    };
+    for asked in providers {
+        if provider.is_none() {
+            writeln!(out, "{}:", provider_name(asked))?;
+        }
+        let command = Command::Catalog(CatalogCommand::IdentifyMods {
+            instance: instance.clone(),
+            provider: asked,
+            world: world.clone(),
+        });
+        match facade.call(command).wait() {
+            Ok(Response::Identified(report)) => print_identified(&report, out)?,
+            Ok(other) => return Err(unexpected(&other)),
+            Err(e) if provider.is_none() && e.kind == ErrorKind::NoApiKey => {
+                writeln!(out, "  skipped: no CurseForge API key is set")?;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
+fn provider_name(provider: Provider) -> &'static str {
+    match provider {
+        Provider::CurseForge => "CurseForge",
+        _ => "Modrinth",
     }
 }
 
@@ -167,6 +203,10 @@ fn check_request<'a>(
     while let Some(flag) = it.next() {
         match *flag {
             "--include-pack-files" => check.include_pack_files = true,
+            "--provider" => {
+                let v = it.next().ok_or(CliError::from(USAGE))?;
+                check.provider = super::packs::parse_provider(v)?;
+            }
             "--world" => {
                 let v = it.next().ok_or(CliError::from(USAGE))?;
                 check.world = Some((*v).to_owned());
@@ -215,6 +255,9 @@ fn print_report(report: &UpdateReport, out: Out<'_>) -> Result<(), CliError> {
             UncheckedReason::NoOrigin => "origin unknown; try identify",
             UncheckedReason::UnknownToPlatform => "the platform no longer knows this file",
             UncheckedReason::NoLoader => "the instance has no mod loader",
+            UncheckedReason::OtherPlatform => {
+                "installed from another platform; check with its --provider"
+            }
             _ => "not checked",
         };
         writeln!(out, "  unchecked {} [{}]: {why}", f.file, f.kind.name())?;
@@ -315,6 +358,9 @@ mod tests {
         assert!(run_mock(&["update", "main", "--nope"]).is_err());
         assert!(run_mock(&["updates", "main", "extra"]).is_err());
         assert!(run_mock(&["identify"]).is_err());
+        assert!(run_mock(&["identify", "main", "--world"]).is_err());
+        assert!(run_mock(&["identify", "main", "--provider", "other"]).is_err());
+        assert!(run_mock(&["updates", "main", "--provider", "other"]).is_err());
         // `--all` or names pass the argument check (the mock then has no such instance).
         for args in [
             &["update", "main", "--all"][..],

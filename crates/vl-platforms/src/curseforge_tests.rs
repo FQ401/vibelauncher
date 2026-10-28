@@ -419,13 +419,160 @@ fn batches_without_a_key_send_nothing() {
 }
 
 #[test]
-fn hash_lookups_are_unsupported() {
+fn sha_lookups_are_unsupported_and_files_are_found_by_fingerprint() {
     let s = setup();
+    assert_eq!(s.source.file_hash(), HashAlgorithm::Fingerprint);
     let err = s
         .source
         .versions_by_hashes(HashAlgorithm::Sha1, &["a".repeat(40)], &Control::default())
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::Unsupported);
+    let err = s
+        .source
+        .versions_by_hashes(
+            HashAlgorithm::Fingerprint,
+            &["x1".into()],
+            &Control::default(),
+        )
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidInput);
+    assert!(s.fake.seen().is_empty());
+
+    s.fake.push(
+        200,
+        &json!({"data": {"exactMatches": [
+            {"id": 910001, "file": file(17, "2026-01-01T00:00:00Z", &["1.21.1", "Fabric"])}
+        ]}}),
+    );
+    let found = s
+        .source
+        .versions_by_hashes(
+            HashAlgorithm::Fingerprint,
+            &["17".into(), "4".into()],
+            &Control::default(),
+        )
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].hash, "17");
+    assert_eq!(found[0].version.id, "17");
+    assert_eq!(found[0].version.project_id, "910001");
+}
+
+#[test]
+fn fingerprint_lookups_without_a_key_send_nothing() {
+    let s = setup_with(Arc::new(Fixed(None)));
+    let filter = VersionFilter::default();
+    for err in [
+        s.source
+            .versions_by_hashes(HashAlgorithm::Fingerprint, &[], &Control::default())
+            .unwrap_err(),
+        s.source
+            .latest_versions_by_hashes(
+                HashAlgorithm::Fingerprint,
+                &["17".into()],
+                &filter,
+                &[],
+                &Control::default(),
+            )
+            .unwrap_err(),
+    ] {
+        assert_eq!(err.kind, ErrorKind::NoApiKey);
+    }
+    assert!(s.fake.seen().is_empty());
+}
+
+/// A file of project `project` with a release type.
+fn typed_file(id: u64, project: u64, date: &str, release: u64, versions: &[&str]) -> Value {
+    let mut f = file(id, date, versions);
+    f["modId"] = json!(project);
+    f["releaseType"] = json!(release);
+    f
+}
+
+#[test]
+fn latest_versions_list_each_project_once_and_pick_the_newest_allowed() {
+    let s = setup();
+    // Two installed files of project 1 (a mod) and one of project 2 (a resource pack, no
+    // loader).
+    s.fake.push(
+        200,
+        &json!({"data": {"exactMatches": [
+            {"id": 1, "file": typed_file(11, 1, "2026-01-01T00:00:00Z", 1, &["1.21.1", "Fabric"])},
+            {"id": 1, "file": typed_file(12, 1, "2026-01-02T00:00:00Z", 1, &["1.21.1", "Fabric"])},
+            {"id": 2, "file": typed_file(21, 2, "2026-01-01T00:00:00Z", 1, &["1.21.1"])}
+        ]}}),
+    );
+    // Project 1: a newer beta, a newer release, a Forge file the server let through.
+    s.fake.push(
+        200,
+        &json!({"data": [
+            typed_file(15, 1, "2026-05-01T00:00:00Z", 2, &["1.21.1", "Fabric"]),
+            typed_file(14, 1, "2026-04-01T00:00:00Z", 1, &["1.21.1", "Fabric"]),
+            typed_file(16, 1, "2026-06-01T00:00:00Z", 1, &["1.21.1", "Forge"]),
+            typed_file(12, 1, "2026-01-02T00:00:00Z", 1, &["1.21.1", "Fabric"])
+        ], "pagination": {"index": 0, "pageSize": 50, "totalCount": 4}}),
+    );
+    // Project 2: no loader on its files.
+    s.fake.push(
+        200,
+        &json!({"data": [
+            typed_file(22, 2, "2026-03-01T00:00:00Z", 1, &["1.21.1"])
+        ], "pagination": {"index": 0, "pageSize": 50, "totalCount": 1}}),
+    );
+    let filter = VersionFilter {
+        loaders: vec!["fabric".into()],
+        game_versions: vec!["1.21.1".into()],
+    };
+    let found = s
+        .source
+        .latest_versions_by_hashes(
+            HashAlgorithm::Fingerprint,
+            &["11".into(), "12".into(), "21".into()],
+            &filter,
+            &[ReleaseChannel::Release],
+            &Control::default(),
+        )
+        .unwrap();
+    let pairs: Vec<(&str, &str)> = found
+        .iter()
+        .map(|m| (m.hash.as_str(), m.version.id.as_str()))
+        .collect();
+    assert_eq!(pairs, [("11", "14"), ("12", "14"), ("21", "22")]);
+    let urls = s.fake.urls();
+    assert_eq!(
+        urls.len(),
+        3,
+        "one lookup and one listing per project: {urls:?}"
+    );
+    assert_eq!(urls[0], "https://curseforge.test/v1/fingerprints/432");
+    assert!(urls[1].starts_with("https://curseforge.test/v1/mods/1/files?"));
+    assert!(urls[1].contains("gameVersion=1.21.1"), "{}", urls[1]);
+    assert!(urls[1].contains("modLoaderType=4"), "{}", urls[1]);
+    assert!(urls[2].starts_with("https://curseforge.test/v1/mods/2/files?"));
+    assert!(!urls[2].contains("modLoaderType"), "{}", urls[2]);
+}
+
+#[test]
+fn a_project_curseforge_no_longer_has_is_left_out_of_latest() {
+    let s = setup();
+    s.fake.push(
+        200,
+        &json!({"data": {"exactMatches": [
+            {"id": 1, "file": typed_file(11, 1, "2026-01-01T00:00:00Z", 1, &["1.21.1"])}
+        ]}}),
+    );
+    s.fake.push(404, &json!({}));
+    let found = s
+        .source
+        .latest_versions_by_hashes(
+            HashAlgorithm::Fingerprint,
+            &["11".into()],
+            &VersionFilter::default(),
+            &[],
+            &Control::default(),
+        )
+        .unwrap();
+    assert!(found.is_empty());
 }
 
 #[test]
@@ -581,5 +728,41 @@ mod live {
             smallest.1.filename
         );
         assert_eq!(found[0].version.id, smallest.0.id);
+
+        // The same file through the platform interface, and its newest release.
+        let key = print.to_string();
+        let owners = source
+            .versions_by_hashes(
+                HashAlgorithm::Fingerprint,
+                std::slice::from_ref(&key),
+                &control,
+            )
+            .unwrap();
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0].version.project_id, "238222");
+        let latest = source
+            .latest_versions_by_hashes(
+                HashAlgorithm::Fingerprint,
+                &[key],
+                &filter,
+                &[ReleaseChannel::Release],
+                &control,
+            )
+            .unwrap();
+        assert_eq!(latest.len(), 1, "{latest:?}");
+        let newest = &latest[0].version;
+        assert_eq!(newest.project_id, "238222");
+        assert_eq!(newest.channel, ReleaseChannel::Release);
+        assert!(newest.game_versions.iter().any(|g| g == "1.12.2"));
+        assert!(
+            newest.date_published >= smallest.0.date_published
+                || smallest.0.channel != ReleaseChannel::Release
+        );
+        assert!(
+            newest
+                .primary_file()
+                .and_then(|f| f.sha1.as_ref())
+                .is_some()
+        );
     }
 }

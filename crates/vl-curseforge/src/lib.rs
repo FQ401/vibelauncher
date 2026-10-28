@@ -25,7 +25,7 @@ pub use endpoints::{
     MAX_IDS_PER_REQUEST, MAX_PAGE_SIZE, MAX_RESULT_WINDOW, Page, class_id, numeric_id,
     project_type, unsent_filter,
 };
-pub use fingerprint::{fingerprint, murmur2};
+pub use fingerprint::{Fingerprinter, fingerprint, fingerprint_len, murmur2};
 pub use key::{API_KEY_ENV, API_KEY_HEADER, ApiKey, MAX_KEY_LEN, no_api_key, rejected_api_key};
 pub use loader::ModLoader;
 pub use manifest::{Manifest, ManifestFile, ManifestLoader, parse_manifest};

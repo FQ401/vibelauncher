@@ -198,6 +198,13 @@ struct Catalog {
     update_calls: AtomicU32,
     /// The filter and channels of each update request.
     update_asks: Mutex<Vec<(VersionFilter, Vec<ReleaseChannel>)>>,
+    /// Acts as CurseForge: files are found by fingerprint.
+    curseforge: bool,
+}
+
+/// The CurseForge fingerprint of bytes, as a lookup key.
+fn print_of(bytes: &[u8]) -> String {
+    vl_curseforge::fingerprint(bytes).to_string()
 }
 
 impl Catalog {
@@ -216,6 +223,30 @@ impl Catalog {
         self
     }
 
+    /// The catalog as CurseForge: provider and lookups by fingerprint.
+    fn curseforge(mut self) -> Self {
+        self.curseforge = true;
+        self
+    }
+
+    /// The key a version's file is found by.
+    fn key_of(&self, v: &ProjectVersion) -> Option<String> {
+        if self.curseforge {
+            let ver = self.versions.iter().find(|x| x.id == v.id)?;
+            Some(print_of(&ver.bytes))
+        } else {
+            v.files[0].sha1.clone()
+        }
+    }
+
+    fn algorithm(&self) -> HashAlgorithm {
+        if self.curseforge {
+            HashAlgorithm::Fingerprint
+        } else {
+            HashAlgorithm::Sha1
+        }
+    }
+
     fn files(&self) -> HashMap<String, Vec<u8>> {
         self.versions
             .iter()
@@ -226,7 +257,15 @@ impl Catalog {
 
 impl CatalogSource for Catalog {
     fn provider(&self) -> Provider {
-        Provider::Modrinth
+        if self.curseforge {
+            Provider::CurseForge
+        } else {
+            Provider::Modrinth
+        }
+    }
+
+    fn file_hash(&self) -> HashAlgorithm {
+        self.algorithm()
     }
 
     fn search(&self, _: &SearchQuery, _: &Control) -> Result<SearchPage> {
@@ -258,12 +297,13 @@ impl CatalogSource for Catalog {
 
     fn latest_versions_by_hashes(
         &self,
-        _: HashAlgorithm,
+        algorithm: HashAlgorithm,
         hashes: &[String],
         filter: &VersionFilter,
         channels: &[ReleaseChannel],
         _: &Control,
     ) -> Result<Vec<HashMatch>> {
+        assert_eq!(algorithm, self.algorithm());
         self.update_calls.fetch_add(1, Ordering::Relaxed);
         self.update_asks
             .lock()
@@ -273,7 +313,7 @@ impl CatalogSource for Catalog {
         Ok(all
             .iter()
             .filter_map(|owner| {
-                let sha = owner.files[0].sha1.clone()?;
+                let sha = self.key_of(owner)?;
                 if !hashes.contains(&sha) {
                     return None;
                 }
@@ -302,17 +342,18 @@ impl CatalogSource for Catalog {
 
     fn versions_by_hashes(
         &self,
-        _: HashAlgorithm,
+        algorithm: HashAlgorithm,
         hashes: &[String],
         _: &Control,
     ) -> Result<Vec<HashMatch>> {
+        assert_eq!(algorithm, self.algorithm());
         self.lookup_calls.fetch_add(1, Ordering::Relaxed);
         Ok(self
             .versions
             .iter()
             .map(Ver::build)
             .filter_map(|v| {
-                let sha = v.files[0].sha1.clone()?;
+                let sha = self.key_of(&v)?;
                 hashes.contains(&sha).then_some(HashMatch {
                     hash: sha,
                     version: v,

@@ -38,11 +38,15 @@ commands:
   instances mods add <instance> <path> [--kind <k>]
                                       manage mods (default) or --kind resourcepacks|shaderpacks|
                                       datapacks|global-datapacks; remove moves to the trash
-  instances mods identify <instance>  find where hand-added files come from (by hash)
-  instances mods updates <instance> [--channel <c>] [--include-pack-files]
+  instances mods identify <instance> [--provider <modrinth|curseforge>]
+                                      find where hand-added files come from (Modrinth by hash,
+                                      then CurseForge by fingerprint; a file both know is
+                                      recorded as Modrinth's)
+  instances mods updates <instance> [--channel <c>] [--include-pack-files] [--provider <p>]
                                       list newer versions of mods, packs and shaders
+                                      (Modrinth by default)
   instances mods update <instance> [<mod>...|--all] [--version <id>] [--channel <c>]
-                        [--include-pack-files] [--yes]
+                        [--include-pack-files] [--provider <p>] [--yes]
                                       update, or switch one mod to a version (older only by id)
   instances worlds list <instance>    list the worlds in the instance's saves folder
   instances datapacks <instance> <world> list
