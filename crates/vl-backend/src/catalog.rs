@@ -280,21 +280,13 @@ fn run_pack(
                 PackLoader::Fabric => ComponentKind::Fabric,
                 PackLoader::Quilt => ComponentKind::Quilt,
                 PackLoader::NeoForge => ComponentKind::NeoForge,
-                PackLoader::Forge => ComponentKind::Forge,
+                PackLoader::Forge => {
+                    return Err(Error::unsupported("Forge is not supported yet"));
+                }
             };
-            let chosen = work
-                .loaders
-                .pick(component, &game_version, Some(version), work.control)
-                .map_err(|e| {
-                    if e.kind == vl_core::ErrorKind::Unsupported {
-                        Error::unsupported(format!(
-                            "the pack needs {} {version}, which the launcher does not support yet",
-                            kind.display_name()
-                        ))
-                    } else {
-                        e
-                    }
-                })?;
+            let chosen =
+                work.loaders
+                    .pick(component, &game_version, Some(version), work.control)?;
             Some(LoaderRequest {
                 kind: component,
                 version: Some(chosen.version),
@@ -328,10 +320,32 @@ fn run_pack(
         },
     )?;
     check()?;
-    vl_install::mrpack::PackRecord::new(&pack, &report, source).save(&meta)?;
+    let mut notes = Vec::new();
+    let origin_source = match source.as_ref() {
+        Some(record) => work.platforms.source(record.provider),
+        None => work.platforms.source(Default::default()),
+    };
+    let mut known = std::collections::HashSet::new();
+    let mut known_paths = Vec::new();
+    if let Ok(origin_source) = origin_source {
+        let resolved =
+            vl_install::mrpack_origins::resolve(origin_source, &pack, &report, work.control)?;
+        if resolved.lookup_failed {
+            notes.push(
+                "could not look up the origin of the pack files; update checks skip them".into(),
+            );
+        }
+        for origin in &resolved.origins {
+            known_paths.push(format!("{}/{}", origin.kind.dir(), origin.file));
+        }
+        known.extend(known_paths.iter().map(String::as_str));
+        OriginStore::new(meta.join("resources.json")).save(&resolved.origins)?;
+    }
+    vl_install::mrpack::PackRecord::new(&pack, &report, source)
+        .with_known_origins(&known)
+        .save(&meta)?;
     // The instance is complete: keep it.
     undo.1 = true;
-    let mut notes = Vec::new();
     if !report.optional.is_empty() {
         notes.push(format!(
             "installed optional files of the pack: {}",
@@ -438,7 +452,18 @@ mod tests {
         Result<(InstanceSummary, Vec<String>)>,
         vl_instance::Instances,
     ) {
-        let client = Client::with_transport(NetConfig::new("0.0.0"), std::sync::Arc::new(Offline));
+        run_pack_with(root, pack_file, std::sync::Arc::new(Offline))
+    }
+
+    fn run_pack_with(
+        root: &std::path::Path,
+        pack_file: &std::path::Path,
+        transport: std::sync::Arc<dyn vl_net::HttpTransport>,
+    ) -> (
+        Result<(InstanceSummary, Vec<String>)>,
+        vl_instance::Instances,
+    ) {
+        let client = Client::with_transport(NetConfig::new("0.0.0"), transport);
         let instances = vl_instance::Instances::open(&root.join("instances")).unwrap();
         let loaders = vl_loaders::Loaders::new(
             client.clone(),
@@ -504,12 +529,61 @@ mod tests {
         assert_eq!(instances.list().unwrap().len(), 1, "{names:?}");
         assert_eq!(names.len(), 1, "{names:?}");
 
-        // A loader the launcher cannot install yet is a clear error and creates nothing.
-        pack(&file, r#""minecraft":"1.21.1","neoforge":"21.1.1""#, "");
+        // Forge is a clear error and creates nothing.
+        pack(&file, r#""minecraft":"1.21.1","forge":"52.0.0""#, "");
         let (result, instances) = run_pack_file(&root, &file);
         let err = result.unwrap_err();
         assert_eq!(err.kind, vl_core::ErrorKind::Unsupported);
-        assert!(err.message.contains("NeoForge"), "{err:?}");
+        assert_eq!(err.message, "Forge is not supported yet");
+        assert_eq!(instances.list().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Serves the NeoForge version list and nothing else.
+    struct Maven;
+
+    impl vl_net::HttpTransport for Maven {
+        fn get(
+            &self,
+            request: &vl_net::HttpRequest,
+        ) -> std::result::Result<vl_net::HttpResponse, vl_net::NetError> {
+            let xml = "<metadata><versioning><versions><version>21.1.2</version>                <version>21.1.7</version><version>21.4.1</version></versions></versioning></metadata>";
+            let found = request.url.ends_with("/neoforge/maven-metadata.xml");
+            Ok(vl_net::HttpResponse {
+                status: if found { 200 } else { 404 },
+                headers: Vec::new(),
+                body: Box::new(std::io::Cursor::new(if found {
+                    xml.as_bytes().to_vec()
+                } else {
+                    Vec::new()
+                })),
+            })
+        }
+    }
+
+    #[test]
+    fn a_neoforge_pack_creates_an_instance_on_that_loader() {
+        let root = std::env::temp_dir().join(format!("vl-backend-neo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("p.mrpack");
+
+        pack(&file, r#""minecraft":"1.21.1","neoforge":"21.1.7""#, "");
+        let (result, instances) = run_pack_with(&root, &file, std::sync::Arc::new(Maven));
+        let (summary, _) = result.unwrap();
+        assert!(
+            matches!(&summary.loader, Loader::NeoForge(v) if v == "21.1.7"),
+            "{:?}",
+            summary.loader
+        );
+        let dir = instances.dir(&summary.id).unwrap();
+        assert!(dir.join(".vibelauncher/resources.json").is_file());
+        assert!(dir.join(".vibelauncher/pack.json").is_file());
+
+        // A version the list does not have is refused and creates nothing.
+        pack(&file, r#""minecraft":"1.21.1","neoforge":"9.9.9""#, "");
+        let (result, instances) = run_pack_with(&root, &file, std::sync::Arc::new(Maven));
+        assert!(result.is_err());
         assert_eq!(instances.list().unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(root);
     }

@@ -19,7 +19,11 @@ use vl_net::{
 };
 use vl_platforms::CatalogSource;
 
+use vl_core::resources::ResourceKind;
+
 use crate::mrpack::{InstallInput, Pack, PackRecord, fetch, install};
+use crate::mrpack_origins::resolve;
+use crate::origin::OriginStore;
 
 struct Dir(PathBuf);
 
@@ -417,4 +421,155 @@ fn fetches_the_best_version_or_the_pinned_one() {
     };
     let err = fetch(&not_pack, &c, "pack", None, min, dir.path(), &ctl).unwrap_err();
     assert_eq!(err.kind, ErrorKind::Unsupported);
+}
+
+/// A catalog that knows files by hash and records each lookup.
+struct Known {
+    by_sha512: HashMap<String, ProjectVersion>,
+    by_sha1: HashMap<String, ProjectVersion>,
+    fail: bool,
+    calls: Mutex<Vec<(HashAlgorithm, usize)>>,
+}
+
+impl CatalogSource for Known {
+    fn provider(&self) -> Provider {
+        Provider::Modrinth
+    }
+    fn search(&self, _: &SearchQuery, _: &Control) -> Result<SearchPage> {
+        Ok(SearchPage::default())
+    }
+    fn project(&self, id: &str, _: &Control) -> Result<Project> {
+        Err(Error::not_found(id))
+    }
+    fn versions(&self, _: &str, _: &VersionFilter, _: &Control) -> Result<Vec<ProjectVersion>> {
+        Ok(Vec::new())
+    }
+    fn versions_by_hashes(
+        &self,
+        algorithm: HashAlgorithm,
+        hashes: &[String],
+        _: &Control,
+    ) -> Result<Vec<HashMatch>> {
+        self.calls.lock().unwrap().push((algorithm, hashes.len()));
+        if self.fail {
+            return Err(Error::new(ErrorKind::Network, "down"));
+        }
+        let table = match algorithm {
+            HashAlgorithm::Sha512 => &self.by_sha512,
+            _ => &self.by_sha1,
+        };
+        Ok(hashes
+            .iter()
+            .filter_map(|h| {
+                Some(HashMatch {
+                    hash: h.clone(),
+                    version: table.get(h)?.clone(),
+                })
+            })
+            .collect())
+    }
+}
+
+fn known_version(id: &str) -> ProjectVersion {
+    let mut v = pack_version(id, ReleaseChannel::Release, b"");
+    v.project_id = format!("proj-{id}");
+    v.files.clear();
+    v
+}
+
+#[test]
+fn pack_files_get_origin_records_by_hash() {
+    let (a, b, c, d) = (b"mod a", b"mod b", b"mod c", b"shader d");
+    let entries = [
+        entry("mods/a.jar", a, &[&format!("{CDN}a")], "required"),
+        entry("mods/b.jar", b, &[&format!("{CDN}b")], "required"),
+        entry("mods/c.jar", c, &[&format!("{CDN}c")], "required"),
+        entry("config/d.zip", d, &[&format!("{CDN}d")], "required"),
+    ];
+    let setup = Setup::new(&index(&entries), &[]);
+    let net = client(&[
+        (&format!("{CDN}a"), a),
+        (&format!("{CDN}b"), b),
+        (&format!("{CDN}c"), c),
+        (&format!("{CDN}d"), d),
+    ]);
+    let report = setup.run(&net, &Control::default()).unwrap();
+    let pack = Pack::open(&setup.pack).unwrap();
+
+    let mut source = Known {
+        by_sha512: HashMap::new(),
+        by_sha1: HashMap::new(),
+        fail: false,
+        calls: Mutex::new(Vec::new()),
+    };
+    // `a` is known by SHA-512, `b` only by SHA-1, `c` and the file outside a resource folder
+    // are not in the catalog (or not placed in one).
+    source
+        .by_sha512
+        .insert(hex(&Sha512::digest(a)), known_version("va"));
+    source
+        .by_sha1
+        .insert(hex(&Sha1::digest(b)), known_version("vb"));
+    source
+        .by_sha512
+        .insert(hex(&Sha512::digest(d)), known_version("vd"));
+    let found = resolve(&source, &pack, &report, &Control::default()).unwrap();
+    assert!(!found.lookup_failed);
+    let mut names: Vec<_> = found
+        .origins
+        .iter()
+        .map(|o| {
+            (
+                o.file.as_str(),
+                o.project_id.as_str(),
+                o.version_id.as_str(),
+            )
+        })
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [("a.jar", "proj-va", "va"), ("b.jar", "proj-vb", "vb")]
+    );
+    let mut unknown = found.unknown.clone();
+    unknown.sort_unstable();
+    assert_eq!(unknown, ["config/d.zip", "mods/c.jar"]);
+    assert_eq!(found.origins[0].sha1, hex(&Sha1::digest(a)));
+    assert_eq!(found.origins[0].kind, ResourceKind::Mods);
+    // One SHA-512 request for all files, then one SHA-1 request for the three left.
+    assert_eq!(
+        *source.calls.lock().unwrap(),
+        [(HashAlgorithm::Sha512, 4), (HashAlgorithm::Sha1, 2)]
+    );
+
+    // The records are the ones the catalog install writes: the store reads them back, and the
+    // pack record marks which files have one.
+    let store = OriginStore::new(setup.dir.path().join("resources.json"));
+    store.save(&found.origins).unwrap();
+    let loaded = store.load();
+    assert!(!loaded.damaged);
+    assert_eq!(loaded.origins.len(), 2);
+    let known: std::collections::HashSet<&str> = ["mods/a.jar", "mods/b.jar"].into();
+    let record = PackRecord::new(&pack, &report, None).with_known_origins(&known);
+    let flags: Vec<_> = record
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.origin_known))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            ("mods/a.jar", true),
+            ("mods/b.jar", true),
+            ("mods/c.jar", false),
+            ("config/d.zip", false)
+        ]
+    );
+
+    // A failing lookup leaves the pack installed with every file unknown.
+    source.fail = true;
+    let failed = resolve(&source, &pack, &report, &Control::default()).unwrap();
+    assert!(failed.lookup_failed);
+    assert!(failed.origins.is_empty());
+    assert_eq!(failed.unknown.len(), 4);
 }

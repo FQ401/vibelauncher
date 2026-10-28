@@ -18,6 +18,7 @@
 mod apply;
 mod hashing;
 pub mod mrpack;
+pub mod mrpack_origins;
 pub mod origin;
 mod plan;
 mod scan;

@@ -348,6 +348,10 @@ pub struct PackFileRecord {
     pub size: u64,
     /// The pack marks it optional on the client.
     pub optional: bool,
+    /// The catalog file it was found by hash and has a record in `resources.json`; false
+    /// means "from the pack, origin unknown".
+    #[serde(default)]
+    pub origin_known: bool,
 }
 
 /// What `pack.json` keeps of the installed pack, for updates.
@@ -400,9 +404,19 @@ impl PackRecord {
                     sha512: f.sha512.clone(),
                     size: f.size,
                     optional: f.client == Support::Optional,
+                    origin_known: false,
                 })
                 .collect(),
         }
+    }
+
+    /// Marks the files whose origin was found (paths as in the pack index).
+    #[must_use]
+    pub fn with_known_origins(mut self, known: &std::collections::HashSet<&str>) -> Self {
+        for file in &mut self.files {
+            file.origin_known = known.contains(file.path.as_str());
+        }
+        self
     }
 
     /// Writes the record atomically to `<meta_dir>/pack.json`.
