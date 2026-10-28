@@ -309,8 +309,8 @@ pub(crate) mod tests {
 
     #[test]
     fn reads_the_shown_fields() {
-        let level = parse_level(&level_nbt("Мир 1", "1.21.4", 1_700_000_000_000));
-        assert_eq!(level.name.as_deref(), Some("Мир 1"));
+        let level = parse_level(&level_nbt("\u{41c}\u{438}\u{440} 1", "1.21.4", 1_700_000_000_000));
+        assert_eq!(level.name.as_deref(), Some("\u{41c}\u{438}\u{440} 1"));
         assert_eq!(level.version.as_deref(), Some("1.21.4"));
         assert_eq!(level.last_played, Some(1_700_000_000));
     }
@@ -332,7 +332,7 @@ pub(crate) mod tests {
         ] {
             assert!(check_world_name(bad).is_err(), "{bad:?}");
         }
-        for good in ["Test World", "Мир 1", "世界", "a.b", "new world (2)"] {
+        for good in ["Test World", "\u{41c}\u{438}\u{440} 1", "\u{4e16}\u{754c}", "a.b", "new world (2)"] {
             assert!(check_world_name(good).is_ok(), "{good:?}");
         }
     }

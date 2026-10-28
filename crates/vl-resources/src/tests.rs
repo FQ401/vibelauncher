@@ -327,14 +327,14 @@ fn lists_worlds_with_version_and_time_and_skips_folders_that_are_not_worlds() {
     let game = t.0.join("minecraft");
     let nbt = crate::worlds::tests::level_nbt("Shown", "1.21.4", 1_700_000_000_000);
     make_world(&game, "Test World", &gzip(&nbt));
-    make_world(&game, "Мир", b"stub");
+    make_world(&game, "\u{41c}\u{438}\u{440}", b"stub");
     write(&game.join("saves/not a world/readme.txt"), b"x");
-    write(&game.join("saves/Мир/datapacks/a.zip"), b"x");
+    write(&game.join("saves/\u{41c}\u{438}\u{440}/datapacks/a.zip"), b"x");
     let r = fixture(&t);
 
     let worlds = r.worlds().unwrap();
     let names: Vec<_> = worlds.iter().map(|w| w.name.as_str()).collect();
-    assert_eq!(names, ["Test World", "Мир"]);
+    assert_eq!(names, ["Test World", "\u{41c}\u{438}\u{440}"]);
     assert_eq!(worlds[0].display_name.as_deref(), Some("Shown"));
     assert_eq!(worlds[0].version.as_deref(), Some("1.21.4"));
     assert_eq!(worlds[0].last_played, Some(1_700_000_000));
@@ -380,9 +380,9 @@ fn a_world_name_cannot_leave_saves_or_name_a_missing_world() {
 fn manages_data_packs_of_a_world_and_trashes_removed_ones() {
     let t = Temp::new("world-packs");
     let game = t.0.join("minecraft");
-    make_world(&game, "Мир с пробелом", b"stub");
+    make_world(&game, "\u{41c}\u{438}\u{440} \u{441} \u{43f}\u{440}\u{43e}\u{431}\u{435}\u{43b}\u{43e}\u{43c}", b"stub");
     let other = Resources::new(game.clone(), t.0.join(".trash"));
-    let world = other.world("Мир с пробелом").unwrap();
+    let world = other.world("\u{41c}\u{438}\u{440} \u{441} \u{43f}\u{440}\u{43e}\u{431}\u{435}\u{43b}\u{43e}\u{43c}").unwrap();
     let pack = zip_bytes(&[(
         "pack.mcmeta",
         br#"{"pack":{"pack_format":48,"description":"Hi"}}"#,
@@ -395,7 +395,7 @@ fn manages_data_packs_of_a_world_and_trashes_removed_ones() {
         "caves.zip"
     );
     assert!(
-        game.join("saves/Мир с пробелом/datapacks/caves.zip")
+        game.join("saves/\u{41c}\u{438}\u{440} \u{441} \u{43f}\u{440}\u{43e}\u{431}\u{435}\u{43b}\u{43e}\u{43c}/datapacks/caves.zip")
             .is_file()
     );
     assert!(!game.join("datapacks").exists());

@@ -94,7 +94,7 @@ fn installs_into_the_chosen_world_only() {
         .typed("Caves", ProjectType::DataPack)
         .version(pack_ver("c1", "Caves", "1", 48));
     let w = World::new(catalog);
-    let first = open_world(&w, "Мир с пробелом");
+    let first = open_world(&w, "\u{41c}\u{438}\u{440} \u{441} \u{43f}\u{440}\u{43e}\u{431}\u{435}\u{43b}\u{43e}\u{43c}");
     let second = open_world(&w, "Other");
 
     let p = plan_in(&w, &first, "caves").unwrap();
@@ -107,7 +107,7 @@ fn installs_into_the_chosen_world_only() {
     assert!(
         w.dir
             .path()
-            .join("game/saves/Мир с пробелом/datapacks/caves-1.zip")
+            .join("game/saves/\u{41c}\u{438}\u{440} \u{441} \u{43f}\u{440}\u{43e}\u{431}\u{435}\u{43b}\u{43e}\u{43c}/datapacks/caves-1.zip")
             .is_file()
     );
     assert!(!w.resources.dir(ResourceKind::DataPacks).exists());
