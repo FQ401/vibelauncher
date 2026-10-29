@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The per-user Windows Installer package, built by `cargo xtask package msi` with WiX 7.
+
+  Installs into %LOCALAPPDATA%\Programs\VibeLauncher without elevation, adds a Start menu
+  shortcut carrying the app's AppUserModelID and an entry in Apps & Features. Each component's
+  key path is a value below HKCU\Software\VibeLauncher\Installer, as files in the user profile
+  need; the components holding a file keep a fixed GUID (a file's component GUID never changes).
+  The user's data (%APPDATA%\VibeLauncher) is not part of the package.
+
+  Variables (`-d`): Version (X.Y.Z), UpgradeCode, Files (the folder with the executables, the
+  install marker and LICENSE.txt), Icon (the .ico file).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- The upgrade code is fixed forever: every release upgrades the installed one. -->
+  <Package
+    Name="VibeLauncher"
+    Manufacturer="VibeLauncher contributors"
+    Version="$(var.Version)"
+    UpgradeCode="$(var.UpgradeCode)"
+    Scope="perUser"
+    Language="1033">
+    <!-- The same version replaces the installed one too: a pre-release and its release share X.Y.Z. -->
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="vibelauncher.ico" SourceFile="$(var.Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="vibelauncher.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/FQ401/vibelauncher" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/FQ401/vibelauncher/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/FQ401/vibelauncher/releases" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="UserProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="VibeLauncher" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="VibeLauncher" AllowAbsent="no">
+      <ComponentGroupRef Id="Files" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="Files" Directory="INSTALLFOLDER">
+      <Component Id="VibeLauncherExe" Guid="7D9159C6-3C31-4FED-B6FC-C3FD4FC9CEF4">
+        <File Id="VibeLauncherExe" Source="$(var.Files)\vibelauncher.exe" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\VibeLauncher\Installer" Name="vibelauncher.exe"
+          Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+        <!-- Removed only when empty: other applications install there too. -->
+        <RemoveFolder Id="RemoveUserProgramsFolder" Directory="UserProgramsFolder" On="uninstall" />
+        <RemoveRegistryKey Root="HKCU" Key="Software\VibeLauncher\Installer"
+          Action="removeOnUninstall" />
+      </Component>
+      <Component Id="VlCliExe" Guid="B5DA223D-5BEF-4A85-A54C-8527E1075F1C">
+        <File Id="VlCliExe" Source="$(var.Files)\vl-cli.exe" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\VibeLauncher\Installer" Name="vl-cli.exe"
+          Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <!-- The install marker (`msi`): the self-update installs the next release's package. -->
+      <Component Id="InstallMarker" Guid="4B2BA19D-5F48-4691-8981-2C704E19F721">
+        <File Id="InstallMarker" Source="$(var.Files)\vibelauncher.install" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\VibeLauncher\Installer" Name="vibelauncher.install"
+          Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="License" Guid="9F7D77A0-F5BA-4097-80AD-7AFD9359FB4B">
+        <File Id="License" Source="$(var.Files)\LICENSE.txt" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\VibeLauncher\Installer" Name="LICENSE.txt"
+          Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- The Start menu shortcut with the AppUserModelID the app sets for itself
+         (`APP_USER_MODEL_ID` in apps/vibelauncher), so its notifications and taskbar button
+         belong to the shortcut. -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="StartMenuShortcut" Name="VibeLauncher" Description="Minecraft launcher"
+          Target="[INSTALLFOLDER]vibelauncher.exe" WorkingDirectory="INSTALLFOLDER"
+          Icon="vibelauncher.ico">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="VibeLauncher.VibeLauncher" />
+        </Shortcut>
+        <RegistryValue Root="HKCU" Key="Software\VibeLauncher\Installer" Name="shortcut"
+          Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+  </Fragment>
+</Wix>

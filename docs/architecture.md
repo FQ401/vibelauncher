@@ -781,7 +781,7 @@ The launcher trusts its own signed manifest, not the operating system's code sig
 
   | Install method | Artifact | Replacement | Started afterwards |
   |---|---|---|---|
-  | MSI | `msi` | run the new package (not implemented yet) | the executable |
+  | MSI | `msi` | run the new package (Windows only) | the executable |
   | portable | `portable` (zip; tar.gz on Linux) | unpack over the folder | the executable |
   | macOS app | `dmg` | copy the bundle from the disk image | the bundle |
   | AppImage | `app_image` | rename the new file over the old one | the AppImage |
@@ -809,7 +809,13 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   and the image is detached (forced when busy). Then the installed bundle is renamed to
   `.<bundle name>.vl-update-old`, the copy renamed into its place and the old bundle removed; a
   failure puts the old bundle back. An image without exactly one bundle, or with a bundle whose
-  signature does not verify, changes nothing. Outside macOS a disk image is not installed.
+  signature does not verify, changes nothing. Outside macOS a disk image is not installed. A
+  Windows Installer package is installed by `%SystemRoot%\System32\msiexec.exe /i <package>
+  /passive /norestart /l* <package>.log` (a progress bar only, never a restart of Windows),
+  waited for: the release package is per-user, so it needs no elevation, and its major upgrade
+  replaces the installed version in the same folder. Exit codes 0, 3010 and 1641 (a restart
+  requested) count as success; any other code fails the update with the log's path. Outside
+  Windows a package is not installed.
 - **After the update.** `<data>/updates/just-updated.json` records the old and the new version;
   the next start reads and removes it, and reports it only when the running version is the new
   one. A failed replacement is undone and recorded in `<data>/updates/last-error.json` (version,
@@ -906,11 +912,43 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   `com.apple.quarantine` attribute); the README describes this for users. The same image is the
   `dmg` artifact of the self-update for both architectures; the launcher is detected as a
   `.app` install (`mac_app`).
+- **Windows installer.** `cargo xtask package msi [--target <triple>]` (on Windows) builds both
+  executables in release mode for a Windows MSVC target and writes
+  `target/dist/vibelauncher-<version>-windows-<arch>.msi` with a `.sha256` file next to it, from
+  `packaging/windows/vibelauncher.wxs` with WiX 7. WiX is the .NET tool pinned in
+  `.config/dotnet-tools.json` (7.0.1; `dotnet tool restore`, then `dotnet tool run wix`), or the
+  executable named by `WIX`. Its binary release comes with the Open Source Maintenance Fee EULA,
+  which the project owner accepted: the build passes `-acceptEula wix7`. The package is then
+  checked with `wix msi validate` (the ICE checks, without ICE61 and ICE91, see below). It is
+  per-user (`Scope="perUser"`, no elevation, no UAC prompt) and installs:
+
+  | Path | Content |
+  |---|---|
+  | `%LOCALAPPDATA%\Programs\VibeLauncheribelauncher.exe`, `vl-cli.exe` | the executables |
+  | `%LOCALAPPDATA%\Programs\VibeLauncheribelauncher.install` | the install marker `msi` |
+  | `%LOCALAPPDATA%\Programs\VibeLauncher\LICENSE.txt` | the license |
+  | Start menu `VibeLauncher.lnk` | the shortcut, with the AppUserModelID `VibeLauncher.VibeLauncher` |
+  | `HKCU\Software\VibeLauncher\Installer` | the components' key paths, as files in the user profile need |
+
+  The upgrade code (`UPGRADE_CODE` in `xtask/src/msi.rs`) never changes and every build gets a
+  new product code, so each package is a major upgrade of the installed one; a package of the
+  same version replaces it too (a pre-release and its release share the version, ICE61), an
+  older one is refused. The product version is the numeric `X.Y.Z` of the version (a
+  pre-release suffix dropped; at most 255.255.65535). The entry in Apps & Features carries the
+  icon, the repository, issue and release links and the install folder, without a Modify
+  button. The user's data folder is not part of the package and stays on uninstall. The package
+  has no dialogs of its own: double-clicked, it shows the progress of the installation. The
+  same package is the `msi` artifact of the self-update.
 - **CI.** The `package` workflow builds and smoke-tests the portable archive on Windows (the data
   folder appears next to the executables, nothing under `%APPDATA%`, the version resource is
-  present) and the Linux packages on Ubuntu 22.04 for x86_64 and aarch64 (glibc 2.35), with
-  appimagetool 1.9.1, the type 2 runtime 20251108 and nfpm 2.48.0 pinned by SHA-256. The Linux
-  smoke tests run `vibelauncher --version` and check the install method `vl-cli update status`
+  present) and the Windows installer: installed for the runner's user with `msiexec /i … /qn`,
+  the files, the install marker, the Start menu shortcut and the AppUserModelID in the package
+  are checked, `vibelauncher --version` and `vl-cli update status` (`msi`) run; a second build
+  of the package (a new product code) is installed over it through the self-update's path
+  (`vl-updater`'s `VL_TEST_MSI` test, `msiexec /passive`), which leaves one installed product;
+  the uninstallation removes the folder, the shortcut and the registry key. It also builds the
+  Linux packages on Ubuntu 22.04 for x86_64 and aarch64 (glibc 2.35), with appimagetool 1.9.1,
+  the type 2 runtime 20251108 and nfpm 2.48.0 pinned by SHA-256. The Linux smoke tests run `vibelauncher --version` and check the install method `vl-cli update status`
   reports for each package: the unpacked tar.gz (portable, `data/` appears), the AppImage (with
   `--appimage-extract-and-run`, its update information and `.zsync` file), the deb installed and
   purged on Ubuntu and the rpm installed and removed on Fedora (nothing of the package left). It
@@ -951,14 +989,13 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   | File | Manifest artifact |
   |---|---|
   | `vibelauncher-<version>-windows-x64-portable.zip` | `windows` `x86_64` `portable` |
-  | `vibelauncher-<version>-windows-x64.msi` (not built yet) | `windows` `x86_64` `msi` |
+  | `vibelauncher-<version>-windows-x64.msi` | `windows` `x86_64` `msi` |
   | `vibelauncher-<version>-macos-universal.dmg` | `mac_os` `x86_64` and `aarch64` `dmg` |
   | `vibelauncher-<version>-linux-<arch>.tar.gz` | `linux` `<arch>` `portable` |
   | `vibelauncher-<version>-linux-<arch>.AppImage` | `linux` `<arch>` `app_image` |
   | `vibelauncher-<version>-linux-<arch>.AppImage.zsync` | — |
   | `vibelauncher-<version>-linux-<arch>.deb`, `.rpm` | `linux` `<arch>` `deb`, `rpm` |
   | `SHA256SUMS.txt`, `latest.json`, `latest.json.minisig` | — |
-- **Not yet.** The per-user MSI installer.
 
 ## Front ends
 

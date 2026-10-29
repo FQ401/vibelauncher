@@ -360,10 +360,17 @@ fn prepare_refuses_what_it_cannot_install() {
         prepare_for(InstallMethod::Deb).unwrap_err(),
         UpdaterError::NothingToReplace
     );
-    assert!(matches!(
-        prepare_for(InstallMethod::Msi).unwrap_err(),
-        UpdaterError::NotImplemented(_)
-    ));
+    let msi = prepare_for(InstallMethod::Msi);
+    if cfg!(windows) {
+        assert_eq!(
+            msi.unwrap().plan.replacement,
+            vl_update::Replacement::RunInstaller {
+                package: install.staged.file.clone()
+            }
+        );
+    } else {
+        assert!(matches!(msi.unwrap_err(), UpdaterError::NotImplemented(_)));
+    }
     let mac_app = prepare_for(InstallMethod::MacApp {
         bundle: "/Applications/VibeLauncher.app".into(),
     });

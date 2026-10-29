@@ -4,6 +4,8 @@
 //! - `version` — prints the launcher version (`[workspace.package] version`, the only place it lives);
 //! - `version set X.Y.Z[-pre]` — sets it;
 //! - `package portable [--target <triple>]` — the portable Windows archive in `target/dist`;
+//! - `package msi [--target <triple>]` — the per-user Windows Installer package in `target/dist`
+//!   (on Windows, WiX 7);
 //! - `package tar|appimage|deb|rpm|linux [--target <triple>]` — the Linux packages in `target/dist`
 //!   (`linux`: all four);
 //! - `package macos` — the universal macOS disk image in `target/dist` (on macOS);
@@ -16,6 +18,7 @@
 mod layers;
 mod linux;
 mod macos;
+mod msi;
 mod package;
 mod release;
 mod sources;
@@ -24,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage: cargo xtask ci [lint|test] | cargo xtask version [set X.Y.Z[-pre]] \
-                     | cargo xtask package portable|tar|appimage|deb|rpm|linux [--target <triple>] \
+                     | cargo xtask package portable|msi|tar|appimage|deb|rpm|linux [--target <triple>] \
                      | cargo xtask package macos | cargo xtask sources \
                      | cargo xtask release manifest <dir> --repo <owner/name> --date <YYYY-MM-DD> \
                      [--minimum-version <X.Y.Z>] | cargo xtask release sign <dir>";
@@ -55,6 +58,7 @@ fn main() -> ExitCode {
             };
             match (*kind, linux::formats(kind)) {
                 ("portable", _) => package::portable(target).map(|_| ()),
+                ("msi", _) => msi::package(target),
                 (_, Some(formats)) => linux::package(&formats, target),
                 (_, None) => return usage(),
             }

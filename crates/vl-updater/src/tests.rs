@@ -666,7 +666,7 @@ fn appimage_is_renamed_over_the_old_one() {
 }
 
 #[test]
-fn msi_is_planned_but_not_implemented_and_disk_images_only_on_macos() {
+fn msi_packages_only_on_windows_and_disk_images_only_on_macos() {
     let dir = Dir::new();
     let file = dir.path().join("f");
     fs::write(&file, b"pkg").unwrap();
@@ -679,11 +679,14 @@ fn msi_is_planned_but_not_implemented_and_disk_images_only_on_macos() {
     };
     let exe = dir.path().join("vibelauncher.exe");
     let version = v("2.0.0");
-    let msi = plan(&InstallMethod::Msi, &exe, &version, &artifact, &file);
-    assert!(matches!(
-        apply(&msi, &|| false),
-        Err(UpdaterError::NotImplemented(_))
-    ));
+    // On Windows the package would run (the `msi` module tests that with a stand-in).
+    if !cfg!(windows) {
+        let msi = plan(&InstallMethod::Msi, &exe, &version, &artifact, &file);
+        assert!(matches!(
+            apply(&msi, &|| false),
+            Err(UpdaterError::NotImplemented(_))
+        ));
+    }
     let app = InstallMethod::MacApp {
         bundle: dir.path().join("VibeLauncher.app"),
     };

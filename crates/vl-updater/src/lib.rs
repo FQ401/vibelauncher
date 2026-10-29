@@ -12,9 +12,9 @@
 //!   from a [`vl_net::Control`].
 //! - [`apply`]: carries out a [`vl_update::UpdatePlan`] — never while a game runs
 //!   ([`GameGuard`]), and only after the file's size and SHA-256 are checked again. Portable
-//!   folders ([`replace_portable`]), AppImages ([`replace_appimage`]) and, on macOS, application
-//!   bundles from a disk image ([`replace_app_bundle`]) are replaced; the MSI replacement
-//!   answers [`UpdaterError::NotImplemented`].
+//!   folders ([`replace_portable`]), AppImages ([`replace_appimage`]), on macOS application
+//!   bundles from a disk image ([`replace_app_bundle`]) are replaced, and on Windows the new
+//!   Windows Installer package runs ([`install_msi`]: `msiexec /i … /passive /norestart`).
 //! - [`UpdateDir::mark_updated`] / [`UpdateDir::take_just_updated`]: the "just updated" marker
 //!   for the first start of the new version; [`UpdateDir::record_staged`] for the download
 //!   waiting to be installed and [`UpdateDir::record_failure`] for a failed installation.
@@ -27,6 +27,7 @@ mod detect;
 mod dmg;
 mod error;
 pub mod helper;
+mod msi;
 mod store;
 
 pub use apply::{
@@ -37,6 +38,7 @@ pub use check::{SIGNATURE_SUFFIX, Updater, file_name};
 pub use detect::{current_exe, current_install, inputs_for};
 pub use dmg::{BUNDLE_NEW_SUFFIX, BUNDLE_OLD_SUFFIX, clean_app_bundle, replace_app_bundle};
 pub use error::UpdaterError;
+pub use msi::{exit_result, install_msi, log_path, msiexec_args};
 pub use store::{JustUpdated, StagedUpdate, UpdateDir, UpdateFailure};
 
 #[cfg(test)]
