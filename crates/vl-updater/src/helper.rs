@@ -143,12 +143,14 @@ pub fn prepare(
         Replacement::RunInstaller { .. } => {
             return Err(UpdaterError::NotImplemented("installing an MSI update"));
         }
-        Replacement::CopyFromDmg { .. } => {
+        Replacement::CopyFromDmg { .. } if !cfg!(target_os = "macos") => {
             return Err(UpdaterError::NotImplemented(
-                "installing a macOS update from a disk image",
+                "installing a disk image outside macOS",
             ));
         }
-        Replacement::Unpack { .. } | Replacement::RenameOver { .. } => {}
+        Replacement::Unpack { .. }
+        | Replacement::RenameOver { .. }
+        | Replacement::CopyFromDmg { .. } => {}
     }
     verify_file(&plan.file, plan.size, &plan.sha256)?;
     Ok(HelperJob {

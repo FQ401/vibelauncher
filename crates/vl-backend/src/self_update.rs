@@ -60,8 +60,8 @@ struct Inner {
 
 impl Service {
     /// Opens the update folder of `store` and reads what the last update left: the "just
-    /// updated" marker, the failure record, the helper folder and, for a portable install, the
-    /// replaced files.
+    /// updated" marker, the failure record, the helper folder and, for a portable install or an
+    /// application bundle, the replaced files.
     pub(crate) fn new(store: &Store) -> Result<Self> {
         let current = Version::parse(LAUNCHER_VERSION)
             .ok_or_else(|| Error::internal(format!("bad launcher version {LAUNCHER_VERSION}")))?;
@@ -77,8 +77,10 @@ impl Service {
         );
         let inner = &service.inner;
         let _ = std::fs::remove_dir_all(inner.dir.helper_dir());
-        if let InstallMethod::Portable { dir } = &inner.install {
-            vl_updater::clean_portable(dir);
+        match &inner.install {
+            InstallMethod::Portable { dir } => vl_updater::clean_portable(dir),
+            InstallMethod::MacApp { bundle } => vl_updater::clean_app_bundle(bundle),
+            _ => {}
         }
         Ok(service)
     }

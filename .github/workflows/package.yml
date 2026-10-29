@@ -17,6 +17,7 @@ on:
       - "xtask/src/package.rs"
       - "xtask/src/linux.rs"
       - "xtask/src/macos.rs"
+      - "crates/vl-updater/src/dmg.rs"
   workflow_dispatch:
 
 permissions:
@@ -203,6 +204,9 @@ jobs:
         run: cargo xtask package macos
       - name: Check the checksum file
         run: cd target/dist && shasum -a 256 -c vibelauncher-*.dmg.sha256
+      - name: Self-update from a disk image (vl-updater tests, the new image included)
+        run: |
+          VL_TEST_DMG="$PWD/$(echo target/dist/vibelauncher-*-macos-universal.dmg)"             cargo test -p vl-updater --locked dmg -- --test-threads=1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vibelauncher-macos-universal

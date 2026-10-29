@@ -741,7 +741,7 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   |---|---|---|---|
   | MSI | `msi` | run the new package (not implemented yet) | the executable |
   | portable | `portable` (zip) | unpack over the folder | the executable |
-  | macOS app | `dmg` | copy the bundle from the disk image (not implemented yet) | the bundle |
+  | macOS app | `dmg` | copy the bundle from the disk image | the bundle |
   | AppImage | `app_image` | rename the new file over the old one | the AppImage |
   | deb, rpm, unknown | — | none: the release page is shown | — |
 
@@ -755,12 +755,20 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   a portable marker file at its top level is skipped, so the folder keeps its own or none); then each of its top-level items moves the old item into
   `<folder>/.vl-update-old/` and takes its place, and a failure moves everything back. Items
   the archive does not have, such as the user's `data` folder, are not touched. An AppImage is
-  copied next to the old one, made executable and renamed over it.
+  copied next to the old one, made executable and renamed over it. A disk image is attached
+  read-only and hidden (`hdiutil attach -nobrowse -noautoopen`) at `mount` next to it; its one
+  top-level `.app` folder is copied to `.<bundle name>.vl-update-new` next to the installed
+  bundle (`ditto --noqtn`), whose signature must verify (`codesign --verify --deep --strict`),
+  and the image is detached (forced when busy). Then the installed bundle is renamed to
+  `.<bundle name>.vl-update-old`, the copy renamed into its place and the old bundle removed; a
+  failure puts the old bundle back. An image without exactly one bundle, or with a bundle whose
+  signature does not verify, changes nothing. Outside macOS a disk image is not installed.
 - **After the update.** `<data>/updates/just-updated.json` records the old and the new version;
   the next start reads and removes it, and reports it only when the running version is the new
   one. A failed replacement is undone and recorded in `<data>/updates/last-error.json` (version,
   message, time), which the next start reads and removes. The start also removes the helper
-  folder and, for a portable install, `.vl-update-old`.
+  folder and, for a portable install, `.vl-update-old`, for an application bundle the
+  `.vl-update-new` and `.vl-update-old` folders next to it.
 - **Update helper.** The replacement runs in a second process, a mode of the launcher binary:
   `<exe> --vl-update-helper <job file>` (`vl_backend::run_helper_if_requested`, called
   first in `main`). The launcher writes the job (`<data>/updates/helper/job.json`: its process
@@ -865,6 +873,8 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   architectures with macOS 11 as their minimum, the ad hoc signature verifies strictly; the
   bundle copied into an Applications folder prints its version, `vl-cli update status` reports
   `mac_app`, and a copy of the executable outside the bundle (as the update helper runs) starts.
+  The build job also runs the disk image tests of `vl-updater` (real images made with
+  `hdiutil`) and installs the new image over a bundle with the self-update's replacement.
   It runs on the `release` branches, `v*` tags and by hand, and on a pull
   request only when the packaging files change.
 - **Not yet.** The per-user MSI installer.
