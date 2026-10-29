@@ -722,8 +722,17 @@ CurseForge API key) — live in the OS keyring, never in the data directory, log
 messages. The launcher ships with no third-party API keys.
 
 The keyring is the Windows Credential Manager, the macOS Keychain, or the Secret Service over
-D-Bus on Linux (a pure-Rust client: no GTK, libsecret or libdbus). Each account has one entry under
-the service name `VibeLauncher`; the user's CurseForge key is the entry `api-key:curseforge`. The
+D-Bus on Linux (a pure-Rust client: no GTK, libsecret or libdbus). Entries are filed under the
+service name `VibeLauncher`. An account's tokens are one JSON record, longer than the 2560 bytes
+(1280 UTF-16 characters) a Windows credential holds, so on every platform the record is split
+(`ChunkedVault`): the entry `account:<id>` holds a header (format version 2, number of parts,
+length, SHA-256) and `account:<id>#0`, `#1`, ... hold parts of at most 1000 bytes. Parts are
+written before the header and parts left over from a longer record are deleted after it; removing
+an account deletes the header first, then every part. A set that is incomplete or does not match
+its header reads as missing, and the user signs in again; a record stored whole by an older
+version is still read. Calls into the OS store are serialized within the process (the Credential
+Manager was seen to lose concurrent deletes). The user's CurseForge key is the entry
+`api-key:curseforge`. The
 `VL_CURSEFORGE_API_KEY` environment variable, when set, is used instead (for development). A key
 is sent only in the `x-api-key` header of CurseForge requests; request `Debug` output in `vl-net`
 names headers without their values. Without a usable keyring, tokens are kept in memory only until the
