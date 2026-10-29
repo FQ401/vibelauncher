@@ -4,8 +4,8 @@
 //! Nothing is drawn and no graphics context exists. The thread sleeps on the event stream:
 //! it wakes for an event (game output arrives as at most ten batches a second) or every
 //! [`TICK`] to look at the tray. On macOS it sleeps on the main thread's AppKit events instead
-//! (the status item lives there) and looks at the launcher's events at least ten times a second. On Windows the working set is trimmed once the graphics driver
-//! has been unloaded ([`TRIM_AFTER`]), as Windows does for a minimized window: the pages the
+//! (the status item lives there), at most [`TICK`], and then takes the launcher's events. On
+//! Windows the working set is trimmed once the graphics driver has been unloaded ([`TRIM_AFTER`]), as Windows does for a minimized window: the pages the
 //! window used leave memory, what watching needs comes back on use.
 
 use std::time::{Duration, Instant};
@@ -14,12 +14,8 @@ use vl_ui_egui::{Launcher, WindowRequest};
 
 use crate::tray::{self, Tray, TrayAction};
 
-/// The longest sleep between two looks at the tray.
+/// The longest sleep between two looks at the tray (macOS: at the launcher's events).
 const TICK: Duration = Duration::from_millis(250);
-
-/// macOS: the longest wait for AppKit events, so the launcher's events wait no longer.
-#[cfg(target_os = "macos")]
-const APP_EVENTS_TICK: Duration = Duration::from_millis(100);
 
 /// When the working set is trimmed after the window closed: the Direct3D driver releases its
 /// memory a few seconds after its device is gone.
@@ -80,12 +76,13 @@ fn wait(launcher: &mut Launcher) {
 }
 
 /// macOS: the status item's clicks are AppKit events of the main thread, so the thread waits for
-/// those (up to [`APP_EVENTS_TICK`]) and takes the launcher's events in between.
+/// those (up to [`TICK`]) and then takes the launcher's events.
 #[cfg(target_os = "macos")]
 fn wait(launcher: &mut Launcher) {
-    launcher.watch(Duration::ZERO);
-    if !tray::dispatch_app_events(APP_EVENTS_TICK) {
-        launcher.watch(APP_EVENTS_TICK);
+    if tray::dispatch_app_events(TICK) {
+        launcher.watch(Duration::ZERO);
+    } else {
+        launcher.watch(TICK);
     }
 }
 

@@ -952,7 +952,7 @@ the game. On Windows the icon lives on its own thread with a hidden `winsafe` wi
 message loop; on Linux and the BSDs it is a D-Bus StatusNotifierItem (`ksni`, no GTK); on both a
 left click shows the launcher. On macOS it is a status item in the menu bar whose menu opens on a
 click: it lives on the main thread, and between windows the watcher hands that thread's AppKit
-events to the shared `NSApplication` (waiting on them at most 100 ms, then folding in the
+events to the shared `NSApplication` (waiting on them at most 250 ms, then folding in the
 launcher's events); while it is shown the app has no Dock icon (the `Accessory` activation
 policy), and the Dock icon comes back, with the app in front, for the next window. These calls
 use the safe `objc2` bindings, so the workspace stays without `unsafe`. Without a tray (no
