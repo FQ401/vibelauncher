@@ -24,6 +24,9 @@ instances-empty = No instances yet
 tasks-empty = No active tasks
 mock-data = Test data
 backend-lost = Core is not responding
+last-error = Something went wrong
+dismiss-hint = Click to dismiss
+startup-failed = The launcher could not start
 theme-to-dark = Dark theme
 theme-to-light = Light theme
 

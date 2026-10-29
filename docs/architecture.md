@@ -846,8 +846,14 @@ drains its event stream into view state and draws; user actions become commands.
 chooses the backend: `vl-backend` normally, `vl-mock` for interface work.
 
 The `vibelauncher` app (`apps/vibelauncher`, package `vl-app`) is an eframe window with the wgpu renderer around
-`vl_ui_egui::Launcher`; it runs on `vl-mock` for now (`--light` starts the light theme, `--section
-<name>` opens a section). `vl-ui-egui` depends on `egui` only, not on a windowing crate. Its
+`vl_ui_egui::Launcher`. It starts `vl-backend` on the data folder chosen as for `vl-cli` (`--dir`,
+`VIBELAUNCHER_DIR`, the portable marker, the pointer file, the OS convention); `--mock` selects
+`vl-mock`. The first thing `main` does is the self-update helper check
+(`vl_backend::run_helper_if_requested`). Starting makes no network requests. When the backend
+cannot start (the data folder is locked by another launcher or cannot be created), the window
+shows `vl_ui_egui::StartupFailure` with the reason instead of the interface. A failed command or
+task appears as a danger chip in the top bar; its tooltip holds the error and a click dismisses
+it. `--light` starts the light theme, `--section <name>` opens a section. `vl-ui-egui` depends on `egui` only, not on a windowing crate. Its
 layout: a left rail of five sections (Home, Instances, Catalog, Account, Settings), a top bar, a
 tasks panel (Ctrl+J) and the page of the current section; colors, spacing and type scale come from
 the design tokens in `theme.rs`.

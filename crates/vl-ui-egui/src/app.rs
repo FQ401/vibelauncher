@@ -6,8 +6,8 @@ use egui::{
     Align, Align2, CentralPanel, Context, CornerRadius, Frame, Key, Layout, Margin, Modifiers,
     Panel, RichText, Sense, Ui, vec2,
 };
-use vl_core::Facade;
 use vl_core::instance::InstanceState;
+use vl_core::{BackendInfo, Facade};
 
 use crate::i18n::I18n;
 use crate::icons;
@@ -59,6 +59,17 @@ impl Launcher {
     pub fn set_theme(&mut self, ctx: &Context, theme: ThemeMode) {
         self.theme = theme;
         theme::apply(ctx, theme);
+    }
+
+    /// What answered the hello: the backend's name and version, and whether it is the mock.
+    /// `None` until the reply arrives, or when the facade does not answer.
+    pub fn backend(&self) -> Option<&BackendInfo> {
+        self.model.backend.as_ref()
+    }
+
+    /// The latest failed command or task, in English technical form.
+    pub fn last_error(&self) -> Option<&str> {
+        self.model.last_error.as_deref()
     }
 
     /// Draws one frame.
@@ -230,8 +241,9 @@ impl Launcher {
         }
     }
 
-    fn top_bar(&self, ui: &mut Ui, p: &Palette) {
+    fn top_bar(&mut self, ui: &mut Ui, p: &Palette) {
         let i18n = &self.i18n;
+        let mut dismiss = false;
         Panel::top("top_bar")
             .exact_size(56.0)
             .resizable(false)
@@ -248,6 +260,16 @@ impl Launcher {
                             .color(p.text),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if let Some(error) = &self.model.last_error {
+                            dismiss = error_chip(ui, p, &i18n.t(strings::LAST_ERROR))
+                                .on_hover_text(format!(
+                                    "{error}
+
+{}",
+                                    i18n.t(strings::DISMISS_HINT)
+                                ))
+                                .clicked();
+                        }
                         if self.model.backend.is_none() {
                             chip(
                                 ui,
@@ -270,7 +292,21 @@ impl Launcher {
                     });
                 });
             });
+        if dismiss {
+            self.model.last_error = None;
+        }
     }
+}
+
+/// A clickable chip in the danger color: the latest failed command.
+fn error_chip(ui: &mut Ui, p: &Palette, label: &str) -> egui::Response {
+    let text = RichText::new(label).small().color(p.surface_sunken);
+    ui.add(
+        egui::Button::new(text)
+            .fill(p.danger)
+            .stroke(egui::Stroke::NONE)
+            .corner_radius(CornerRadius::same(12)),
+    )
 }
 
 /// A 48x48 rail button; `paint` draws its icon. Returns whether it was clicked.

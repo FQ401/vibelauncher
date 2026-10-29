@@ -9,6 +9,7 @@
 //! as well as for the desktop.
 
 mod app;
+mod failure;
 mod i18n;
 mod icons;
 mod model;
@@ -19,5 +20,6 @@ mod theme;
 mod widgets;
 
 pub use app::Launcher;
+pub use failure::StartupFailure;
 pub use nav::Section;
 pub use theme::ThemeMode;
