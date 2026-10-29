@@ -295,10 +295,11 @@ impl eframe::App for App<'_> {
 
 /// The window's options; it opens where the last one was.
 ///
-/// `direct3d_only` limits wgpu to Direct3D 12 (Windows). With every backend allowed, wgpu also
-/// opens a Vulkan instance, whose driver stays loaded (and keeps tens of MiB) after the window
-/// and its device are gone; the Direct3D driver is unloaded with the device.
-fn native_options(geometry: &Geometry, direct3d_only: bool) -> eframe::NativeOptions {
+/// `one_backend` limits wgpu to Direct3D 12 on Windows and to Vulkan on Linux. With every backend
+/// allowed, wgpu also opens a Vulkan (Windows) or OpenGL (Linux) instance, whose driver stays
+/// loaded (and keeps tens of MiB) after the window and its device are gone; the Direct3D driver
+/// is unloaded with the device, and Vulkan alone keeps less than Vulkan and OpenGL together.
+fn native_options(geometry: &Geometry, one_backend: bool) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("VibeLauncher")
         .with_app_id(APP_ID)
@@ -312,10 +313,14 @@ fn native_options(geometry: &Geometry, direct3d_only: bool) -> eframe::NativeOpt
         viewport,
         ..Default::default()
     };
-    if direct3d_only
+    if one_backend
         && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup
     {
-        setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+        setup.instance_descriptor.backends = if cfg!(windows) {
+            eframe::wgpu::Backends::DX12
+        } else {
+            eframe::wgpu::Backends::VULKAN
+        };
     }
     native
 }
@@ -357,13 +362,15 @@ fn main() -> eframe::Result {
     // run around it. eframe keeps its winit event loop between runs.
     let mut shell: Option<Shell> = None;
     let mut geometry = Geometry::default();
-    // Direct3D 12 only on Windows unless `WGPU_BACKEND` picks; every backend when it fails.
-    let mut direct3d_only = cfg!(windows) && std::env::var_os("WGPU_BACKEND").is_none();
+    // Direct3D 12 only on Windows and Vulkan only on Linux unless `WGPU_BACKEND` picks; every
+    // backend when that fails.
+    let mut one_backend =
+        cfg!(any(windows, target_os = "linux")) && std::env::var_os("WGPU_BACKEND").is_none();
     loop {
         let mut after = AfterWindow::Quit;
         let session = eframe::run_native(
             "VibeLauncher",
-            native_options(&geometry, direct3d_only),
+            native_options(&geometry, one_backend),
             Box::new(|cc| {
                 let fresh = shell.is_none();
                 let shell = shell.get_or_insert_with(|| {
@@ -381,8 +388,8 @@ fn main() -> eframe::Result {
             }),
         );
         if let Err(e) = session {
-            if direct3d_only {
-                direct3d_only = false;
+            if one_backend {
+                one_backend = false;
                 continue;
             }
             return Err(e);

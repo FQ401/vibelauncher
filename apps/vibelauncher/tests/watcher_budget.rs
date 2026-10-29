@@ -9,9 +9,14 @@
 //! Run it optimized, on a desktop session (it opens a window for a moment):
 //! `cargo test -p vl-app --release --features dev-game --test watcher_budget -- --ignored --nocapture`.
 //!
-//! Memory is the working set (what the OS counts as resident) and the private bytes (memory
-//! committed by the process itself, without shared images); CPU is the process's CPU time over
-//! the sampled span, as a share of one core.
+//! Memory is reported as the resident size (RSS, for information: it counts shared libraries
+//! and clean file pages that the OS evicts on its own) and the figure that is the budget:
+//! on Windows the private bytes (memory committed by the process itself, without shared images),
+//! on Linux `RssAnon` (private dirty memory; PSS is printed beside it), on macOS `phys_footprint`
+//! (what Activity Monitor shows as Memory; read from `footprint -p`). The target is `RssAnon`
+//! at most 30 MiB on Linux and `phys_footprint` at most 30 MB on macOS while the game is silent
+//! (the log flood may add up to 10 MiB for the console buffer); the test fails 5 MiB above it. CPU is the process's
+//! CPU time over the sampled span, as a share of one core.
 
 #![cfg(feature = "dev-game")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -113,13 +118,88 @@ fn create_instance(dir: &TempDir) -> String {
     instance.id.to_string()
 }
 
+/// The target for the budget figure on Linux and macOS, in MiB; Windows reports without a limit.
+const BUDGET_MIB: f64 = 30.0;
+
+/// What the test accepts over the target, in MiB: the software renderers of the CI runners sit
+/// within a few MiB of it from run to run.
+const SLACK_MIB: f64 = 5.0;
+
+/// What the console buffer may add to the budget figure under the log flood, in MiB.
+const FLOOD_MIB: f64 = 10.0;
+
+/// The name of the budget figure on this OS.
+const BUDGET_NAME: &str = if cfg!(windows) {
+    "private"
+} else if cfg!(target_os = "macos") {
+    "phys_footprint"
+} else {
+    "RssAnon"
+};
+
 /// A sample of the launcher process.
 #[derive(Debug, Clone, Copy)]
 struct Sample {
     at: Instant,
-    working_set: u64,
-    private: u64,
+    /// Resident size (the working set on Windows).
+    rss: u64,
+    /// The budget figure: private bytes, `RssAnon` or `phys_footprint`.
+    budget: u64,
+    /// Proportional set size (Linux only, else 0).
+    pss: u64,
     cpu_ms: u64,
+}
+
+/// A value in kB from a `/proc` line such as `RssAnon:     1234 kB`, in bytes.
+#[cfg(target_os = "linux")]
+fn proc_kb(text: &str, key: &str) -> Option<u64> {
+    let rest = text.lines().find_map(|l| l.strip_prefix(key))?;
+    let kb: u64 = rest.trim().strip_suffix("kB")?.trim().parse().ok()?;
+    Some(kb * 1024)
+}
+
+/// `RssAnon` and PSS of the process, in bytes.
+#[cfg(target_os = "linux")]
+fn linux_memory(pid: Pid) -> (u64, u64) {
+    let read =
+        |file: &str| std::fs::read_to_string(format!("/proc/{pid}/{file}")).unwrap_or_default();
+    let anon = proc_kb(&read("status"), "RssAnon:").unwrap_or(0);
+    let pss = proc_kb(&read("smaps_rollup"), "Pss:").unwrap_or(0);
+    (anon, pss)
+}
+
+/// `phys_footprint` of the process in bytes, from the `Footprint:` figure of `footprint -p`
+/// (for example `vibelauncher [123]: 64-bit    Footprint: 28 MB (16384 bytes per page)`).
+#[cfg(target_os = "macos")]
+fn macos_footprint(pid: Pid) -> u64 {
+    let Ok(out) = Command::new("footprint")
+        .arg("-p")
+        .arg(pid.to_string())
+        .output()
+    else {
+        return 0;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let Some(rest) = text
+        .lines()
+        .find_map(|l| l.split_once("Footprint:").map(|(_, r)| r))
+    else {
+        return 0;
+    };
+    let mut words = rest.split_whitespace();
+    let (Some(number), Some(unit)) = (words.next(), words.next()) else {
+        return 0;
+    };
+    let Ok(number) = number.replace(',', ".").parse::<f64>() else {
+        return 0;
+    };
+    let factor = match unit {
+        "KB" => 1024.0,
+        "MB" => 1024.0 * 1024.0,
+        "GB" => 1024.0 * 1024.0 * 1024.0,
+        _ => 1.0,
+    };
+    (number * factor) as u64
 }
 
 fn sample(system: &mut System, pid: Pid) -> Sample {
@@ -129,10 +209,17 @@ fn sample(system: &mut System, pid: Pid) -> Sample {
         ProcessRefreshKind::nothing().with_memory().with_cpu(),
     );
     let process = system.process(pid).expect("the launcher runs");
+    #[cfg(target_os = "linux")]
+    let (budget, pss) = linux_memory(pid);
+    #[cfg(target_os = "macos")]
+    let (budget, pss) = (macos_footprint(pid), 0);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let (budget, pss) = (process.virtual_memory(), 0);
     Sample {
         at: Instant::now(),
-        working_set: process.memory(),
-        private: process.virtual_memory(),
+        rss: process.memory(),
+        budget,
+        pss,
         cpu_ms: process.accumulated_cpu_time(),
     }
 }
@@ -141,16 +228,16 @@ fn mib(bytes: u64) -> f64 {
     bytes as f64 / 1024.0 / 1024.0
 }
 
+/// The peaks of a sampled span, in MiB, and the CPU share of one core.
+struct Peaks {
+    rss: f64,
+    budget: f64,
+    cpu: f64,
+}
+
 /// Samples once a second from `from` to `to` (seconds since `start`); prints and returns the
-/// peak working set, peak private bytes and the CPU share of one core.
-fn span(
-    label: &str,
-    system: &mut System,
-    pid: Pid,
-    start: Instant,
-    from: u64,
-    to: u64,
-) -> (f64, f64, f64) {
+/// peak resident size, the peak budget figure and the CPU share of one core.
+fn span(label: &str, system: &mut System, pid: Pid, start: Instant, from: u64, to: u64) -> Peaks {
     let at = |s: u64| start + Duration::from_secs(s);
     std::thread::sleep(at(from).saturating_duration_since(Instant::now()));
     let first = sample(system, pid);
@@ -159,20 +246,30 @@ fn span(
     while Instant::now() < at(to) {
         std::thread::sleep(Duration::from_secs(1));
         last = sample(system, pid);
-        peak.working_set = peak.working_set.max(last.working_set);
-        peak.private = peak.private.max(last.private);
+        peak.rss = peak.rss.max(last.rss);
+        peak.budget = peak.budget.max(last.budget);
+        peak.pss = peak.pss.max(last.pss);
     }
     let wall = last.at.duration_since(first.at).as_millis().max(1) as f64;
     let cpu = last.cpu_ms.saturating_sub(first.cpu_ms) as f64 / wall * 100.0;
-    let result = (mib(peak.working_set), mib(peak.private), cpu);
+    let result = Peaks {
+        rss: mib(peak.rss),
+        budget: mib(peak.budget),
+        cpu,
+    };
+    let pss = if cfg!(target_os = "linux") {
+        format!(", PSS {:.1} MiB (last {:.1})", mib(peak.pss), mib(last.pss))
+    } else {
+        String::new()
+    };
     println!(
-        "{label}: working set {:.1} MiB (last {:.1}), private {:.1} MiB (last {:.1}), CPU {:.2}% \
-         of one core over {:.0} s",
-        result.0,
-        mib(last.working_set),
-        result.1,
-        mib(last.private),
-        result.2,
+        "{label}: RSS {:.1} MiB (last {:.1}), {BUDGET_NAME} {:.1} MiB (last {:.1}){pss}, CPU \
+         {:.2}% of one core over {:.0} s",
+        result.rss,
+        mib(last.rss),
+        result.budget,
+        mib(last.budget),
+        result.cpu,
         wall / 1000.0
     );
     result
@@ -248,6 +345,21 @@ fn budget_report() {
     std::thread::sleep(Duration::from_secs(8));
     drop(dir);
 
-    assert!(idle.2 < 1.0, "idle CPU {:.2}%", idle.2);
-    assert!(flood.2 < 15.0, "CPU under flood {:.2}%", flood.2);
+    assert!(idle.cpu < 1.0, "idle CPU {:.2}%", idle.cpu);
+    assert!(flood.cpu < 15.0, "CPU under flood {:.2}%", flood.cpu);
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        // The silent game is the budget; the log flood adds the console buffer on top.
+        assert!(idle.budget > 0.0, "{BUDGET_NAME} was not read");
+        assert!(
+            idle.budget <= BUDGET_MIB + SLACK_MIB,
+            "{BUDGET_NAME} {:.1} MiB while the game is silent, over {BUDGET_MIB} MiB (+{SLACK_MIB})",
+            idle.budget
+        );
+        assert!(
+            flood.budget <= BUDGET_MIB + SLACK_MIB + FLOOD_MIB,
+            "{BUDGET_NAME} {:.1} MiB under the log flood, over {} MiB",
+            flood.budget,
+            BUDGET_MIB + SLACK_MIB + FLOOD_MIB
+        );
+    }
 }
