@@ -18,6 +18,8 @@ mod crash;
 mod instances;
 mod java;
 mod launch;
+mod log_upload;
+mod logging;
 mod pack_export;
 mod pack_update;
 mod resources;
@@ -34,10 +36,12 @@ use std::sync::Arc;
 use vl_settings::SettingsStore;
 use vl_store::{Store, StoreOptions};
 
+use vl_core::log::LogLevel;
 use vl_core::{
     BackendInfo, Command, Error, EventBus, EventStream, Facade, Replier, Reply, Response,
     reply_channel,
 };
+use vl_logs::LauncherLog;
 use vl_tasks::TaskEngine;
 
 pub use self_update::run_helper_if_requested;
@@ -75,6 +79,8 @@ pub struct Backend {
     storage: storage::Gate,
     bisect: bisect::Running,
     self_update: self_update::Service,
+    uploads: log_upload::Uploads,
+    log: Option<Arc<LauncherLog>>,
 }
 
 impl Backend {
@@ -84,13 +90,16 @@ impl Backend {
         let store = Store::open(&config.store_options())?;
         let instances = open_instances(&store)?;
         let settings = SettingsStore::new(store.data_dir());
-        store.prune(&storage::retention_policy(&settings));
         let events = Arc::new(EventBus::default());
+        // The log first, so the limits of the logs folder count its file.
+        let log = logging::open(&store, &settings, &events);
+        store.prune(&storage::retention_policy(&settings));
         let tasks = TaskEngine::new(Arc::clone(&events), MAX_PARALLEL_TASKS);
         let accounts = accounts::Service::new(&store, Arc::clone(&events))?;
         let launch = launch::Service::new(&store, Arc::clone(&events))?;
         let catalog = catalog::Service::new(&store.cache_dir())?;
         let self_update = self_update::Service::new(&store)?;
+        let uploads = log_upload::Uploads::new()?;
         Ok(Self {
             java: java::JavaService::new(
                 store.java_dir(),
@@ -101,6 +110,8 @@ impl Backend {
             storage: storage::Gate::default(),
             bisect: bisect::Running::default(),
             self_update,
+            uploads,
+            log,
             config,
             store,
             instances,
@@ -136,6 +147,34 @@ impl Backend {
     /// The configuration the backend started with.
     pub fn config(&self) -> &BackendConfig {
         &self.config
+    }
+
+    /// Writes a record of a front end into the launcher log (masked like every record); nothing
+    /// happens without a log file.
+    pub fn log(&self, level: LogLevel, target: &str, message: &str) {
+        if let Some(log) = &self.log {
+            log.write(level, target, message, &[]);
+        }
+    }
+
+    /// The current launcher log file, when there is one.
+    pub fn log_file(&self) -> Option<PathBuf> {
+        self.log.as_ref().map(|log| log.path())
+    }
+
+    /// Writes every later panic of the process into the launcher log, before the panic hook
+    /// that was set already. Front ends call it once at start.
+    pub fn log_panics(&self) {
+        if let Some(log) = &self.log {
+            vl_logs::log_panics(Arc::clone(log));
+        }
+    }
+
+    /// Follows a change of the global settings: the masking of launcher log records.
+    pub(crate) fn settings_changed(&self) {
+        if let Some(log) = &self.log {
+            log.set_redactor(logging::redactor(&self.settings));
+        }
     }
 }
 

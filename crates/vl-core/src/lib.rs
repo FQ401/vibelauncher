@@ -23,6 +23,7 @@ pub mod java;
 pub mod launch;
 pub mod log;
 pub mod platform;
+pub mod redact;
 pub mod resources;
 pub mod secret;
 pub mod self_update;

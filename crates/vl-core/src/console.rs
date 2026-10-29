@@ -54,6 +54,69 @@ pub enum ConsoleCommand {
         /// The instance.
         instance: InstanceId,
     },
+    /// Prepares a game log of the instance for upload to a paste service and describes what
+    /// would be sent → `Response::LogUploadPreview`. Nothing leaves the machine.
+    PreviewUpload {
+        /// The instance.
+        instance: InstanceId,
+        /// The file to share (see [`LogUploadPreview::file`] for the default).
+        file: Option<PathBuf>,
+    },
+    /// Uploads a game log of the instance to the paste service → `Response::LogUploaded`. The
+    /// content is prepared as for [`PreviewUpload`](Self::PreviewUpload); a front end sends this
+    /// only after the user confirmed that preview.
+    Upload {
+        /// The instance.
+        instance: InstanceId,
+        /// The file to share (see [`LogUploadPreview::file`] for the default).
+        file: Option<PathBuf>,
+    },
+}
+
+/// What a log upload sends: the file, its masked content within the service's limits.
+///
+/// Secrets (tokens, keys, authorization values) are masked, and so is the home folder when the
+/// setting `advanced.log_mask_home` is on. A log larger than the service accepts keeps its
+/// first lines and its newest lines; a marker line in the content says how many lines were left
+/// out between them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogUploadPreview {
+    /// The log file. The default is the output log of the instance's newest run
+    /// (`<instance>/logs/vl-game-*.log`), else the game's `logs/latest.log`; a relative path
+    /// names a file in the instance's game folder.
+    pub file: PathBuf,
+    /// The service the content goes to (`mclo.gs`).
+    pub service: String,
+    /// The size of the file, bytes.
+    pub file_bytes: u64,
+    /// The lines of the file.
+    pub file_lines: u64,
+    /// The size of the content sent, bytes.
+    pub bytes: u64,
+    /// The lines of the content sent, the marker line included.
+    pub lines: u64,
+    /// The lines of the file left out to fit the service's limits; 0 when it fits.
+    pub omitted_lines: u64,
+    /// Whether the home folder was masked.
+    pub home_masked: bool,
+}
+
+impl LogUploadPreview {
+    /// Whether lines were left out to fit the service's limits.
+    pub fn truncated(&self) -> bool {
+        self.omitted_lines > 0
+    }
+}
+
+/// What [`ConsoleCommand::Upload`] answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadedLog {
+    /// The page of the log on the service (`https://mclo.gs/<id>`).
+    pub url: String,
+    /// The raw content, when the service names it.
+    pub raw_url: Option<String>,
+    /// What was sent.
+    pub preview: LogUploadPreview,
 }
 
 /// A search over the console buffer: lines whose text contains `text` (ignoring case) and whose

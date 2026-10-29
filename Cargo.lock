@@ -4392,6 +4392,7 @@ dependencies = [
  "vl-java",
  "vl-launch",
  "vl-loaders",
+ "vl-logs",
  "vl-meta",
  "vl-modrinth",
  "vl-net",
@@ -4430,6 +4431,7 @@ dependencies = [
 name = "vl-core"
 version = "0.0.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
 ]
@@ -4528,6 +4530,16 @@ dependencies = [
  "vl-net",
  "vl-store",
  "zip",
+]
+
+[[package]]
+name = "vl-logs"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vl-core",
+ "vl-net",
 ]
 
 [[package]]

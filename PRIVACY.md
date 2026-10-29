@@ -2,7 +2,7 @@
 
 VibeLauncher is an open-source Minecraft launcher. It runs on the user's computer. The project operates no servers that receive data from the launcher.
 
-Last updated: 2026-10-27.
+Last updated: 2026-10-29.
 
 ## Summary
 
@@ -17,6 +17,7 @@ Last updated: 2026-10-27.
 - **Microsoft and Minecraft tokens.** Access and refresh tokens obtained at sign-in are stored in the system keyring (Windows Credential Manager, macOS Keychain, or the Secret Service on Linux). Tokens are not written to configuration files or logs.
 - **Account profile.** The Minecraft profile name, UUID and skin reference are stored locally to display the account.
 - **Launcher data.** Instances, settings, downloaded game files, mods and logs are stored in the launcher's data directory on the device.
+- **Launcher logs.** The launcher's own log files mask tokens, keys and passwords, and by default replace the user's home folder path with `~` (setting `advanced.log_mask_home`).
 - **Third-party API keys.** A CurseForge API key supplied by the user is stored locally on the device.
 
 Removing an account in the launcher deletes its tokens from the keyring. Uninstalling the launcher and deleting its data directory removes all other local data.
@@ -33,7 +34,7 @@ The launcher contacts the following services. Each request is made directly from
 | Modrinth (`modrinth.com`) | Searching and downloading mods and modpacks | Search queries and project identifiers |
 | CurseForge (`curseforge.com`, `forgecdn.net`) | Searching and downloading mods and modpacks, identifying installed files | Search queries, project identifiers, fingerprints (32-bit hashes) of mod files, and the user's own CurseForge API key |
 | Adoptium (`adoptium.net`) | Downloading Java runtimes | Requested Java version, operating system and architecture |
-| mclo.gs | Log sharing | Log content, only when the user chooses to upload a log |
+| mclo.gs (`api.mclo.gs`) | Log sharing | The content of a game log, only after the user confirms the upload; tokens, keys and passwords are masked, and by default the home folder path too |
 
 Like any network request, these requests expose the device's IP address to the receiving service.
 

@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use vl_backend::{Backend, BackendConfig};
 use vl_core::Facade;
+use vl_core::log::LogLevel;
 use vl_mock::{MockFacade, MockOptions};
 
 fn main() -> ExitCode {
@@ -67,7 +68,21 @@ fn start<'a>(
             curseforge_key: false,
         }))
     } else {
-        Box::new(Backend::new(config)?)
+        let backend = Backend::new(config)?;
+        backend.log_panics();
+        // The command without its values: they may name files or carry text the user typed.
+        let command: Vec<&str> = args
+            .iter()
+            .take_while(|a| !a.starts_with('-'))
+            .take(2)
+            .copied()
+            .collect();
+        backend.log(
+            LogLevel::Info,
+            "cli",
+            &format!("vl-cli {}", command.join(" ")),
+        );
+        Box::new(backend)
     };
     Ok((facade, args))
 }

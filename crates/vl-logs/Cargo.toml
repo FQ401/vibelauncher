@@ -1,0 +1,19 @@
+[package]
+name = "vl-logs"
+description = "Launcher log files with rotation and masking, and game log uploads to mclo.gs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.vl]
+layer = "native"
+
+[dependencies]
+vl-core.workspace = true
+vl-net.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

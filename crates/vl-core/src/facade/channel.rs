@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use super::{Event, Response};
@@ -78,7 +78,12 @@ struct Subscriber {
 pub struct EventBus {
     capacity: usize,
     subscribers: Mutex<Vec<Subscriber>>,
+    observer: OnceLock<Observer>,
 }
+
+/// Sees every event as it is published, on the publishing thread, before the streams do (the
+/// launcher log file). It must be quick and must not publish itself.
+pub type Observer = Box<dyn Fn(&Event) + Send + Sync>;
 
 impl EventBus {
     /// The default queue length of each stream.
@@ -89,7 +94,14 @@ impl EventBus {
         Self {
             capacity: capacity.max(1),
             subscribers: Mutex::new(Vec::new()),
+            observer: OnceLock::new(),
         }
+    }
+
+    /// Sets the observer of every published event; there is at most one, and a second one is
+    /// refused (returns `false`).
+    pub fn observe(&self, observer: Observer) -> bool {
+        self.observer.set(observer).is_ok()
     }
 
     /// Opens a stream of the events published from now on.
@@ -105,6 +117,9 @@ impl EventBus {
 
     /// Sends `event` to every open stream; closed streams are forgotten.
     pub fn publish(&self, event: &Event) {
+        if let Some(observer) = self.observer.get() {
+            observer(event);
+        }
         self.lock().retain(|s| match s.tx.try_send(event.clone()) {
             Ok(()) => true,
             Err(TrySendError::Full(_)) => {
@@ -210,6 +225,22 @@ mod tests {
         }
         let events: Vec<Event> = stream.drain().collect();
         assert_eq!(events, vec![event(), event(), Event::Lagged { missed: 3 }]);
+    }
+
+    #[test]
+    fn the_observer_sees_every_event_and_there_is_one() {
+        let bus = EventBus::new(1);
+        let seen = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&seen);
+        assert!(bus.observe(Box::new(move |_| {
+            counter.fetch_add(1, Ordering::Relaxed);
+        })));
+        assert!(!bus.observe(Box::new(|_| {})));
+        let _stream = bus.subscribe();
+        for _ in 0..3 {
+            bus.publish(&event());
+        }
+        assert_eq!(seen.load(Ordering::Relaxed), 3);
     }
 
     #[test]

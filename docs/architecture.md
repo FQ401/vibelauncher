@@ -45,7 +45,7 @@ layer = "native"
 | Layer | Packages | May depend on | Guarantees |
 |---|---|---|---|
 | `core` | `vl-core`, `vl-meta`, `vl-mods`, `vl-crash`, `vl-bisect`, `vl-modrinth`, `vl-curseforge`, `vl-update` | `core` | Pure: no files, network, processes or clock; spawns no threads. Builds for `wasm32-unknown-unknown`. |
-| `native` | `vl-store`, `vl-net`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-install`, `vl-launch`, `vl-updater` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
+| `native` | `vl-store`, `vl-net`, `vl-logs`, `vl-tasks`, `vl-settings`, `vl-auth`, `vl-java`, `vl-instance`, `vl-loaders`, `vl-resources`, `vl-platforms`, `vl-install`, `vl-launch`, `vl-updater` | `core`, `native` | Desktop only: files, network, processes, threads, OS integration. No user interface. |
 | `backend` | `vl-backend`, `vl-mock` | `core`, `native` | Implements the facade. `vl-backend` is the only package that composes the native layer. |
 | `ui` | `vl-ui-egui` | `core` (dev: also `backend`) | The shared egui interface. Talks to the launcher through the facade only. |
 | `app` | `vl-cli`, the desktop app | `core`, `backend`, `ui` | Binaries: choose a backend, own the window or the terminal. Live in `apps/`. |
@@ -64,7 +64,7 @@ Cargo itself rejects dependency cycles, including cycles inside a layer.
 app       vl-cli · vibelauncher          → core, backend, ui
 ui        vl-ui-egui                     → core
 backend   vl-backend · vl-mock           → core, native
-native    vl-store · vl-net · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-install · vl-launch · vl-updater
+native    vl-store · vl-net · vl-logs · vl-tasks · vl-settings · vl-auth · vl-java · vl-instance · vl-loaders · vl-resources · vl-platforms · vl-install · vl-launch · vl-updater
                                          → core, native
 core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth · vl-curseforge · vl-update → core
 ```
@@ -73,13 +73,14 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth 
 
 | Package | Layer | Responsibility |
 |---|---|---|
-| `vl-core` | core | Domain types and the facade contract: ids, errors, platform, instances, versions, accounts, Java runtimes, settings model and override rules, tasks and progress, log lines; `Command`, `Response`, `Event`, the `Facade` trait, replies and the event bus. One module per domain. |
+| `vl-core` | core | Domain types and the facade contract: ids, errors, platform, instances, versions, accounts, Java runtimes, settings model and override rules, tasks and progress, log lines, masking of secrets in text (`redact`); `Command`, `Response`, `Event`, the `Facade` trait, replies and the event bus. One module per domain. |
 | `vl-meta` | core | Game metadata: parsing and normalizing upstream documents (version manifest, version JSON, rules, arguments, libraries and natives, asset indexes, loader profiles, installer profiles with their processor plans, legacy Forge installer profiles, the NeoForge and Forge version lists) from bytes into the launcher's own types. Platform rules take a `Platform` argument, so every OS is testable on any host. |
 | `vl-mods` | core | Mod metadata: parsing `fabric.mod.json`, `quilt.mod.json`, `META-INF/mods.toml`, `META-INF/neoforge.mods.toml` and `mcmod.info` from bytes into `ModMetadata` (id, name, version, authors, description, icon path, dependencies, loader, game versions). |
 | `vl-crash` | core | Crash diagnosis: text of `latest.log`, a crash report or `hs_err` plus a class-to-mod index in, a `Diagnosis` out (confidence level, signature, suspect mods, localization keys, evidence lines). Signatures are data (`signatures.toml`); a mod is named with certainty only when a signature matched. |
 | `vl-bisect` | core | Mod bisection engine: a serializable `Session` over the enabled mod files (provided and required mod ids) hands out the next set of files to enable and takes the answer (bad, good, skipped). Delta debugging with dependency closure (a file is never disabled while an enabled one requires it), libraries kept enabled until the other mods are cleared, optional hints from a crash diagnosis, several culprits at once, and a verdict (found, not reproduced, inconclusive). About `log2(n)` steps for one culprit. `Session::without` gives the check set of a verdict (every file but the culprits and what requires them). The `auto` module holds the rules of an automatic search: the main menu markers of the game output (data: `menu_markers.txt`), whether a version has Quick Play (1.20 and 23w14a on), the crash key (signature id or message key plus the root exception class of the first stack trace) and the repeat rule (`Trial`: bad on the first matching crash, good after `k` clean runs, skipped on anything else). |
 | `vl-store` | native | The data folder (argument, environment variable, portable marker, pointer file, OS convention) and the folders of the storage sections; folder checks; moving a section by copy with rollback and removing old copies; size limits of logs and the cache; the on-disk format version and migrations; the lock against a second launcher process; atomic writes. |
 | `vl-net` | native | HTTP and downloads: parallelism limit, retries, timeouts, size caps, hash checks, HTTP cache (`ETag`, `Last-Modified`), offline reads, proxies, the launcher's `User-Agent`. |
+| `vl-logs` | native | The launcher log file (`launcher.log` in the logs section: structured records — UTC time, level, target, message, `key=value` fields — masked with `vl_core::redact` and rotated by size and count) and game log sharing on mclo.gs (`mclogs`: the content masked and cut to the service's limits, the upload through `vl-net`). |
 | `vl-tasks` | native | The task engine: stages with weights, nested subtasks, overall progress, cooperative cancellation, timeouts, a concurrency limit; publishes task events. |
 | `vl-settings` | native | Settings files: global settings and per-instance overrides as TOML, range checks, defaults on damage. |
 | `vl-auth` | native | Accounts: Microsoft sign-in (device code, Xbox Live, XSTS, Minecraft services), token refresh, offline accounts, secrets in the OS keyring. |
@@ -192,6 +193,19 @@ are limited by `console.keep_logs`, 10 by default):
 | `Fetch { instance, from, limit }` | `Response::ConsolePage`: up to `limit` (at most 5 000) lines from `from`, or the newest ones |
 | `Search { instance, query }` | `Response::ConsoleMatches`: lines whose text contains `query.text` ignoring case and whose level is in `query.levels` (empty: any), forwards or backwards from `query.from`, at most `query.limit`, with the total count and where to continue |
 | `OpenLogFile { instance }` | `Response::Done` after opening the run's log file with the system's default application; `NotFound` without one |
+| `PreviewUpload { instance, file }` | `Response::LogUploadPreview`: what an upload to mclo.gs would send (the file, its size and lines, the size and lines sent, lines left out, whether the home folder is masked); nothing is sent |
+| `Upload { instance, file }` | `Response::LogUploaded`: the link of the log on mclo.gs (and its raw content) with the same description; a front end sends it only after the user confirmed the preview |
+
+**Sharing a log.** The file is the newest run log of the instance (`<instance>/logs/vl-game-*.log`),
+else the game's `logs/latest.log`; `file` names another one, relative to the game folder (no
+`..`) or absolute. The content is masked like the launcher log and cut to the limits of the
+mclo.gs API (`POST https://api.mclo.gs/1/log` with a JSON body `content` and `source`; at most
+10 MiB and 25 000 lines): the first quarter of the allowed lines comes from the start of the log,
+the rest from its end, with a marker line between them that names the number of lines left out.
+A file larger than the limit is never read whole. The upload is not retried (a retry could publish
+the log twice); the link must be `https`. The token mclo.gs returns for deleting the log is
+neither kept nor shown. `vl-cli log upload <instance> [--file <path>] [--yes]` prints the preview
+and asks before it uploads.
 
 A console subscribes to `Event::LogBatch` (at most ten batches a second, at most 500 lines each),
 fills gaps in `seq` and scrolls back with `Fetch`. Under a flood the buffer stays at its limit and
@@ -388,6 +402,30 @@ and the cache fit their limits. The limits are the global `advanced` settings gr
 it. The store opens with the default limits and the backend prunes again with the configured ones
 as soon as the settings are read. Game logs are limited per instance (see the
 launch flow).
+
+**Launcher log.** `vl-backend` writes the launcher's own log to `launcher.log` in the logs
+section (`vl-logs`). The log observes the event bus (`EventBus::observe`): launcher log lines,
+task starts and ends (a failure with its error), game state changes, exits and crash diagnoses,
+and settings warnings become records; front ends add their own (`Backend::log`: the desktop app's
+start, the `vl-cli` command without its values) and the panics of the process
+(`Backend::log_panics`). Game output stays in the run's own log file. One record is one line:
+
+```text
+2026-10-29T12:34:56.789Z WARN  launch: game exited instance=survival code=1 crashed=true stopped_by_user=false seconds=42
+```
+
+A message of several lines continues on lines indented by four spaces. Each record is written
+with one unbuffered write. Before a record takes the file past 4 MiB the files shift
+(`launcher.log` → `launcher.1.log` → … → `launcher.4.log`, five files at most, the oldest
+deleted); both numbers shrink to fit the logs limits of the `advanced` settings, so a prune never
+removes the current file. Every record is masked first (`vl_core::redact::Redactor`): JSON Web
+Tokens (Minecraft and Xbox tokens), `Bearer`, `Basic` and `XBL3.0` authorization values, the
+values of secret-looking names (`access_token`, `refreshToken`, `api_key`, `x-api-key`,
+`client_secret`, `password`, `token`, …), `--accessToken` and `--session` arguments, CurseForge
+API keys and Microsoft account tokens become `<redacted>`. With `advanced.log_mask_home` (on by
+default) the user's home folder becomes `~` in every spelling (either separator, doubled
+backslashes, any case on Windows and macOS). Turning the setting off takes effect for the next
+record.
 
 **Long paths.** File operations use the Rust standard library, which passes paths longer than
 the Windows limit with the `\\?\` prefix; a move copies such trees as they are.
@@ -702,7 +740,8 @@ built-in defaults. An instance overrides a whole group or inherits it (`Option` 
 checks (`validate`) and every type keeps unknown fields (`Extra`).
 
 Two more groups are global only (`Settings::with_overrides` always takes them from the global
-settings): `advanced`, the limits of launcher logs and the cache, and `launcher`, the desktop
+settings): `advanced`, the limits of launcher logs and the cache and `log_mask_home` (see
+Launcher log), and `launcher`, the desktop
 app's window around a running game: `after_launch` (`hide_to_tray`, the default: the window
 closes and the launcher watches the game from the tray; `keep_open`; `close_launcher`) and
 `on_game_exit` (`show_window`, the default, or `nothing`; a crash always brings the window back).
@@ -995,7 +1034,7 @@ setting the same way (widened to a file's installed channel, a requested channel
 and report two files of one project in a folder as a conflict. A bisection narrows the mods of an instance
 down by the user's reports, or runs as a task that finds a fixed culprit. Without a CurseForge
 key (`MockOptions::curseforge_key`) every CurseForge request answers `NoApiKey`.
-`MockOptions` sets the pacing and how a simulated game ends (runs until stopped, exits, or
+Log uploads answer `Unsupported`. `MockOptions` sets the pacing and how a simulated game ends (runs until stopped, exits, or
 crashes with `game_crashes`); `MockOptions::instant()` makes tests run without delays.
 
 ## Extension points

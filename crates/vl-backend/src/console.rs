@@ -52,7 +52,15 @@ impl Consoles {
 }
 
 pub(crate) fn handle(backend: &Backend, command: ConsoleCommand, replier: Replier) {
-    replier.send(answer(&backend.launch.consoles, command));
+    match command {
+        ConsoleCommand::PreviewUpload { instance, file } => {
+            crate::log_upload::preview(backend, &instance, file, replier);
+        }
+        ConsoleCommand::Upload { instance, file } => {
+            crate::log_upload::upload(backend, &instance, file, replier);
+        }
+        command => replier.send(answer(&backend.launch.consoles, command)),
+    }
 }
 
 fn answer(consoles: &Consoles, command: ConsoleCommand) -> vl_core::Result<Response> {

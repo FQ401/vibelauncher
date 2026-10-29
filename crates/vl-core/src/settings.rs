@@ -237,7 +237,8 @@ impl Default for UpdateSettings {
     }
 }
 
-/// Limits of the folders that grow by themselves. Global only: an instance cannot override them.
+/// Limits of the folders that grow by themselves and the privacy of the launcher logs. Global
+/// only: an instance cannot override them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AdvancedSettings {
@@ -247,6 +248,9 @@ pub struct AdvancedSettings {
     pub log_max_mib: u32,
     /// Size limit of the cache, MiB.
     pub cache_max_mib: u32,
+    /// Whether the home folder is replaced with `~` in the launcher log files and in game logs
+    /// uploaded to a paste service (on by default). Secrets are masked either way.
+    pub log_mask_home: bool,
     /// Unknown fields, kept on save.
     #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
     pub extra: Extra,
@@ -258,6 +262,7 @@ impl Default for AdvancedSettings {
             log_max_files: 30,
             log_max_mib: 64,
             cache_max_mib: 2048,
+            log_mask_home: true,
             extra: Extra::default(),
         }
     }
