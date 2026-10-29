@@ -8,7 +8,7 @@
 //! release by running its package.
 //!
 //! WiX is the .NET tool pinned in `.config/dotnet-tools.json` (`dotnet tool restore`, then
-//! `dotnet tool run wix`), or the `wix` executable named by the `WIX` variable. Its binary
+//! `dotnet tool run wix`), or the `wix` executable named by the `VL_WIX` variable. Its binary
 //! release comes with the Open Source Maintenance Fee EULA, which the project owner accepted:
 //! the build passes `-acceptEula wix7`.
 
@@ -135,9 +135,10 @@ fn validate_args(package: &str) -> [&str; 9] {
     ]
 }
 
-/// Runs WiX with `args`: the `WIX` executable when set, else the pinned .NET tool.
+/// Runs WiX with `args`: the `VL_WIX` executable when set, else the pinned .NET tool. (`WIX` is
+/// taken: the WiX 3 installer sets it to its folder, as on the GitHub Windows runners.)
 fn wix(args: &[&str]) -> Result<(), String> {
-    if let Some(wix) = std::env::var_os("WIX").filter(|w| !w.is_empty()) {
+    if let Some(wix) = std::env::var_os("VL_WIX").filter(|w| !w.is_empty()) {
         let wix = wix.to_string_lossy().into_owned();
         return crate::run("wix", &wix, args);
     }

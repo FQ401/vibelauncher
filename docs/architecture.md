@@ -917,7 +917,7 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   `target/dist/vibelauncher-<version>-windows-<arch>.msi` with a `.sha256` file next to it, from
   `packaging/windows/vibelauncher.wxs` with WiX 7. WiX is the .NET tool pinned in
   `.config/dotnet-tools.json` (7.0.1; `dotnet tool restore`, then `dotnet tool run wix`), or the
-  executable named by `WIX`. Its binary release comes with the Open Source Maintenance Fee EULA,
+  executable named by `VL_WIX`. Its binary release comes with the Open Source Maintenance Fee EULA,
   which the project owner accepted: the build passes `-acceptEula wix7`. The package is then
   checked with `wix msi validate` (the ICE checks, without ICE61 and ICE91, see below). It is
   per-user (`Scope="perUser"`, no elevation, no UAC prompt) and installs:
