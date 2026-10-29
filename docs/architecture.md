@@ -56,7 +56,9 @@ Rules checked by `cargo xtask ci` (`xtask/src/layers.rs`):
 - each dependency on a workspace package is allowed by the table above (dev-dependencies of a
   `ui` package may also use a `backend` package, so UI tests run on the mock);
 - `apps/` holds only `app` packages, and `app` packages live only in `apps/`;
-- the `core` layer and `vl-ui-egui` build for `wasm32-unknown-unknown`.
+- the `core` layer, `vl-ui-egui` and `vl-mock` build for `wasm32-unknown-unknown`. The UI must
+  not pull in anything that does not build for wasm without a `cfg(not(target_arch = "wasm32"))`
+  guard (native-only dependencies go in a target-specific dependency table).
 
 Cargo itself rejects dependency cycles, including cycles inside a layer.
 

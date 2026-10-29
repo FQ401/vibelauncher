@@ -1,5 +1,5 @@
 //! Project tasks, run as `cargo xtask <task>`:
-//! - `ci` — every check a PR must pass: layers, format, clippy, tests, wasm build of the core layer and the shared UI;
+//! - `ci` — every check a PR must pass: layers, format, clippy, tests, wasm build of the core layer, the shared UI and the mock facade;
 //! - `ci lint` / `ci test` — the same checks split in two halves so CI can run them in parallel;
 //! - `version` — prints the launcher version (`[workspace.package] version`, the only place it lives);
 //! - `version set X.Y.Z[-pre]` — sets it;
@@ -131,10 +131,14 @@ fn ci(lint: bool, test: bool) -> Result<(), String> {
     if test {
         run("tests", &cargo, &["test", "--workspace"])?;
     }
-    // The core layer is pure and the shared UI has no native dependencies: both must build for
-    // the browser.
+    // The core layer is pure, and the shared UI and the mock facade it runs on have no native
+    // dependencies: all must build for the browser (`rust-toolchain.toml` installs the target).
     let mut wasm = vec!["check", "--target", "wasm32-unknown-unknown"];
-    for package in core.iter().map(String::as_str).chain(["vl-ui-egui"]) {
+    for package in core
+        .iter()
+        .map(String::as_str)
+        .chain(["vl-ui-egui", "vl-mock"])
+    {
         wasm.extend(["-p", package]);
     }
     run("wasm", &cargo, &wasm)?;
