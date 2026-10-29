@@ -105,8 +105,10 @@ fn exited_parent() -> ParentProcess {
 /// An uncompressed zip with `(name, content)` entries.
 fn stored_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    // Executable on Unix, as the launcher in a release archive is.
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .unix_permissions(0o755);
     for (name, content) in entries {
         w.start_file(*name, options).unwrap();
         w.write_all(content).unwrap();
