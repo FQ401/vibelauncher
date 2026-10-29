@@ -5,18 +5,20 @@
 //! - `version set X.Y.Z[-pre]` — sets it;
 //! - `package portable [--target <triple>]` — the portable Windows archive in `target/dist`;
 //! - `package tar|appimage|deb|rpm|linux [--target <triple>]` — the Linux packages in `target/dist`
-//!   (`linux`: all four).
+//!   (`linux`: all four);
+//! - `package macos` — the universal macOS disk image in `target/dist` (on macOS).
 #![allow(clippy::print_stdout, clippy::print_stderr)] // a command-line tool reports to the terminal
 
 mod layers;
 mod linux;
+mod macos;
 mod package;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage: cargo xtask ci [lint|test] | cargo xtask version [set X.Y.Z[-pre]] \
-                     | cargo xtask package portable|tar|appimage|deb|rpm|linux [--target <triple>]";
+                     | cargo xtask package portable|tar|appimage|deb|rpm|linux [--target <triple>]                      | cargo xtask package macos";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -27,6 +29,7 @@ fn main() -> ExitCode {
         ["ci", "test"] => ci(false, true),
         ["version"] => read_version().map(|v| println!("{v}")),
         ["version", "set", v] => set_version(v),
+        ["package", "macos"] => macos::package(),
         ["package", kind, rest @ ..] => {
             let target = match rest {
                 [] => None,

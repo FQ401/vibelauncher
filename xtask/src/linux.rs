@@ -502,7 +502,7 @@ fn append(
 
 /// The PNG images of an ICO file as `(size, PNG)`, smallest first; only square PNG entries are
 /// taken, and their size is read from the PNG header.
-fn ico_pngs(ico: &[u8]) -> Result<Vec<(u32, Vec<u8>)>, String> {
+pub(crate) fn ico_pngs(ico: &[u8]) -> Result<Vec<(u32, Vec<u8>)>, String> {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     let u16_at = |at: usize| {
         ico.get(at..at + 2)
