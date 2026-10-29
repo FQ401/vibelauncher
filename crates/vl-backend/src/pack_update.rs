@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use vl_core::catalog::Provider;
 use vl_core::component::ComponentKind;
-use vl_core::install::{PackAction, PackChanges, PackUpdateRequest};
+use vl_core::install::{MinStability, PackAction, PackChanges, PackUpdateRequest};
 use vl_core::instance::{InstanceEvent, Loader, LoaderRequest};
 use vl_core::log::{LogLevel, LogLine, LogSource};
 use vl_core::task::TaskKind;
@@ -87,9 +87,26 @@ fn curseforge(setup: &Setup) -> &CurseForgeSource {
     setup.platforms.curseforge()
 }
 
-fn wanted<'a>(request: &'a PackUpdateRequest, file: Option<&'a std::path::Path>) -> Wanted<'a> {
+/// The channel the new version may come from: the request's, else the instance's
+/// `updates.channel` setting (its override, else the global value).
+fn channel(backend: &Backend, request: &PackUpdateRequest) -> MinStability {
+    request.min_stability.unwrap_or_else(|| {
+        backend
+            .settings()
+            .effective(&request.instance)
+            .value
+            .updates
+            .channel
+    })
+}
+
+fn wanted<'a>(
+    request: &'a PackUpdateRequest,
+    min: MinStability,
+    file: Option<&'a std::path::Path>,
+) -> Wanted<'a> {
     Wanted {
-        min: request.min_stability,
+        min,
         version: request.version.as_deref(),
         file,
         reset: request.reset,
@@ -97,6 +114,7 @@ fn wanted<'a>(request: &'a PackUpdateRequest, file: Option<&'a std::path::Path>)
 }
 
 pub(crate) fn check(backend: &Backend, request: PackUpdateRequest, replier: Replier) {
+    let min = channel(backend, &request);
     let setup = match setup(backend, &request.instance) {
         Ok(s) => s,
         Err(e) => return replier.send(Err(e)),
@@ -104,7 +122,7 @@ pub(crate) fn check(backend: &Backend, request: PackUpdateRequest, replier: Repl
     spawn_reply("pack-update-check", replier, move || {
         let control = Control::default();
         let ctx = context(&setup, &control)?;
-        check_pack(&ctx, &setup.record, request.min_stability).map(Response::PackUpdate)
+        check_pack(&ctx, &setup.record, min).map(Response::PackUpdate)
     });
 }
 
@@ -123,6 +141,7 @@ fn empty_changes(setup: &Setup, reset: bool) -> PackChanges {
 }
 
 pub(crate) fn plan(backend: &Backend, request: PackUpdateRequest, replier: Replier) {
+    let min = channel(backend, &request);
     let setup = match setup(backend, &request.instance) {
         Ok(s) => s,
         Err(e) => return replier.send(Err(e)),
@@ -131,7 +150,7 @@ pub(crate) fn plan(backend: &Backend, request: PackUpdateRequest, replier: Repli
         let control = Control::default();
         let ctx = context(&setup, &control)?;
         let file = request.file.as_deref().map(std::path::Path::new);
-        let changes = match prepare(&ctx, &setup.record, &wanted(&request, file))? {
+        let changes = match prepare(&ctx, &setup.record, &wanted(&request, min, file))? {
             Some(p) => p.changes,
             None => empty_changes(&setup, request.reset),
         };
@@ -173,6 +192,7 @@ fn components(setup: &Setup, prepared: &Prepared, control: &Control) -> Result<O
 }
 
 pub(crate) fn update(backend: &Backend, request: PackUpdateRequest) -> Result<Response> {
+    let min = channel(backend, &request);
     let setup = setup(backend, &request.instance)?;
     let events = Arc::clone(&backend.events);
     let handle = backend.tasks().spawn(
@@ -189,7 +209,8 @@ pub(crate) fn update(backend: &Backend, request: PackUpdateRequest) -> Result<Re
                 };
                 let context = context(&setup, &control)?;
                 let file = request.file.as_deref().map(std::path::Path::new);
-                let Some(prepared) = prepare(&context, &setup.record, &wanted(&request, file))?
+                let Some(prepared) =
+                    prepare(&context, &setup.record, &wanted(&request, min, file))?
                 else {
                     log("the modpack is up to date".into());
                     return Ok(());
@@ -238,4 +259,35 @@ pub(crate) fn update(backend: &Backend, request: PackUpdateRequest) -> Result<Re
         },
     );
     Ok(Response::Task(handle.id()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BackendConfig;
+    use vl_core::settings::Settings;
+
+    #[test]
+    fn the_channel_comes_from_the_request_else_from_the_settings() {
+        let dir = std::env::temp_dir().join(format!("vl-backend-packs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let backend = Backend::new(BackendConfig {
+            data_dir: Some(dir.clone()),
+        })
+        .unwrap();
+        let id = InstanceId::new("a").unwrap();
+        let mut global = Settings::default();
+        global.updates.channel = MinStability::Beta;
+        backend.settings().set_global(&global).unwrap();
+
+        let request = PackUpdateRequest::new(id);
+        assert_eq!(channel(&backend, &request), MinStability::Beta);
+        let named = PackUpdateRequest {
+            min_stability: Some(MinStability::Release),
+            ..request
+        };
+        assert_eq!(channel(&backend, &named), MinStability::Release);
+        drop(backend);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

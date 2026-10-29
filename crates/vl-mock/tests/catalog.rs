@@ -503,7 +503,7 @@ fn identify_reports_known_and_unknown_files() {
             &facade,
             CatalogCommand::IdentifyMods {
                 instance: id("creative"),
-                provider: Provider::Modrinth,
+                provider: Some(Provider::Modrinth),
                 world: world.map(Into::into),
             },
         )
@@ -517,6 +517,23 @@ fn identify_reports_known_and_unknown_files() {
         identify(Some("nowhere")).unwrap_err().kind,
         ErrorKind::NotFound
     );
+}
+
+#[test]
+fn identify_without_a_provider_warns_when_curseforge_has_no_key() {
+    let facade = MockFacade::new(MockOptions::instant());
+    let Response::Identified(report) = catalog(
+        &facade,
+        CatalogCommand::IdentifyMods {
+            instance: id("creative"),
+            provider: None,
+            world: None,
+        },
+    )
+    .unwrap() else {
+        panic!("expected a report");
+    };
+    assert!(report.warnings.iter().any(|w| w.contains("CurseForge")));
 }
 
 fn pack_request(provider: Provider, project: &str) -> PackInstallRequest {

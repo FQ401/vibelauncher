@@ -32,6 +32,10 @@ pub const WINDOW_MAX_PX: u32 = 16384;
 pub const CONSOLE_MIN_LINES: u32 = 100;
 /// Largest allowed console history, lines.
 pub const CONSOLE_MAX_LINES: u32 = 1_000_000;
+/// Smallest allowed number of launch logs kept per instance.
+pub const KEEP_LOGS_MIN: u32 = 1;
+/// Largest allowed number of launch logs kept per instance.
+pub const KEEP_LOGS_MAX: u32 = 1000;
 
 /// Smallest allowed number of launcher log files kept.
 pub const LOG_FILES_MIN: u32 = 1;
@@ -131,6 +135,9 @@ pub struct ConsoleSettings {
     pub close_on_exit: bool,
     /// Lines of game log kept in the console.
     pub max_lines: u32,
+    /// Launch logs kept in the instance's log folder, the new one included; the oldest are
+    /// removed beyond this.
+    pub keep_logs: u32,
     /// Unknown fields, kept on save.
     #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
     pub extra: Extra,
@@ -143,6 +150,7 @@ impl Default for ConsoleSettings {
             show_on_crash: true,
             close_on_exit: false,
             max_lines: 10_000,
+            keep_logs: 10,
             extra: Extra::default(),
         }
     }
@@ -316,7 +324,14 @@ impl ConsoleSettings {
     /// Checks the ranges.
     pub fn validate(&self) -> Result<(), Error> {
         let (lo, hi) = (CONSOLE_MIN_LINES, CONSOLE_MAX_LINES);
-        check_range("console", "max_lines", self.max_lines, lo, hi)
+        check_range("console", "max_lines", self.max_lines, lo, hi)?;
+        check_range(
+            "console",
+            "keep_logs",
+            self.keep_logs,
+            KEEP_LOGS_MIN,
+            KEEP_LOGS_MAX,
+        )
     }
 }
 
@@ -699,6 +714,20 @@ mod tests {
         global.advanced.cache_max_mib = 512;
         let effective = global.with_overrides(&Overrides::default());
         assert_eq!(effective.advanced.cache_max_mib, 512);
+    }
+
+    #[test]
+    fn kept_launch_logs_default_to_ten_and_are_bounded() {
+        let mut console = ConsoleSettings::default();
+        assert_eq!(console.keep_logs, 10);
+        assert!(console.validate().is_ok());
+        for bad in [0, KEEP_LOGS_MAX + 1] {
+            console.keep_logs = bad;
+            assert!(console.validate().is_err());
+        }
+        // Settings written before the field existed read with the default.
+        let old: ConsoleSettings = serde_json::from_str(r#"{"max_lines":500}"#).unwrap();
+        assert_eq!((old.max_lines, old.keep_logs), (500, 10));
     }
 
     #[test]

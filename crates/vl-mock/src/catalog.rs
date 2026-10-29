@@ -576,10 +576,11 @@ pub(crate) fn handle(inner: &Arc<Inner>, command: CatalogCommand) -> Result<Resp
         }
         CatalogCommand::Update(request) => installs::update(inner, &request),
         CatalogCommand::IdentifyMods {
-            instance, world, ..
-        } => {
-            installs::identify(&inner.lock(), &instance, world.as_deref()).map(Response::Identified)
-        }
+            instance,
+            provider,
+            world,
+        } => installs::identify(&inner.lock(), &instance, provider, world.as_deref())
+            .map(Response::Identified),
         CatalogCommand::SetApiKey { provider, key } => {
             only_curseforge(provider)?;
             if key.expose().trim().is_empty() {

@@ -6,7 +6,7 @@ use vl_core::install::{
 };
 use vl_core::resources::{ResourceCommand, ResourceEntry, ResourceKind};
 use vl_core::settings::{SettingsCommand, UpdateSettings};
-use vl_core::{Command, ErrorKind, Facade, InstanceId, Response};
+use vl_core::{Command, Facade, InstanceId, Response};
 
 use super::catalog::{confirmed, print_plan, run_task};
 use super::{CliError, Out, USAGE, call, unexpected};
@@ -84,9 +84,9 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
     }
 }
 
-/// `identify <instance> [--world <w>] [--provider <p>]`: without a provider, Modrinth is asked
-/// first and CurseForge second, so a file both know is recorded as Modrinth's; CurseForge is
-/// skipped with a note when no key is set.
+/// `identify <instance> [--world <w>] [--provider <p>]`: without a provider the backend asks
+/// Modrinth first and CurseForge second, so a file both know is recorded as Modrinth's;
+/// CurseForge is skipped with a warning when no key is set.
 fn identify(
     facade: &dyn Facade,
     instance: &str,
@@ -104,29 +104,15 @@ fn identify(
             _ => return Err(USAGE.into()),
         }
     }
-    let providers = match provider {
-        Some(p) => vec![p],
-        None => vec![Provider::Modrinth, Provider::CurseForge],
-    };
-    for asked in providers {
-        if provider.is_none() {
-            writeln!(out, "{}:", provider_name(asked))?;
-        }
-        let command = Command::Catalog(CatalogCommand::IdentifyMods {
-            instance: instance.clone(),
-            provider: asked,
-            world: world.clone(),
-        });
-        match facade.call(command).wait() {
-            Ok(Response::Identified(report)) => print_identified(&report, out)?,
-            Ok(other) => return Err(unexpected(&other)),
-            Err(e) if provider.is_none() && e.kind == ErrorKind::NoApiKey => {
-                writeln!(out, "  skipped: no CurseForge API key is set")?;
-            }
-            Err(e) => return Err(e.into()),
-        }
+    let command = Command::Catalog(CatalogCommand::IdentifyMods {
+        instance,
+        provider,
+        world,
+    });
+    match call(facade, command)? {
+        Response::Identified(report) => print_identified(&report, out),
+        other => Err(unexpected(&other)),
     }
-    Ok(())
 }
 
 /// `channel <instance>|--global [release|beta|alpha|inherit]`: shows or sets the update

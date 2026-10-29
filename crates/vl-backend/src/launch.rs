@@ -352,6 +352,7 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
     let exit_log_dir = plan.log_dir.clone();
     let mut options = SpawnOptions::new(plan.settings.console.max_lines as usize);
     options.log_dir = Some(plan.log_dir.clone());
+    options.keep_logs = plan.settings.console.keep_logs as usize;
     let game = process::spawn(
         &prepared.command,
         &options,
