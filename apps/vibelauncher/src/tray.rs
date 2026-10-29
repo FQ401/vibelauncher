@@ -12,7 +12,8 @@ use std::sync::mpsc;
 
 use vl_ui_egui::TrayTexts;
 
-/// What the user picked in the tray.
+/// What the user picked in the tray. Nothing builds it on macOS, which has no tray icon yet.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
     /// Show the launcher window.
