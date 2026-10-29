@@ -1,10 +1,12 @@
 //! NeoForge and Forge version lists on excerpts of the real upstream documents: every naming
 //! scheme and the odd entries of the `maven-metadata.xml` files and `promotions_slim.json` (as
-//! published on 2026-10-29), mapped to the game versions of the Mojang version manifest.
+//! published on 2026-10-29), mapped to the game versions of the Mojang version manifest, and the
+//! legacy install profile of a Forge build for a pre-release.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use vl_core::ErrorKind;
+use vl_meta::forge_legacy::{InstallerFormat, LegacyInstaller, installer_format};
 use vl_meta::{forge, neoforge};
 
 fn read(name: &str) -> Vec<u8> {
@@ -29,12 +31,16 @@ fn forge_all() -> Vec<String> {
 
 /// Version and stable flag of the NeoForge list of `game`, newest first.
 fn neoforge_names(game: &str) -> Vec<(String, bool)> {
-    neoforge::versions_for_game_with_legacy(game, &neoforge_all(), &neoforge_legacy())
-        .unwrap()
-        .versions
+    neoforge_list(game)
         .into_iter()
         .map(|v| (v.version, v.stable))
         .collect()
+}
+
+fn neoforge_list(game: &str) -> Vec<vl_meta::loader::LoaderVersion> {
+    neoforge::versions_for_game_with_legacy(game, &neoforge_all(), &neoforge_legacy())
+        .unwrap()
+        .versions
 }
 
 #[test]
@@ -57,10 +63,12 @@ fn maps_every_neoforge_scheme_to_the_game_version() {
         ("26.1.2.124", Some("26.1.2")),
         ("26.2.0.93", Some("26.2")),
         ("26.3.0.99", Some("26.3")),
-        // Builds for game snapshots and April Fools' versions are left out.
-        ("26.1.0.0-alpha.1+snapshot-1", None),
-        ("26.1.0.0-alpha.15+pre-3", None),
-        ("0.25w14craftmine.5-beta", None),
+        // Builds for game snapshots, pre-releases and April Fools' versions; the game ids are
+        // those of the Mojang version manifest.
+        ("26.1.0.0-alpha.1+snapshot-1", Some("26.1-snapshot-1")),
+        ("26.1.0.0-alpha.10+snapshot-6", Some("26.1-snapshot-6")),
+        ("26.1.0.0-alpha.15+pre-3", Some("26.1-pre-3")),
+        ("0.25w14craftmine.5-beta", Some("25w14craftmine")),
     ];
     for (version, game) in cases {
         assert_eq!(
@@ -122,13 +130,7 @@ fn lists_neoforge_versions_per_game_newest_first() {
             ("47.1.5", true)
         ])
     );
-    for game in [
-        "26.1-snapshot-1",
-        "26.1-pre-3",
-        "25w14craftmine",
-        "1.20",
-        "1.19.4",
-    ] {
+    for game in ["26.1-snapshot-2", "26.2-pre-1", "1.20", "1.19.4"] {
         assert!(neoforge_names(game).is_empty(), "{game}");
     }
     assert_eq!(
@@ -138,6 +140,66 @@ fn lists_neoforge_versions_per_game_newest_first() {
     assert_eq!(
         neoforge::installer_path_for("26.3", "26.3.0.99").unwrap(),
         "net/neoforged/neoforge/26.3.0.99/neoforge-26.3.0.99-installer.jar"
+    );
+}
+
+#[test]
+fn lists_neoforge_builds_for_unstable_game_versions_only_for_them() {
+    let marked = |game: &str| -> Vec<(String, bool, bool)> {
+        neoforge_list(game)
+            .into_iter()
+            .map(|v| (v.version, v.stable, v.unstable_game))
+            .collect()
+    };
+    let own = |list: &[&str]| -> Vec<(String, bool, bool)> {
+        list.iter()
+            .map(|v| ((*v).to_owned(), false, true))
+            .collect()
+    };
+    // Several alpha builds for one snapshot, ordered by the alpha number.
+    assert_eq!(
+        marked("26.1-snapshot-1"),
+        own(&[
+            "26.1.0.0-alpha.4+snapshot-1",
+            "26.1.0.0-alpha.2+snapshot-1",
+            "26.1.0.0-alpha.1+snapshot-1"
+        ])
+    );
+    assert_eq!(
+        marked("26.1-snapshot-6"),
+        own(&[
+            "26.1.0.0-alpha.10+snapshot-6",
+            "26.1.0.0-alpha.9+snapshot-6"
+        ])
+    );
+    assert_eq!(marked("26.1-pre-3"), own(&["26.1.0.0-alpha.15+pre-3"]));
+    assert_eq!(
+        marked("25w14craftmine"),
+        own(&[
+            "0.25w14craftmine.5-beta",
+            "0.25w14craftmine.4-beta",
+            "0.25w14craftmine.3-beta"
+        ])
+    );
+    // The release lists keep none of them.
+    for game in ["26.1", "26.1.1", "26.1.2", "26.2", "26.3", "1.21.11"] {
+        assert!(
+            neoforge_list(game).iter().all(|v| !v.unstable_game),
+            "{game}"
+        );
+    }
+    let list = neoforge::versions_for_game("26.1-pre-3", &neoforge_all()).unwrap();
+    assert_eq!(
+        list.recommended().map(|v| v.version.as_str()),
+        Some("26.1.0.0-alpha.15+pre-3")
+    );
+    assert_eq!(
+        neoforge::installer_path("26.1.0.0-alpha.15+pre-3").unwrap(),
+        "net/neoforged/neoforge/26.1.0.0-alpha.15+pre-3/neoforge-26.1.0.0-alpha.15+pre-3-installer.jar"
+    );
+    assert_eq!(
+        neoforge::installer_path_for("25w14craftmine", "0.25w14craftmine.5-beta").unwrap(),
+        "net/neoforged/neoforge/0.25w14craftmine.5-beta/neoforge-0.25w14craftmine.5-beta-installer.jar"
     );
 }
 
@@ -185,15 +247,34 @@ fn lists_forge_versions_of_every_era_with_the_promotions() {
             "{game} recommended"
         );
     }
-    // The pre-release keeps Forge's own name; the Mojang id `1.7.10-pre4` has no Forge builds.
-    let pre = forge::versions_for_game("1.7.10_pre4", &all, Some(&promotions)).unwrap();
-    assert_eq!(pre.versions[0].version, "10.12.2.1149");
     assert!(
-        forge::versions_for_game("1.7.10-pre4", &all, None)
+        forge::versions_for_game("1.7.10", &all, Some(&promotions))
             .unwrap()
             .versions
-            .is_empty()
+            .iter()
+            .all(|v| v.stable && !v.unstable_game)
     );
+    // The Mojang id `1.7.10-pre4` lists Forge's `1.7.10_pre4` builds, marked unstable; Forge's
+    // own name gives the same list.
+    for game in ["1.7.10-pre4", "1.7.10_pre4"] {
+        let pre = forge::versions_for_game(game, &all, Some(&promotions)).unwrap();
+        let marked: Vec<_> = pre
+            .versions
+            .iter()
+            .map(|v| (v.version.as_str(), v.stable, v.unstable_game))
+            .collect();
+        assert_eq!(
+            marked,
+            [
+                ("10.12.2.1149", false, true),
+                ("10.12.2.1148", false, true),
+                ("10.12.2.1137", false, true)
+            ],
+            "{game}"
+        );
+        assert!(pre.versions[0].latest);
+        assert_eq!(pre.recommended().unwrap().version, "10.12.2.1149");
+    }
     assert_eq!(
         forge::versions_for_game("1.4.7", &all, None)
             .unwrap_err()
@@ -219,6 +300,16 @@ fn finds_the_maven_version_with_its_branch() {
             "10.12.2.1149",
             "1.7.10_pre4-10.12.2.1149-prerelease",
         ),
+        (
+            "1.7.10-pre4",
+            "10.12.2.1149",
+            "1.7.10_pre4-10.12.2.1149-prerelease",
+        ),
+        (
+            "1.7.10-pre4",
+            "1.7.10-pre4-10.12.2.1148",
+            "1.7.10_pre4-10.12.2.1148-prerelease",
+        ),
     ];
     for (game, version, maven) in cases {
         assert_eq!(
@@ -230,5 +321,39 @@ fn finds_the_maven_version_with_its_branch() {
     assert_eq!(
         forge::installer_path_of("26.3-66.1.0").unwrap(),
         "net/minecraftforge/forge/26.3-66.1.0/forge-26.3-66.1.0-installer.jar"
+    );
+}
+
+#[test]
+fn reads_the_legacy_installer_of_a_pre_release_build() {
+    // `install_profile.json` of `1.7.10_pre4-10.12.2.1149-prerelease`, four of its libraries.
+    let bytes = read("forge_prerelease_install_profile.json");
+    assert_eq!(installer_format(&bytes).unwrap(), InstallerFormat::Legacy);
+    let installer = LegacyInstaller::parse(&bytes).unwrap();
+    // The installer names the Mojang id, the Forge jar keeps Forge's name.
+    assert_eq!(installer.minecraft, "1.7.10-pre4");
+    assert_eq!(
+        installer.library_path().unwrap(),
+        "net/minecraftforge/forge/1.7.10_pre4-10.12.2.1149-prerelease/forge-1.7.10_pre4-10.12.2.1149-prerelease.jar"
+    );
+    let profile = installer.profile("1.7.10-pre4", "10.12.2.1149").unwrap();
+    assert_eq!(profile.inherits_from, "1.7.10-pre4");
+    assert_eq!(profile.main_class, "net.minecraft.launchwrapper.Launch");
+    // A standalone profile: the platform library is the game's.
+    let names: Vec<_> = profile.libraries.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "net.minecraftforge:forge:1.7.10_pre4-10.12.2.1149-prerelease",
+            "net.minecraft:launchwrapper:1.9",
+            "org.scala-lang:scala-library:2.10.2"
+        ]
+    );
+    assert_eq!(
+        installer
+            .profile("1.7.10_pre4", "10.12.2.1149")
+            .unwrap_err()
+            .kind,
+        ErrorKind::Integrity
     );
 }

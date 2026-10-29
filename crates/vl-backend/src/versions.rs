@@ -36,6 +36,7 @@ pub(crate) fn handle(backend: &Backend, command: VersionCommand, replier: Replie
                                         stable: v.stable,
                                         recommended: v.recommended,
                                         latest: v.latest,
+                                        unstable_game: v.unstable_game,
                                     })
                                     .collect(),
                             ))
