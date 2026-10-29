@@ -81,7 +81,7 @@ pub fn package() -> Result<(), String> {
         info_plist(&version).as_bytes(),
     )?;
     write(&contents.join("PkgInfo"), b"APPL????")?;
-    let icons = crate::linux::ico_pngs(&read(&root().join("assets/icons/vibelauncher.ico"))?)?;
+    let icons = crate::icons::pngs(&[16, 32, 64, 128, 256, 512])?;
     write(&resources.join(ICON), &icns(&icons)?)?;
     write(
         &resources.join("LICENSE.txt"),
@@ -386,16 +386,15 @@ mod tests {
     }
 
     #[test]
-    fn the_placeholder_icon_gives_an_icns_file() {
-        let ico = read(&root().join("assets/icons/vibelauncher.ico")).unwrap();
-        let icons = crate::linux::ico_pngs(&ico).unwrap();
+    fn the_logo_gives_an_icns_file() {
+        let icons = crate::icons::pngs(&[16, 32, 64, 128, 256, 512]).unwrap();
         let icns = icns(&icons).unwrap();
         assert_eq!(icns.get(..4), Some(&b"icns"[..]));
         assert_eq!(
             u32::from_be_bytes(icns[4..8].try_into().unwrap()) as usize,
             icns.len()
         );
-        // 256 px is the largest image: ic08 and ic13.
-        assert!(icns.windows(4).any(|w| w == b"ic08"));
+        // 512 px is the largest image: ic09 and ic14.
+        assert!(icns.windows(4).any(|w| w == b"ic09"));
     }
 }

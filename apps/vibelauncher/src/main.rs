@@ -293,6 +293,12 @@ impl eframe::App for App<'_> {
     }
 }
 
+/// The window icon: the 256 px logo (`assets/icons/png/256.png`).
+fn window_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icons/png/256.png"))
+        .unwrap_or_default()
+}
+
 /// The window's options; it opens where the last one was.
 ///
 /// `one_backend` limits wgpu to Direct3D 12 on Windows and to Vulkan on Linux. With every backend
@@ -305,6 +311,7 @@ fn native_options(geometry: &Geometry, one_backend: bool) -> eframe::NativeOptio
         .with_app_id(APP_ID)
         .with_inner_size(geometry.size.unwrap_or(egui::vec2(1280.0, 800.0)))
         .with_min_inner_size([960.0, 600.0])
+        .with_icon(window_icon())
         .with_maximized(geometry.maximized);
     if let Some(position) = geometry.position {
         viewport = viewport.with_position(position);

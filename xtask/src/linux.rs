@@ -130,6 +130,9 @@ impl Entry {
     }
 }
 
+/// The sizes of the hicolor PNG icons.
+const HICOLOR_SIZES: [u32; 8] = [16, 24, 32, 48, 64, 128, 256, 512];
+
 /// What every package is made of.
 struct Inputs {
     version: String,
@@ -138,6 +141,8 @@ struct Inputs {
     binaries: Vec<(&'static str, Vec<u8>)>,
     /// `(size, PNG)` of each icon, smallest first.
     icons: Vec<(u32, Vec<u8>)>,
+    /// The scalable icon (SVG).
+    icon_svg: Vec<u8>,
     desktop: Vec<u8>,
     metainfo: Vec<u8>,
     app_run: Vec<u8>,
@@ -176,7 +181,8 @@ pub fn package(formats: &[Format], target: Option<&str>) -> Result<(), String> {
         version,
         arch,
         binaries,
-        icons: ico_pngs(&read(&root().join("assets/icons/vibelauncher.ico"))?)?,
+        icons: crate::icons::pngs(&HICOLOR_SIZES)?,
+        icon_svg: read(&root().join("assets/icons/icon.svg"))?,
         desktop: text(&format!("{APP_ID}.desktop"))?,
         metainfo: text(&format!("{APP_ID}.metainfo.xml"))?,
         app_run: text("AppRun")?,
@@ -237,6 +243,10 @@ fn share_entries(inputs: &Inputs, metainfo: &str) -> Vec<Entry> {
         ));
     }
     entries.push(Entry::file(
+        format!("usr/share/icons/hicolor/scalable/apps/{APP_ID}.svg"),
+        inputs.icon_svg.clone(),
+    ));
+    entries.push(Entry::file(
         format!("usr/share/metainfo/{APP_ID}.{metainfo}"),
         inputs.metainfo.clone(),
     ));
@@ -246,7 +256,12 @@ fn share_entries(inputs: &Inputs, metainfo: &str) -> Vec<Entry> {
 /// The AppDir: `AppRun`, the desktop entry and the largest icon at its root, the executables in
 /// `usr/bin` and the shared files (the metadata named `.appdata.xml`, as appimagetool reads it).
 fn app_dir_entries(inputs: &Inputs) -> Result<Vec<Entry>, String> {
-    let (_, icon) = inputs.icons.last().ok_or("no icons")?;
+    // The AppImage root holds the 256 px image.
+    let (_, icon) = inputs
+        .icons
+        .iter()
+        .rfind(|(s, _)| *s == 256)
+        .ok_or("no icons")?;
     let mut entries = vec![
         Entry::executable("AppRun", inputs.app_run.clone()),
         Entry::file(format!("{APP_ID}.desktop"), inputs.desktop.clone()),
@@ -500,54 +515,6 @@ fn append(
         .map_err(|e| format!("tar {path}: {e}"))
 }
 
-/// The PNG images of an ICO file as `(size, PNG)`, smallest first; only square PNG entries are
-/// taken, and their size is read from the PNG header.
-pub(crate) fn ico_pngs(ico: &[u8]) -> Result<Vec<(u32, Vec<u8>)>, String> {
-    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
-    let u16_at = |at: usize| {
-        ico.get(at..at + 2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-    };
-    let u32_at = |at: usize| {
-        ico.get(at..at + 4)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-    };
-    if u16_at(0) != Some(0) || u16_at(2) != Some(1) {
-        return Err("the icon is not an ICO file".into());
-    }
-    let count = usize::from(u16_at(4).unwrap_or(0));
-    let mut icons: Vec<(u32, Vec<u8>)> = Vec::new();
-    for i in 0..count {
-        let at = 6 + 16 * i;
-        let (Some(size), Some(offset)) = (u32_at(at + 8), u32_at(at + 12)) else {
-            return Err("the ICO directory is cut short".into());
-        };
-        let (offset, size) = (offset as usize, size as usize);
-        let Some(image) = ico.get(offset..offset.saturating_add(size)) else {
-            return Err(format!("ICO image {i} lies outside the file"));
-        };
-        if !image.starts_with(PNG) || image.get(12..16) != Some(b"IHDR") {
-            continue;
-        }
-        let dim = |at: usize| {
-            image
-                .get(at..at + 4)
-                .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
-        };
-        if let (Some(w), Some(h)) = (dim(16), dim(20))
-            && w == h
-            && !icons.iter().any(|(s, _)| *s == w)
-        {
-            icons.push((w, image.to_vec()));
-        }
-    }
-    if icons.is_empty() {
-        return Err("the ICO file has no square PNG images".into());
-    }
-    icons.sort_by_key(|(s, _)| *s);
-    Ok(icons)
-}
-
 /// `bytes` with CRLF line ends turned into LF (a checkout on Windows may have CRLF).
 fn lf(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
@@ -574,22 +541,6 @@ mod tests {
         png
     }
 
-    fn ico(images: &[Vec<u8>]) -> Vec<u8> {
-        let mut out = vec![0, 0, 1, 0];
-        out.extend(u16::try_from(images.len()).unwrap().to_le_bytes());
-        let mut offset = 6 + 16 * images.len();
-        let mut data: Vec<u8> = Vec::new();
-        for image in images {
-            out.extend([0, 0, 0, 0, 1, 0, 32, 0]);
-            out.extend(u32::try_from(image.len()).unwrap().to_le_bytes());
-            out.extend(u32::try_from(offset).unwrap().to_le_bytes());
-            offset += image.len();
-            data.extend(image);
-        }
-        out.extend(data);
-        out
-    }
-
     fn inputs() -> Inputs {
         Inputs {
             version: "1.2.3".into(),
@@ -599,6 +550,7 @@ mod tests {
                 ("vl-cli", b"cli".to_vec()),
             ],
             icons: vec![(16, png(16)), (256, png(256))],
+            icon_svg: b"<svg/>".to_vec(),
             desktop: b"[Desktop Entry]\n".to_vec(),
             metainfo: b"<component/>\n".to_vec(),
             app_run: b"#!/bin/sh\n".to_vec(),
@@ -624,27 +576,6 @@ mod tests {
             update_information("x86_64"),
             "gh-releases-zsync|FQ401|vibelauncher|latest|vibelauncher-*-linux-x86_64.AppImage.zsync"
         );
-    }
-
-    #[test]
-    fn the_icons_are_the_png_images_of_the_ico_file() {
-        let icons = ico_pngs(&ico(&[png(48), b"BMP".to_vec(), png(16), png(48)])).unwrap();
-        let sizes: Vec<u32> = icons.iter().map(|(s, _)| *s).collect();
-        assert_eq!(sizes, [16, 48]);
-        assert_eq!(icons[0].1, png(16));
-        assert!(ico_pngs(&ico(&[b"BMP".to_vec()])).is_err());
-        assert!(ico_pngs(b"not an icon").is_err());
-        let mut cut = ico(&[png(16)]);
-        cut.truncate(30);
-        assert!(ico_pngs(&cut).is_err());
-    }
-
-    #[test]
-    fn the_placeholder_icon_has_the_hicolor_sizes() {
-        let icons =
-            ico_pngs(&read(&root().join("assets/icons/vibelauncher.ico")).unwrap()).unwrap();
-        let sizes: Vec<u32> = icons.iter().map(|(s, _)| *s).collect();
-        assert_eq!(sizes, [16, 24, 32, 48, 64, 256]);
     }
 
     #[test]
@@ -700,6 +631,7 @@ mod tests {
             "usr/share/applications/me.vibefork.VibeLauncher.desktop",
             "usr/share/icons/hicolor/16x16/apps/me.vibefork.VibeLauncher.png",
             "usr/share/icons/hicolor/256x256/apps/me.vibefork.VibeLauncher.png",
+            "usr/share/icons/hicolor/scalable/apps/me.vibefork.VibeLauncher.svg",
             "usr/share/metainfo/me.vibefork.VibeLauncher.appdata.xml",
         ] {
             assert!(names.contains(&name), "{name}");
