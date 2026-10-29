@@ -16,4 +16,4 @@ See [PRIVACY.md](PRIVACY.md).
 
 The workspace layout, layers and the core facade are described in [docs/architecture.md](docs/architecture.md). `cargo run -p vl-cli -- --mock instances list` runs the command line on synthetic data.
 
-`cargo xtask ci` runs the layer check, the format check, clippy (warnings denied), tests and a WebAssembly build of the core layer. `cargo xtask version set X.Y.Z` sets the version in `[workspace.package]`. `cargo xtask package portable` builds the portable Windows archive into `target/dist`.
+`cargo xtask ci` runs the layer check, the format check, clippy (warnings denied), tests and a WebAssembly build of the core layer. `cargo xtask version set X.Y.Z` sets the version in `[workspace.package]`. `cargo xtask package portable` builds the portable Windows archive into `target/dist`; `cargo xtask package linux` builds the Linux tar.gz, AppImage, deb and rpm packages (it needs appimagetool and nfpm, see [docs/architecture.md](docs/architecture.md#packaging)).

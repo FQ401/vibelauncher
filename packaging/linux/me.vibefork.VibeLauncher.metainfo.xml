@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>me.vibefork.VibeLauncher</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>VibeLauncher</name>
+  <summary>Minecraft launcher with mods and modpacks</summary>
+  <developer_name>VibeLauncher contributors</developer_name>
+  <description>
+    <p>
+      VibeLauncher installs, manages and launches Minecraft: Java Edition. It keeps separate
+      instances with their own game version, mod loader, mods and modpacks, signs in with a
+      Microsoft account and downloads the Java runtime each game version needs.
+    </p>
+    <p>
+      VibeLauncher is not an official Minecraft product and is not approved by or associated
+      with Mojang or Microsoft.
+    </p>
+  </description>
+  <launchable type="desktop-id">me.vibefork.VibeLauncher.desktop</launchable>
+  <url type="homepage">https://github.com/FQ401/vibelauncher</url>
+  <url type="bugtracker">https://github.com/FQ401/vibelauncher/issues</url>
+  <provides>
+    <binary>vibelauncher</binary>
+    <binary>vl-cli</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>
