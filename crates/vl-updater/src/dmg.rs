@@ -214,7 +214,10 @@ mod tests {
 }
 
 /// Tests with real disk images; they need `hdiutil`, `ditto` and `codesign`.
-#[cfg(all(test, target_os = "macos"))]
+// Two attributes, not `all(test, ...)`: clippy's `allow-*-in-tests` options (clippy.toml) only
+// recognise a plain `#[cfg(test)]`.
+#[cfg(test)]
+#[cfg(target_os = "macos")]
 mod macos_tests {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
