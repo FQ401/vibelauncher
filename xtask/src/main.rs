@@ -9,12 +9,14 @@
 //! - `package tar|appimage|deb|rpm|linux [--target <triple>]` — the Linux packages in `target/dist`
 //!   (`linux`: all four);
 //! - `package macos` — the universal macOS disk image in `target/dist` (on macOS);
+//! - `icons` — assembles `assets/icons/vibelauncher.ico` from the PNG images in `assets/icons/png`;
 //! - `sources` — every dependency in `Cargo.lock` comes from crates.io or the workspace;
 //! - `release manifest <dir> --repo <owner/name> --date <YYYY-MM-DD> [--minimum-version <v>]` —
 //!   `SHA256SUMS.txt` and the self-update manifest `latest.json` for the packages in `<dir>`;
 //! - `release sign <dir>` — `latest.json.minisig` with the key in `VL_UPDATE_SECRET_KEY`.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // a command-line tool reports to the terminal
 
+mod icons;
 mod layers;
 mod linux;
 mod macos;
@@ -28,7 +30,7 @@ use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage: cargo xtask ci [lint|test] | cargo xtask version [set X.Y.Z[-pre]] \
                      | cargo xtask package portable|msi|tar|appimage|deb|rpm|linux [--target <triple>] \
-                     | cargo xtask package macos | cargo xtask sources \
+                     | cargo xtask package macos | cargo xtask icons | cargo xtask sources \
                      | cargo xtask release manifest <dir> --repo <owner/name> --date <YYYY-MM-DD> \
                      [--minimum-version <X.Y.Z>] | cargo xtask release sign <dir>";
 
@@ -42,6 +44,7 @@ fn main() -> ExitCode {
         ["version"] => read_version().map(|v| println!("{v}")),
         ["version", "set", v] => set_version(v),
         ["package", "macos"] => macos::package(),
+        ["icons"] => icons::generate(),
         ["sources"] => sources::check(),
         ["release", "sign", dir] => release::sign(Path::new(dir)),
         ["release", "manifest", dir, rest @ ..] => {

@@ -101,36 +101,15 @@ pub fn bring_to_front() {
     }
 }
 
-/// A 32x32 RGBA picture of the icon: a rounded square in the accent color with a "V".
-fn icon_rgba() -> (Vec<u8>, u32) {
-    const SIZE: u32 = 32;
-    let accent = [0x7c, 0x5c, 0xff, 0xff];
-    let white = [0xff, 0xff, 0xff, 0xff];
-    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-            // Rounded corners of radius 7.
-            let cx = fx.clamp(7.0, SIZE as f32 - 7.0);
-            let cy = fy.clamp(7.0, SIZE as f32 - 7.0);
-            let inside = (fx - cx).powi(2) + (fy - cy).powi(2) <= 49.0;
-            // The two strokes of a "V" from (9,8) and (23,8) to (16,25).
-            let stroke = |x0: f32, y0: f32, x1: f32, y1: f32| {
-                let (dx, dy) = (x1 - x0, y1 - y0);
-                let t = (((fx - x0) * dx + (fy - y0) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-                let (px, py) = (x0 + t * dx, y0 + t * dy);
-                (fx - px).powi(2) + (fy - py).powi(2) <= 4.0
-            };
-            let v = stroke(9.0, 8.0, 16.0, 25.0) || stroke(23.0, 8.0, 16.0, 25.0);
-            let pixel = match (inside, v) {
-                (true, true) => white,
-                (true, false) => accent,
-                (false, _) => [0, 0, 0, 0],
-            };
-            rgba.extend_from_slice(&pixel);
-        }
-    }
-    (rgba, SIZE)
+/// The picture of the tray icon as `(RGBA, width, height)`: the logo at 32 px in full colour; on
+/// macOS the 64 px single-colour mark, a template image the menu bar tints itself.
+fn icon_rgba() -> Result<(Vec<u8>, u32, u32), String> {
+    #[cfg(target_os = "macos")]
+    let png = &include_bytes!("../../../assets/icons/png/mono-dark-64.png")[..];
+    #[cfg(not(target_os = "macos"))]
+    let png = &include_bytes!("../../../assets/icons/png/32.png")[..];
+    let icon = eframe::icon_data::from_png_bytes(png).map_err(|e| e.to_string())?;
+    Ok((icon.rgba, icon.width, icon.height))
 }
 
 mod platform {
@@ -187,14 +166,17 @@ mod platform {
             };
             let _ = tx.send(action);
         }));
-        let (rgba, size) = super::icon_rgba();
-        let icon = tray_icon::Icon::from_rgba(rgba, size, size).map_err(|e| e.to_string())?;
+        let (rgba, width, height) = super::icon_rgba()?;
+        let icon = tray_icon::Icon::from_rgba(rgba, width, height).map_err(|e| e.to_string())?;
         let builder = TrayIconBuilder::new()
             .with_id("vibelauncher")
             .with_icon(icon)
             .with_tooltip(&texts.tooltip)
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(cfg!(target_os = "macos"));
+        // On macOS the icon is a template image: the menu bar tints it for light and dark.
+        #[cfg(target_os = "macos")]
+        let builder = builder.with_icon_as_template(true);
         // On macOS a title is text drawn next to the icon in the menu bar.
         #[cfg(not(target_os = "macos"))]
         let builder = builder.with_title("VibeLauncher");

@@ -857,7 +857,7 @@ The launcher trusts its own signed manifest, not the operating system's code sig
 
 - **Executables (Windows).** The C runtime is linked statically (`+crt-static` for MSVC targets in
   `.cargo/config.toml`), so no Visual C++ Redistributable is needed. The build scripts of
-  `vibelauncher` and `vl-cli` embed the icon `assets/icons/vibelauncher.ico` (a placeholder) and
+  `vibelauncher` and `vl-cli` embed the icon `assets/icons/vibelauncher.ico` (16 to 256 px, built by `cargo xtask icons` from the PNG images in `assets/icons/png`, which are rasterized from the SVG logo: `icon-16.svg` for 16 and 20 px, `icon.svg` from 24 px) and
   a version resource (product name, file description, version from `[workspace.package]`). In
   release builds the desktop app uses the GUI subsystem (no console window). At start it sets the
   process AppUserModelID `VibeLauncher.VibeLauncher`, which taskbar grouping and toast
@@ -885,7 +885,7 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   The shared files come from `packaging/linux`: the desktop entry and the AppStream metadata of
   the application ID `me.vibefork.VibeLauncher` (in the AppImage the metadata is named
   `<id>.appdata.xml`, as appimagetool reads it), and the hicolor icons, the PNG images of
-  `assets/icons/vibelauncher.ico` (16 to 256 px, a placeholder). The desktop app's window carries
+  `assets/icons/png` (16 to 512 px) and the scalable `icon.svg`. The desktop app's window carries
   the same ID as its Wayland app ID and X11 class. `AppRun` starts the desktop app, or `vl-cli`
   when the first argument is `--vl-cli`. The tools come from `PATH` or the `APPIMAGETOOL` and
   `NFPM` variables: appimagetool (with desktop-file-validate, appstreamcli and zsyncmake) and
@@ -902,7 +902,7 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   | `VibeLauncher.app/Contents/MacOS/vibelauncher` | the desktop app, the bundle's executable |
   | `VibeLauncher.app/Contents/MacOS/vl-cli` | the command line (code identifier `me.vibefork.VibeLauncher.vl-cli`) |
   | `VibeLauncher.app/Contents/Info.plist` | bundle ID `me.vibefork.VibeLauncher`, version `X.Y.Z` (a pre-release suffix dropped), `LSMinimumSystemVersion` 11.0, high resolution, category games; no `LSFileQuarantineEnabled`, so files the launcher downloads carry no quarantine mark |
-  | `VibeLauncher.app/Contents/Resources/VibeLauncher.icns` | the PNG images of `assets/icons/vibelauncher.ico` (a placeholder) |
+  | `VibeLauncher.app/Contents/Resources/VibeLauncher.icns` | the PNG images of `assets/icons/png` (16 to 512 px) |
   | `VibeLauncher.app/Contents/Resources/LICENSE.txt` | the license |
   | `Applications` | a link to `/Applications` |
   | `If VibeLauncher does not open.txt` | how to open an app that is not notarized |
@@ -1026,7 +1026,7 @@ the console buffer, play time is counted and the exit is noticed. A crash opens 
 Home with the error chip; a normal exit does so when `launcher.on_game_exit` is `show_window`.
 Closing the window while a game runs in this mode also keeps watching. A tray icon (`tray-icon`)
 offers to show the launcher, stop the game (the window comes back and asks first) and quit after
-the game. On Windows the icon lives on its own thread with a hidden `winsafe` window running its
+the game. The icon is the logo (32 px, full colour; on macOS the single-colour mark `mono-dark`, a template image the menu bar tints), and the window carries the 256 px logo. On Windows the icon lives on its own thread with a hidden `winsafe` window running its
 message loop; on Linux and the BSDs it is a D-Bus StatusNotifierItem (`ksni`, no GTK); on both a
 left click shows the launcher. On macOS it is a status item in the menu bar whose menu opens on a
 click: it lives on the main thread, and between windows the watcher hands that thread's AppKit
