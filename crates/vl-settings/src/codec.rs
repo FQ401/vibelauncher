@@ -3,9 +3,9 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use vl_core::settings::{
-    AdvancedSettings, CommandSettings, ConsoleSettings, EnvSettings, JavaSettings, MemorySettings,
-    NativesSettings, Overrides, PerformanceSettings, SCHEMA_VERSION, Settings, UpdateSettings,
-    WindowSettings,
+    AdvancedSettings, CommandSettings, ConsoleSettings, EnvSettings, JavaSettings,
+    LauncherSettings, MemorySettings, NativesSettings, Overrides, PerformanceSettings,
+    SCHEMA_VERSION, Settings, UpdateSettings, WindowSettings,
 };
 
 const VERSION_KEY: &str = "schema_version";
@@ -38,7 +38,8 @@ fn drop_malformed(table: &mut toml::Table, warnings: &mut Vec<String>) {
         "performance" => PerformanceSettings,
         "natives" => NativesSettings,
         "updates" => UpdateSettings,
-        "advanced" => AdvancedSettings
+        "advanced" => AdvancedSettings,
+        "launcher" => LauncherSettings
     );
 }
 

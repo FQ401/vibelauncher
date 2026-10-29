@@ -222,7 +222,8 @@ mod tests {
     use super::*;
     use vl_core::install::MinStability;
     use vl_core::settings::{
-        CommandSettings, EnvSettings, MemorySettings, PerformanceSettings, WindowSettings,
+        AfterLaunch, CommandSettings, EnvSettings, LauncherSettings, MemorySettings, OnGameExit,
+        PerformanceSettings, WindowSettings,
     };
 
     struct Dir(PathBuf);
@@ -423,6 +424,31 @@ log_max_files = 0
         );
         let l = s.global();
         assert_eq!(l.value.advanced.log_max_files, 30);
+        assert_eq!(l.warnings.len(), 1);
+    }
+
+    #[test]
+    fn launcher_behaviour_round_trips_and_an_unknown_value_resets_the_group() {
+        let d = Dir::new("launcher");
+        let s = SettingsStore::new(&d.0);
+        let mut v = Settings::default();
+        v.launcher.after_launch = AfterLaunch::KeepOpen;
+        v.launcher.on_game_exit = OnGameExit::Nothing;
+        s.set_global(&v).unwrap();
+        let text = fs::read_to_string(s.global_path()).unwrap();
+        assert!(
+            text.contains("[launcher]") && text.contains("after_launch = \"keep_open\""),
+            "{text}"
+        );
+        assert_eq!(s.global().value.launcher, v.launcher);
+        write(
+            s.global_path(),
+            "[launcher]
+after_launch = \"float_away\"
+",
+        );
+        let l = s.global();
+        assert_eq!(l.value.launcher, LauncherSettings::default());
         assert_eq!(l.warnings.len(), 1);
     }
 

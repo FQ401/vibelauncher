@@ -43,6 +43,22 @@ stub-catalog = Search for mods, modpacks, resource packs and shaders.
 stub-account = Microsoft accounts and offline names.
 stub-settings = Launcher settings: Java, memory, appearance.
 
+stop-confirm = Stop the running game? Unsaved progress may be lost.
+stop-confirm-yes = Stop the game
+
+settings-after-launch = When a game starts
+settings-after-launch-tray = Hide the launcher to the tray
+settings-after-launch-keep = Keep the launcher window open
+settings-after-launch-close = Close the launcher
+settings-on-exit = When the game exits
+settings-on-exit-show = Show the launcher window
+settings-on-exit-nothing = Do nothing
+
+tray-tooltip = VibeLauncher: the game is running
+tray-show = Show the launcher
+tray-stop = Stop the game…
+tray-quit-after = Quit after the game
+
 task-launch = Launching the game
 task-install-version = Installing a version
 task-download = Downloading files

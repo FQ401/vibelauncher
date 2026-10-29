@@ -271,6 +271,31 @@ fn a_running_game_stops_on_request_and_cannot_start_twice() {
 }
 
 #[test]
+fn a_game_set_to_crash_exits_with_a_crash() {
+    let options = MockOptions {
+        game_crashes: true,
+        ..MockOptions::instant()
+    };
+    let facade = MockFacade::new(options);
+    let events = facade.subscribe();
+    let instance = InstanceId::new("survival").unwrap();
+    facade
+        .call(Command::Launch(LaunchCommand::Launch(LaunchRequest {
+            instance: instance.clone(),
+            account: None,
+            offline: true,
+        })))
+        .wait()
+        .unwrap();
+    let seen = collect_until(&events, exited(&instance));
+    let Some(Event::Launch(LaunchEvent::Exited { exit, .. })) = seen.last() else {
+        panic!("no exit");
+    };
+    assert!(exit.crashed && !exit.stopped_by_user);
+    assert_eq!(exit.code, Some(1));
+}
+
+#[test]
 fn instances_are_created_renamed_and_deleted_with_events() {
     let facade = MockFacade::new(MockOptions::instant());
     let events = facade.subscribe();

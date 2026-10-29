@@ -228,7 +228,7 @@ fn run_game(task: Task, instance: &InstanceId, account: &Account) {
         .all(|(stage, total)| task.run_stage(stage, total));
     if !prepared {
         task.finish(TaskOutcome::Cancelled);
-        end_game(&inner, instance, None, true);
+        end_game(&inner, instance, None, true, false);
         return;
     }
     task.finish(TaskOutcome::Succeeded);
@@ -257,17 +257,34 @@ fn run_game(task: Task, instance: &InstanceId, account: &Account) {
             std::thread::sleep(idle);
         }
     }
-    end_game(&inner, instance, Some(0), stop.load(Ordering::Relaxed));
+    let stopped_by_user = stop.load(Ordering::Relaxed);
+    let crashed = inner.options.game_crashes && !stopped_by_user;
+    if crashed {
+        console::emit(&inner, instance, console::stack_trace());
+    }
+    end_game(
+        &inner,
+        instance,
+        Some(i32::from(crashed)),
+        stopped_by_user,
+        crashed,
+    );
 }
 
-fn end_game(inner: &Inner, instance: &InstanceId, code: Option<i32>, stopped_by_user: bool) {
+fn end_game(
+    inner: &Inner,
+    instance: &InstanceId,
+    code: Option<i32>,
+    stopped_by_user: bool,
+    crashed: bool,
+) {
     inner.lock().games.remove(instance);
     inner.set_state(instance, InstanceState::Stopped);
     inner.publish(Event::Launch(LaunchEvent::Exited {
         instance: instance.clone(),
         exit: GameExit {
             code,
-            crashed: false,
+            crashed,
             stopped_by_user,
             session_ms: 0,
             crash_report: None,
