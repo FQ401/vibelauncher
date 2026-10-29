@@ -13,7 +13,7 @@
 //!    in the middle of the replacement;
 //! 2. carries out the plan ([`crate::apply`]: the size and SHA-256 are checked again, a portable
 //!    folder renames each old item away before the new one moves in, a failure moves everything
-//!    back);
+//!    back; a Windows Installer package is run and waited for);
 //! 3. on success writes the "just updated" marker and removes the download; on failure writes
 //!    the failure record (`last-error.json`) that the next start reports;
 //! 4. starts the launcher again when the job asks for it — the new version, or the old one after
@@ -126,7 +126,7 @@ pub enum HelperOutcome {
 
 /// The job for installing `staged` over the launcher of version `from`, installed as `method`
 /// and running as `exe`. Refused before the launcher exits when the install method is not
-/// replaced automatically, when its replacement is not implemented yet, and when the download
+/// replaced automatically, when its replacement is not available on this OS, and when the download
 /// no longer matches its size and SHA-256.
 pub fn prepare(
     dir: &UpdateDir,
@@ -140,8 +140,10 @@ pub fn prepare(
     let plan = vl_update::plan(method, exe, &staged.version, &staged.artifact, &staged.file);
     match &plan.replacement {
         Replacement::Link => return Err(UpdaterError::NothingToReplace),
-        Replacement::RunInstaller { .. } => {
-            return Err(UpdaterError::NotImplemented("installing an MSI update"));
+        Replacement::RunInstaller { .. } if !cfg!(windows) => {
+            return Err(UpdaterError::NotImplemented(
+                "installing an MSI package outside Windows",
+            ));
         }
         Replacement::CopyFromDmg { .. } if !cfg!(target_os = "macos") => {
             return Err(UpdaterError::NotImplemented(
@@ -150,7 +152,8 @@ pub fn prepare(
         }
         Replacement::Unpack { .. }
         | Replacement::RenameOver { .. }
-        | Replacement::CopyFromDmg { .. } => {}
+        | Replacement::CopyFromDmg { .. }
+        | Replacement::RunInstaller { .. } => {}
     }
     verify_file(&plan.file, plan.size, &plan.sha256)?;
     Ok(HelperJob {

@@ -24,6 +24,9 @@ on:
       - "apps/*/build.rs"
       - "packaging/**"
       - "xtask/src/package.rs"
+      - "xtask/src/msi.rs"
+      - ".config/dotnet-tools.json"
+      - "crates/vl-updater/src/msi.rs"
       - "xtask/src/linux.rs"
       - "xtask/src/macos.rs"
       - "crates/vl-updater/src/dmg.rs"
@@ -74,6 +77,102 @@ jobs:
         with:
           name: vibelauncher-windows-x64-portable
           path: target/dist/
+          if-no-files-found: error
+
+  # The per-user installer, built with WiX 7 (the .NET tool pinned in .config/dotnet-tools.json;
+  # the owner accepted its Open Source Maintenance Fee EULA, the build passes -acceptEula wix7).
+  # Installed for the runner's user, upgraded by a second build through the self-update's path,
+  # then removed.
+  windows-msi:
+    name: windows installer (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: package-msi
+      - name: Build the installer
+        run: cargo --locked xtask package msi --target x86_64-pc-windows-msvc
+      - name: Check the checksum file
+        shell: pwsh
+        run: |
+          $msi = Get-Item target/dist/vibelauncher-*-windows-x64.msi
+          $expected = (Get-Content "$($msi.FullName).sha256").Split(' ')[0]
+          if ((Get-FileHash $msi.FullName -Algorithm SHA256).Hash -ne $expected) { throw 'checksum mismatch' }
+      - name: Smoke test (install for the user, no elevation)
+        shell: powershell
+        run: |
+          $msi = (Get-Item target/dist/vibelauncher-*-windows-x64.msi).FullName
+          $log = Join-Path $env:RUNNER_TEMP 'install.log'
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l* `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 80; throw "msiexec /i failed ($($p.ExitCode))" }
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\VibeLauncher'
+          foreach ($name in 'vibelauncher.exe', 'vl-cli.exe', 'vibelauncher.install', 'LICENSE.txt') {
+            if (-not (Test-Path (Join-Path $dir $name))) { throw "not installed: $name" }
+          }
+          if ((Get-Content (Join-Path $dir 'vibelauncher.install') -Raw).Trim() -ne 'msi') { throw 'the install marker is not msi' }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'VibeLauncher.lnk'
+          if (-not (Test-Path $lnk)) { throw 'no Start menu shortcut' }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+          if ($target -ne (Join-Path $dir 'vibelauncher.exe')) { throw "the shortcut points to '$target'" }
+          # The package's upgrade code and the shortcut's AppUserModelID.
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $db = $installer.OpenDatabase($msi, 0)
+          function Query($sql) {
+            $view = $db.OpenView($sql)
+            [void]$view.Execute()
+            $record = $view.Fetch()
+            [void]$view.Close()
+            if ($record) { $record.StringData(1) }
+          }
+          $aumid = Query "SELECT PropVariantValue FROM MsiShortcutProperty WHERE PropertyKey='System.AppUserModel.ID'"
+          if ($aumid -ne 'VibeLauncher.VibeLauncher') { throw "the shortcut's AppUserModelID is '$aumid'" }
+          $code = Query "SELECT Value FROM Property WHERE Property='UpgradeCode'"
+          "UPGRADE_CODE=$code" | Add-Content -Encoding ascii $env:GITHUB_ENV
+          $version = Join-Path $env:RUNNER_TEMP 'version.txt'
+          $p = Start-Process (Join-Path $dir 'vibelauncher.exe') -ArgumentList '--version' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $version
+          Get-Content $version
+          if ($p.ExitCode -ne 0) { throw "vibelauncher --version failed ($($p.ExitCode))" }
+          if (-not (Select-String -Path $version -SimpleMatch "commit $env:GITHUB_SHA")) { throw 'not this commit' }
+          $status = & (Join-Path $dir 'vl-cli.exe') update status
+          $status
+          if ($LASTEXITCODE -ne 0) { throw "vl-cli update status failed ($LASTEXITCODE)" }
+          if (-not ($status -match '\(msi\)')) { throw 'the install method is not msi' }
+      - name: Upgrade with a second build through the self-update (vl-updater test)
+        shell: pwsh
+        run: |
+          # A new build of the package has a new product code: a major upgrade of the installed one.
+          cargo --locked xtask package msi --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "the second build failed ($LASTEXITCODE)" }
+          $env:VL_TEST_MSI = (Get-Item target/dist/vibelauncher-*-windows-x64.msi).FullName
+          cargo test -p vl-updater --locked the_release_package_installs -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw "installing through the self-update failed ($LASTEXITCODE)" }
+      - name: Check the upgrade, then uninstall
+        shell: powershell
+        run: |
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $products = @($installer.RelatedProducts($env:UPGRADE_CODE) | Where-Object { $_ })
+          if ($products.Count -ne 1) { throw "$($products.Count) products installed after the upgrade, expected 1" }
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\VibeLauncher'
+          $status = & (Join-Path $dir 'vl-cli.exe') update status
+          $status
+          if ($LASTEXITCODE -ne 0 -or -not ($status -match '\(msi\)')) { throw 'the upgraded launcher does not run as msi' }
+          $msi = (Get-Item target/dist/vibelauncher-*-windows-x64.msi).FullName
+          $log = Join-Path $env:RUNNER_TEMP 'uninstall.log'
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /l* `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 80; throw "msiexec /x failed ($($p.ExitCode))" }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'VibeLauncher.lnk'
+          foreach ($path in $dir, $lnk, 'HKCU:\Software\VibeLauncher\Installer') {
+            if (Test-Path $path) { throw "left behind: $path" }
+          }
+          $products = @($installer.RelatedProducts($env:UPGRADE_CODE) | Where-Object { $_ })
+          if ($products.Count -ne 0) { throw 'still installed' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vibelauncher-windows-x64-msi
+          path: target/dist/vibelauncher-*-windows-x64.msi*
           if-no-files-found: error
 
   # tar.gz, AppImage (+ .zsync), deb and rpm. Built on Ubuntu 22.04, so the executables need

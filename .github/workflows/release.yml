@@ -6,11 +6,11 @@ name: release
 # `dry_run` (the default) it stops before the release and leaves the files as a workflow artifact.
 #
 # Release files (`<version>` from `cargo xtask version`):
+#   vibelauncher-<version>-windows-x64.msi
 #   vibelauncher-<version>-windows-x64-portable.zip
 #   vibelauncher-<version>-macos-universal.dmg
 #   vibelauncher-<version>-linux-<x86_64|aarch64>.{tar.gz,AppImage,AppImage.zsync,deb,rpm}
 #   SHA256SUMS.txt, latest.json, latest.json.minisig (when signed)
-# The Windows installer `vibelauncher-<version>-windows-x64.msi` is not built yet.
 #
 # Signing: with the secret `VL_UPDATE_SECRET_KEY` (and `VL_UPDATE_SECRET_KEY_PASSWORD` for a
 # password-protected key) `latest.json` is signed with minisign; the repository variable

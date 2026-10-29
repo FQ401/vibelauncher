@@ -48,9 +48,9 @@ impl<F: Fn() -> bool> GameGuard for F {
 }
 
 /// Installs the update of `plan`: refuses while a game runs, checks the size and SHA-256 of the
-/// downloaded file again, then replaces the launcher. Portable folders, AppImages and (on macOS)
-/// application bundles from a disk image are replaced here; the MSI replacement is not
-/// implemented yet ([`UpdaterError::NotImplemented`]).
+/// downloaded file again, then replaces the launcher. Portable folders and AppImages are
+/// replaced here, application bundles from a disk image on macOS and Windows Installer packages
+/// on Windows (elsewhere [`UpdaterError::NotImplemented`]).
 pub fn apply(plan: &UpdatePlan, guard: &dyn GameGuard) -> Result<(), UpdaterError> {
     if plan.replacement == Replacement::Link {
         return Err(UpdaterError::NothingToReplace);
@@ -62,9 +62,7 @@ pub fn apply(plan: &UpdatePlan, guard: &dyn GameGuard) -> Result<(), UpdaterErro
     match &plan.replacement {
         Replacement::Unpack { archive, dir } => replace_portable(archive, dir).map(|_| ()),
         Replacement::RenameOver { file, target } => replace_appimage(file, target),
-        Replacement::RunInstaller { .. } => {
-            Err(UpdaterError::NotImplemented("installing an MSI update"))
-        }
+        Replacement::RunInstaller { package } => crate::msi::install_msi(package),
         Replacement::CopyFromDmg { image, bundle } => crate::dmg::replace_app_bundle(image, bundle),
         Replacement::Link => Err(UpdaterError::NothingToReplace),
     }

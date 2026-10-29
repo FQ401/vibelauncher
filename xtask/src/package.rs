@@ -97,15 +97,15 @@ fn archive_name(version: &str, arch: &str) -> String {
     format!("vibelauncher-{version}-windows-{arch}-portable.zip")
 }
 
-/// The architecture name used in file names for a Windows MSVC target triple.
-fn windows_arch(target: &str) -> Result<&'static str, String> {
+/// The architecture name used in file names (and by WiX) for a Windows MSVC target triple.
+pub(crate) fn windows_arch(target: &str) -> Result<&'static str, String> {
     let arch = match target {
         "x86_64-pc-windows-msvc" => "x64",
         "aarch64-pc-windows-msvc" => "arm64",
         "i686-pc-windows-msvc" => "x86",
         _ => {
             return Err(format!(
-                "the portable archive is built for a Windows MSVC target, not `{target}` \
+                "the Windows packages are built for a Windows MSVC target, not `{target}` \
                  (pass --target x86_64-pc-windows-msvc)"
             ));
         }
