@@ -22,6 +22,9 @@ pub const MOCK_DATA: &str = "mock-data";
 pub const THEME_DARK: &str = "theme-to-dark";
 pub const THEME_LIGHT: &str = "theme-to-light";
 pub const BACKEND_LOST: &str = "backend-lost";
+pub const LAST_ERROR: &str = "last-error";
+pub const DISMISS_HINT: &str = "dismiss-hint";
+pub const STARTUP_FAILED: &str = "startup-failed";
 
 pub const COL_NAME: &str = "col-name";
 pub const COL_VERSION: &str = "col-version";

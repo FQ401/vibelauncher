@@ -4226,6 +4226,7 @@ version = "0.0.0"
 dependencies = [
  "eframe",
  "sys-locale",
+ "vl-backend",
  "vl-core",
  "vl-mock",
  "vl-ui-egui",

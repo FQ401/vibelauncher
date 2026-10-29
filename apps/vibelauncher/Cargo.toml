@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 vl-core.workspace = true
+vl-backend.workspace = true
 vl-mock.workspace = true
 vl-ui-egui.workspace = true
 eframe.workspace = true

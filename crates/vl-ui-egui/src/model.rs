@@ -4,7 +4,7 @@ use vl_core::account::Account;
 use vl_core::account::AccountCommand;
 use vl_core::instance::{InstanceCommand, InstanceEvent, InstanceState, InstanceSummary};
 use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
-use vl_core::task::{TaskCommand, TaskEvent, TaskSnapshot};
+use vl_core::task::{TaskCommand, TaskEvent, TaskOutcome, TaskSnapshot};
 use vl_core::{
     AccountId, BackendInfo, Command, Event, EventStream, Facade, InstanceId, Reply, Response,
     TaskId,
@@ -129,8 +129,11 @@ impl Model {
                     task.progress = Some(progress);
                 }
             }
-            Event::Task(TaskEvent::Finished { id, .. }) => {
+            Event::Task(TaskEvent::Finished { id, outcome }) => {
                 self.tasks.retain(|t| t.info.id != id);
+                if let TaskOutcome::Failed(error) = outcome {
+                    self.last_error = Some(error.to_string());
+                }
             }
             Event::Account(_) => {
                 self.send(Pending::Accounts, Command::Accounts(AccountCommand::List))
