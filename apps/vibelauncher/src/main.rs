@@ -9,12 +9,22 @@
 //! Language: English is built in. The OS locale (or `VL_LANG`) selects another language when a
 //! `<tag>/vibelauncher.ftl` file exists in `VL_LOCALES_DIR` or in a `locales` directory next to
 //! the executable; the tag is tried in full (`pt-BR`) and then by language (`pt`).
+//!
+//! Windows: release builds use the GUI subsystem (no console window), and the process takes the
+//! AppUserModelID `VibeLauncher.VibeLauncher` (`APP_USER_MODEL_ID`), which taskbar grouping and
+//! toast notifications use; an installer gives its shortcut the same ID.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use vl_mock::{MockFacade, MockOptions};
 use vl_ui_egui::{Launcher, Section, ThemeMode};
+
+/// The Windows AppUserModelID of the desktop app (`Company.Product`, no spaces). Shortcuts made by
+/// an installer carry the same value.
+#[cfg(windows)]
+const APP_USER_MODEL_ID: &str = "VibeLauncher.VibeLauncher";
 
 /// Directories searched for extra languages.
 fn locale_dirs() -> Vec<PathBuf> {
@@ -60,6 +70,9 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
+    // Best effort: without it Windows derives an ID from the executable path.
+    #[cfg(windows)]
+    let _ = winsafe::SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let light = args.iter().any(|a| a == "--light");
     let section = args

@@ -23,7 +23,8 @@ user interface runs unchanged on a mock implementation of that facade.
 ```text
 crates/          libraries, one directory per package
 apps/            binaries: vl-cli (and the desktop app)
-xtask/           cargo xtask ci | version
+xtask/           cargo xtask ci | version | package
+assets/          files built into the executables (icons)
 docs/            this document
 ```
 
@@ -720,8 +721,8 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   (progress and cancellation from the task); downloads of other versions are removed. The
   replacement is never started while a game runs, and checks the file's size and SHA-256 again
   first. A portable archive is unpacked into `<folder>/.vl-update-new/` (entry names checked, no
-  links, at most 10 000 entries and 2 GiB, no `data`, portable marker or install marker at its
-  top level); then each of its top-level items moves the old item into
+  links, at most 10 000 entries and 2 GiB, no `data` folder or install marker at its top level;
+  a portable marker file at its top level is skipped, so the folder keeps its own or none); then each of its top-level items moves the old item into
   `<folder>/.vl-update-old/` and takes its place, and a failure moves everything back. Items
   the archive does not have, such as the user's `data` folder, are not touched. An AppImage is
   copied next to the old one, made executable and renamed over it.
@@ -758,6 +759,29 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   The manifest address is `vl_update::MANIFEST_URL` (build-time `VL_UPDATE_MANIFEST_URL`, else
   the `latest.json` asset of the newest GitHub release). `vl-cli update status|check|download|apply`
   follows the same commands; `vl-mock` answers them with a synthetic 0.1.0 release.
+
+## Packaging
+
+- **Executables (Windows).** The C runtime is linked statically (`+crt-static` for MSVC targets in
+  `.cargo/config.toml`), so no Visual C++ Redistributable is needed. The build scripts of
+  `vibelauncher` and `vl-cli` embed the icon `assets/icons/vibelauncher.ico` (a placeholder) and
+  a version resource (product name, file description, version from `[workspace.package]`). In
+  release builds the desktop app uses the GUI subsystem (no console window). At start it sets the
+  process AppUserModelID `VibeLauncher.VibeLauncher`, which taskbar grouping and toast
+  notifications use; an installer's shortcut carries the same ID.
+- **Portable archive.** `cargo xtask package portable [--target <triple>]` builds both
+  executables in release mode for a Windows MSVC target and writes
+  `target/dist/vibelauncher-<version>-windows-<arch>-portable.zip` (`arch`: `x64`, `arm64`,
+  `x86`) and a `.sha256` file next to it. The archive's root is the launcher folder:
+  `vibelauncher.exe`, `vl-cli.exe`, the portable marker `vibelauncher.portable` and
+  `LICENSE.txt`; the entries carry a fixed time, so the same files give the same archive. Unpacked
+  anywhere, the launcher keeps its data in `data/` next to the executables; `--dir` still takes
+  precedence. The same archive is the `portable` artifact of the self-update.
+- **CI.** The `package` workflow builds and smoke-tests the portable archive on Windows (the data
+  folder appears next to the executables, nothing under `%APPDATA%`, the version resource is
+  present) and uploads it. It runs on the `release` branches, `v*` tags and by hand, and on a
+  pull request only when the packaging files change.
+- **Not yet.** The per-user MSI installer.
 
 ## Front ends
 

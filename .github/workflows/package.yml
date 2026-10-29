@@ -1,0 +1,58 @@
+name: package
+
+# Release packages. Runs on release branches, version tags and by hand; on a pull request only
+# when the packaging itself changes.
+
+on:
+  push:
+    branches: [release, "release/**"]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/package.yml"
+      - ".cargo/config.toml"
+      - "assets/icons/**"
+      - "apps/*/build.rs"
+      - "xtask/src/package.rs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows-portable:
+    name: windows portable (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: package
+      - name: Build the portable archive
+        run: cargo xtask package portable --target x86_64-pc-windows-msvc
+      - name: Smoke test (portable data stays in the folder)
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'vibelauncher-portable'
+          $zip = Get-ChildItem target/dist/*-portable.zip | Select-Object -First 1
+          Expand-Archive -Path $zip.FullName -DestinationPath $dir
+          & (Join-Path $dir 'vl-cli.exe') instances list
+          if ($LASTEXITCODE -ne 0) { throw "vl-cli failed ($LASTEXITCODE)" }
+          if (-not (Test-Path (Join-Path $dir 'data'))) { throw 'no data folder next to the executables' }
+          if (Test-Path (Join-Path $env:APPDATA 'VibeLauncher')) { throw 'portable mode wrote to %APPDATA%' }
+          $info = (Get-Item (Join-Path $dir 'vibelauncher.exe')).VersionInfo
+          if ($info.ProductName -ne 'VibeLauncher') { throw 'no version resource in vibelauncher.exe' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vibelauncher-windows-x64-portable
+          path: target/dist/
+          if-no-files-found: error

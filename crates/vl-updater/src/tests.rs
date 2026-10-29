@@ -327,6 +327,34 @@ fn portable_update_end_to_end() {
     assert!(w.updater.dir().take_just_updated(&version).is_some());
 }
 
+/// The downloadable portable archive carries the portable marker: an update from it keeps the
+/// folder's marker as it is and leaves a folder without one without.
+#[test]
+fn the_portable_marker_in_the_archive_is_skipped() {
+    let archive_bytes = zip_of(&[
+        ("vibelauncher.exe", b"new exe"),
+        ("vibelauncher.portable", b"from the archive"),
+    ]);
+    for has_marker in [true, false] {
+        let dir = Dir::new();
+        let app = dir.path().join("app");
+        portable_install(&app);
+        let marker = app.join(vl_store::PORTABLE_MARKER);
+        if !has_marker {
+            fs::remove_file(&marker).unwrap();
+        }
+        let archive = dir.path().join("new.zip");
+        fs::write(&archive, &archive_bytes).unwrap();
+        let names = crate::replace_portable(&archive, &app).unwrap();
+        assert_eq!(names, ["vibelauncher.exe"]);
+        assert_eq!(read(app.join("vibelauncher.exe")), b"new exe");
+        assert_eq!(marker.exists(), has_marker);
+        if has_marker {
+            assert_eq!(read(&marker), b"");
+        }
+    }
+}
+
 #[test]
 fn apply_rechecks_the_staged_file() {
     let w = World::new();
@@ -374,7 +402,11 @@ fn unsafe_portable_archives_change_nothing() {
             ("vibelauncher.exe", b"x"),
             ("data/instances/world.txt", b"x"),
         ]),
-        zip_of(&[("vibelauncher.portable", b"x")]),
+        zip_of(&[
+            ("vibelauncher.portable/", b""),
+            ("vibelauncher.portable/a", b"x"),
+        ]),
+        zip_of(&[("vibelauncher.portable", b"")]),
         zip_of(&[("vibelauncher.install", b"msi")]),
         zip_of(&[("sub/a:b", b"x")]),
         zip_of(&[("a\\..\\b", b"x")]),

@@ -64,6 +64,10 @@ fluent-bundle = "0.16.0"
 intl-memoizer = "0.5.3"
 unic-langid = "0.9.6"
 sys-locale = "0.3.2"
+# Windows only: the icon and version resource of the executables (build scripts) and the
+# AppUserModelID of the desktop app.
+winresource = { version = "0.1.34", default-features = false }
+winsafe = { version = "0.0.29", features = ["shell"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -2,15 +2,18 @@
 //! - `ci` — every check a PR must pass: layers, format, clippy, tests, wasm build of the core layer and the shared UI;
 //! - `ci lint` / `ci test` — the same checks split in two halves so CI can run them in parallel;
 //! - `version` — prints the launcher version (`[workspace.package] version`, the only place it lives);
-//! - `version set X.Y.Z[-pre]` — sets it.
+//! - `version set X.Y.Z[-pre]` — sets it;
+//! - `package portable [--target <triple>]` — the portable Windows archive in `target/dist`.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // a command-line tool reports to the terminal
 
 mod layers;
+mod package;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const USAGE: &str = "usage: cargo xtask ci [lint|test] | cargo xtask version [set X.Y.Z[-pre]]";
+const USAGE: &str = "usage: cargo xtask ci [lint|test] | cargo xtask version [set X.Y.Z[-pre]] \
+                     | cargo xtask package portable [--target <triple>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -21,6 +24,8 @@ fn main() -> ExitCode {
         ["ci", "test"] => ci(false, true),
         ["version"] => read_version().map(|v| println!("{v}")),
         ["version", "set", v] => set_version(v),
+        ["package", "portable"] => package::portable(None).map(|_| ()),
+        ["package", "portable", "--target", t] => package::portable(Some(t)).map(|_| ()),
         _ => Err(USAGE.to_owned()),
     };
     match result {

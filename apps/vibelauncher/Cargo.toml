@@ -20,5 +20,11 @@ vl-ui-egui.workspace = true
 eframe.workspace = true
 sys-locale.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+winsafe.workspace = true
+
+[build-dependencies]
+winresource.workspace = true
+
 [lints]
 workspace = true
