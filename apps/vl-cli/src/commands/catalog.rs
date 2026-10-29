@@ -449,7 +449,7 @@ mod tests {
         let out = run_mock(&["search", "mock", "--type", "mod", "--loader", "fabric"]).unwrap();
         assert!(out.contains("mock-renderer"), "{out}");
         assert!(!out.contains("mock-textures"), "{out}");
-        assert!(out.contains("1 of 1 results"), "{out}");
+        assert!(out.contains("5 of 5 results"), "{out}");
     }
 
     #[test]
@@ -457,8 +457,8 @@ mod tests {
         let out = run_mock(&["project", "mock-renderer"]).unwrap();
         assert!(out.contains("Mock Renderer"), "{out}");
         let out = run_mock(&["versions", "mock-renderer", "--version", "26.3"]).unwrap();
-        assert!(out.contains("1.0.0"), "{out}");
-        assert!(out.contains("Required: mock-library"), "{out}");
+        assert!(out.contains("2.0.0"), "{out}");
+        assert!(out.contains("Required: mockmr00"), "{out}");
         let err = run_mock(&["project", "missing"]).unwrap_err();
         assert!(err.to_string().contains("NotFound"), "{err}");
     }

@@ -47,6 +47,9 @@ task-refresh-versions = Refreshing the version list
 task-sign-in = Signing in
 task-java-scan = Looking for Java
 task-java-download = Downloading Java
+task-install-resource = Installing files
+task-install-pack = Installing a modpack
+task-update-pack = Updating a modpack
 task-other = Task
 task-with-subject = { $task }: { $subject }
 

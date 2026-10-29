@@ -16,14 +16,14 @@ use vl_core::{AccountId, Error, Event, InstanceId, Response, Result, TaskId};
 use crate::{Inner, data};
 
 /// A registered task: reports progress and finishes exactly once.
-struct Task {
-    inner: Arc<Inner>,
-    id: TaskId,
-    cancel: Arc<AtomicBool>,
+pub(crate) struct Task {
+    pub(crate) inner: Arc<Inner>,
+    pub(crate) id: TaskId,
+    pub(crate) cancel: Arc<AtomicBool>,
 }
 
 impl Task {
-    fn start(inner: &Arc<Inner>, kind: TaskKind, subject: Option<String>) -> Self {
+    pub(crate) fn start(inner: &Arc<Inner>, kind: TaskKind, subject: Option<String>) -> Self {
         let id = TaskId(inner.next_task.fetch_add(1, Ordering::Relaxed));
         let info = TaskInfo {
             id,
@@ -51,11 +51,11 @@ impl Task {
         }
     }
 
-    fn cancelled(&self) -> bool {
+    pub(crate) fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
 
-    fn progress(&self, stage: &str, done: u64, total: u64) {
+    pub(crate) fn progress(&self, stage: &str, done: u64, total: u64) {
         let progress = Progress {
             done,
             total: Some(total),
@@ -71,7 +71,7 @@ impl Task {
         }));
     }
 
-    fn finish(self, outcome: TaskOutcome) {
+    pub(crate) fn finish(self, outcome: TaskOutcome) {
         self.inner.lock().tasks.remove(&self.id);
         self.inner.publish(Event::Task(TaskEvent::Finished {
             id: self.id,
@@ -80,7 +80,7 @@ impl Task {
     }
 
     /// Runs `stage` for `total` paced steps; `false` if cancelled.
-    fn run_stage(&self, stage: &str, total: u64) -> bool {
+    pub(crate) fn run_stage(&self, stage: &str, total: u64) -> bool {
         for done in 1..=total {
             if self.cancelled() {
                 return false;
@@ -92,7 +92,7 @@ impl Task {
     }
 }
 
-fn pause(inner: &Inner) {
+pub(crate) fn pause(inner: &Inner) {
     let delay = inner.options.step_delay;
     if !delay.is_zero() {
         std::thread::sleep(delay);
@@ -100,7 +100,7 @@ fn pause(inner: &Inner) {
 }
 
 /// Starts `task` on a thread running `work`; answers `Response::Task`.
-fn spawn(task: Task, work: impl FnOnce(Task) + Send + 'static) -> Result<Response> {
+pub(crate) fn spawn(task: Task, work: impl FnOnce(Task) + Send + 'static) -> Result<Response> {
     let id = task.id;
     let inner = Arc::clone(&task.inner);
     match std::thread::Builder::new()
@@ -135,6 +135,32 @@ pub(crate) fn steps(
             task.finish(TaskOutcome::Succeeded);
         } else {
             task.finish(TaskOutcome::Cancelled);
+        }
+    })
+}
+
+/// A task that runs `stages` (a name and a number of paced steps each) and then calls `done`;
+/// the task fails with the error `done` returns. A cancelled task never calls `done`, so it
+/// leaves nothing behind.
+pub(crate) fn staged(
+    inner: &Arc<Inner>,
+    kind: TaskKind,
+    subject: Option<String>,
+    stages: Vec<(String, u64)>,
+    done: impl FnOnce(&Inner) -> Result<()> + Send + 'static,
+) -> Result<Response> {
+    let task = Task::start(inner, kind, subject);
+    spawn(task, move |task| {
+        if !stages
+            .iter()
+            .all(|(stage, total)| task.run_stage(stage, *total))
+        {
+            task.finish(TaskOutcome::Cancelled);
+            return;
+        }
+        match done(&task.inner) {
+            Ok(()) => task.finish(TaskOutcome::Succeeded),
+            Err(error) => task.finish(TaskOutcome::Failed(error)),
         }
     })
 }
