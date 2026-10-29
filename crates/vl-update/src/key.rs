@@ -9,8 +9,11 @@ use crate::UpdateError;
 ///
 /// `None` in a build without a release key: every update check then fails closed with
 /// [`UpdateError::NoReleaseKey`]. The key is set at compile time from the
-/// `VL_UPDATE_PUBLIC_KEY` environment variable.
-pub const RELEASE_PUBLIC_KEY: Option<&str> = option_env!("VL_UPDATE_PUBLIC_KEY");
+/// `VL_UPDATE_PUBLIC_KEY` environment variable; an empty value counts as none.
+pub const RELEASE_PUBLIC_KEY: Option<&str> = match option_env!("VL_UPDATE_PUBLIC_KEY") {
+    Some(key) if !key.is_empty() => Some(key),
+    _ => None,
+};
 
 /// The largest signature file accepted (a minisign signature is about 300 bytes).
 pub const MAX_SIGNATURE_BYTES: usize = 2 * 1024;

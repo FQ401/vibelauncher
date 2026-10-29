@@ -1,0 +1,214 @@
+name: release
+
+# A release: the version, the packages of every platform (the `package` workflow), then the
+# release files with `SHA256SUMS.txt` and the self-update manifest `latest.json`, and a draft
+# GitHub release holding them. Runs on a push to the `release` branch and by hand; by hand with
+# `dry_run` (the default) it stops before the release and leaves the files as a workflow artifact.
+#
+# Release files (`<version>` from `cargo xtask version`):
+#   vibelauncher-<version>-windows-x64-portable.zip
+#   vibelauncher-<version>-macos-universal.dmg
+#   vibelauncher-<version>-linux-<x86_64|aarch64>.{tar.gz,AppImage,AppImage.zsync,deb,rpm}
+#   SHA256SUMS.txt, latest.json, latest.json.minisig (when signed)
+# The Windows installer `vibelauncher-<version>-windows-x64.msi` is not built yet.
+#
+# Signing: with the secret `VL_UPDATE_SECRET_KEY` (and `VL_UPDATE_SECRET_KEY_PASSWORD` for a
+# password-protected key) `latest.json` is signed with minisign; the repository variable
+# `VL_UPDATE_PUBLIC_KEY` is the public key the executables embed. Without the secret the manifest
+# stays unsigned, which the run reports as a warning and the release notes state.
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and assemble everything without creating a GitHub release
+        type: boolean
+        default: true
+      minimum_version:
+        description: Oldest version that may update itself to this release (X.Y.Z)
+        type: string
+        default: "0.0.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      date: ${{ steps.version.outputs.date }}
+      dry-run: ${{ steps.version.outputs.dry-run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: Dependency sources (crates.io and the workspace only)
+        run: cargo --locked xtask sources
+      - name: Version, date and mode
+        id: version
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          REF: ${{ github.ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cargo --locked xtask version)"
+          date="$(date -u +%F)"
+          {
+            echo "version=$version"
+            echo "date=$date"
+            echo "dry-run=$DRY_RUN"
+          } >> "$GITHUB_OUTPUT"
+          echo "version $version, built $date from $GITHUB_SHA, dry run: $DRY_RUN"
+          if [ "$DRY_RUN" != true ]; then
+            if [ "$REF" != refs/heads/release ]; then
+              echo "::error::A release is drafted from the release branch only; run with dry_run elsewhere"
+              exit 1
+            fi
+            case "$version" in
+              *-*) echo "::error::$version is a pre-release; the stable channel takes X.Y.Z only"; exit 1 ;;
+            esac
+            if draft="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" \
+              && [ "$draft" = false ]; then
+              echo "::error::v$version is already released; set a new version (cargo xtask version set)"
+              exit 1
+            fi
+          fi
+
+  packages:
+    name: packages
+    needs: version
+    uses: ./.github/workflows/package.yml
+    with:
+      build-date: ${{ needs.version.outputs.date }}
+
+  assemble:
+    name: assemble (SHA256SUMS.txt, latest.json)
+    needs: [version, packages]
+    runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      DATE: ${{ needs.version.outputs.date }}
+      MINIMUM_VERSION: ${{ inputs.minimum_version || '0.0.0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: vibelauncher-*
+          path: release
+          merge-multiple: true
+      - name: SHA256SUMS.txt and latest.json
+        run: |
+          cargo --locked xtask release manifest release --repo "$GITHUB_REPOSITORY" \
+            --date "$DATE" --minimum-version "$MINIMUM_VERSION"
+          cd release && sha256sum -c SHA256SUMS.txt
+      - name: Sign latest.json
+        id: sign
+        env:
+          VL_UPDATE_SECRET_KEY: ${{ secrets.VL_UPDATE_SECRET_KEY }}
+          VL_UPDATE_SECRET_KEY_PASSWORD: ${{ secrets.VL_UPDATE_SECRET_KEY_PASSWORD }}
+          VL_UPDATE_PUBLIC_KEY: ${{ vars.VL_UPDATE_PUBLIC_KEY }}
+        run: |
+          if [ -n "$VL_UPDATE_SECRET_KEY" ]; then
+            cargo --locked xtask release sign release
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$VL_UPDATE_PUBLIC_KEY" ]; then
+            echo "::error::VL_UPDATE_PUBLIC_KEY is set but the secret VL_UPDATE_SECRET_KEY is not: launchers with the key refuse an unsigned manifest"
+            exit 1
+          else
+            echo "::warning title=latest.json is not signed::No VL_UPDATE_SECRET_KEY secret. The release has no latest.json.minisig, and launchers refuse a manifest without a valid signature."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Summary
+        env:
+          SIGNED: ${{ steps.sign.outputs.signed }}
+        run: |
+          {
+            echo "## vibelauncher $VERSION"
+            echo
+            echo "Commit \`$GITHUB_SHA\`, built $DATE, minimum version $MINIMUM_VERSION."
+            if [ "$SIGNED" = true ]; then
+              echo "\`latest.json\` is signed (\`latest.json.minisig\`)."
+            else
+              echo "**\`latest.json\` is not signed** (no signing key configured)."
+            fi
+            echo
+            echo '```'
+            cd release && ls -l
+            echo
+            cat SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-v${{ needs.version.outputs.version }}
+          path: release/
+          if-no-files-found: error
+
+  draft:
+    name: draft release
+    needs: [version, assemble]
+    if: needs.version.outputs.dry-run != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v${{ needs.version.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
+      DATE: ${{ needs.version.outputs.date }}
+      SIGNED: ${{ needs.assemble.outputs.signed }}
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release-v${{ needs.version.outputs.version }}
+          path: release
+      - name: Draft the GitHub release
+        run: |
+          cd release
+          sha256sum -c SHA256SUMS.txt
+          {
+            echo "VibeLauncher $VERSION, built $DATE from $GITHUB_SHA."
+            echo
+            if [ "$SIGNED" != true ]; then
+              echo "The self-update manifest \`latest.json\` is not signed: launchers do not update to this release by themselves."
+              echo
+            fi
+            echo "SHA-256 checksums (\`SHA256SUMS.txt\`):"
+            echo
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } > "$RUNNER_TEMP/notes.md"
+          if draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$draft" != true ]; then
+              echo "::error::$TAG is already released"
+              exit 1
+            fi
+            # A draft of this version from an earlier run: its files are replaced.
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+              --title "VibeLauncher $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber -- *
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+              --title "VibeLauncher $VERSION" --notes-file "$RUNNER_TEMP/notes.md" -- *
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets \
+            --jq '"\(.url) draft=\(.isDraft) files=\(.assets | length)"'

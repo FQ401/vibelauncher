@@ -315,6 +315,18 @@ fn native_options(geometry: &Geometry, direct3d_only: bool) -> eframe::NativeOpt
     native
 }
 
+/// The commit and date a release build was made from (`VL_BUILD_COMMIT` and `VL_BUILD_DATE` at
+/// compile time); `None` in a build without a commit.
+fn build_info() -> Option<String> {
+    let commit = option_env!("VL_BUILD_COMMIT").filter(|c| !c.is_empty())?;
+    Some(
+        match option_env!("VL_BUILD_DATE").filter(|d| !d.is_empty()) {
+            Some(date) => format!("commit {commit}, built {date}"),
+            None => format!("commit {commit}"),
+        },
+    )
+}
+
 fn main() -> eframe::Result {
     if let Some(code) = vl_backend::run_helper_if_requested() {
         std::process::exit(code);
@@ -325,6 +337,9 @@ fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version") {
         println!("vibelauncher {}", env!("CARGO_PKG_VERSION"));
+        if let Some(build) = build_info() {
+            println!("{build}");
+        }
         return Ok(());
     }
     let options = Options::parse(&args);
