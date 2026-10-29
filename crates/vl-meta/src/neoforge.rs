@@ -10,13 +10,15 @@
 //! | `<year>.<drop>.<hotfix>.<build>` (`26.1.2.12`) | `<year>.<drop>.<hotfix>`, or `<year>.<drop>` when `hotfix` is 0 |
 //!
 //! A `-beta` or `-alpha` suffix marks an unstable build of a released game version; a build
-//! metadata suffix (`26.1.0.0-alpha.1+snapshot-1`) marks a build for a game snapshot, and such
-//! versions and names that fit neither scheme (April Fools' builds) are left out.
+//! metadata suffix (`26.1.0.0-alpha.1+snapshot-1` for `26.1-snapshot-1`, `+pre-3` for
+//! `26.1-pre-3`) marks a build for a game snapshot, and such versions and names that fit neither
+//! scheme (April Fools' builds, `0.25w14craftmine.5-beta`) are left out.
 //!
 //! Minecraft 1.20.1 is the exception: NeoForge's builds for it were published as
 //! `net.neoforged:forge`, versions `1.20.1-47.1.<build>`, with the same installer format. They
 //! are listed as NeoForge versions of 1.20.1 in the short form (`47.1.106`), merged with the
-//! `net.neoforged:neoforge` list ([`versions_for_game_with_legacy`]).
+//! `net.neoforged:neoforge` list ([`versions_for_game_with_legacy`]); an entry of that artifact
+//! without the game prefix (`47.1.82`) is skipped.
 //!
 //! The launch profile is the installer's `version.json`, read with
 //! [`launch_profile`].

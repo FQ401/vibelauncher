@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>net.neoforged</groupId>
+  <artifactId>forge</artifactId>
+  <versioning>
+    <versions>
+      <version>1.20.1-47.1.5</version>
+      <version>1.20.1-47.1.81</version>
+      <version>47.1.82</version>
+      <version>1.20.1-47.1.83</version>
+      <version>1.20.1-47.1.106</version>
+    </versions>
+  </versioning>
+</metadata>

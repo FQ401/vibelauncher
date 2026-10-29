@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>net.neoforged</groupId>
+  <artifactId>neoforge</artifactId>
+  <versioning>
+    <versions>
+      <version>26.1.0.0-alpha.1+snapshot-1</version>
+      <version>26.1.0.0-alpha.15+pre-3</version>
+      <version>0.25w14craftmine.5-beta</version>
+      <version>20.2.3-beta</version>
+      <version>20.2.93</version>
+      <version>20.3.8-beta</version>
+      <version>20.5.21-beta</version>
+      <version>21.0.0-beta</version>
+      <version>21.0.167</version>
+      <version>21.1.1</version>
+      <version>21.9.16-beta</version>
+      <version>21.10.64</version>
+      <version>26.1.0.1-beta</version>
+      <version>26.1.0.19-beta</version>
+      <version>26.1.1.15-beta</version>
+      <version>26.1.2.1-beta</version>
+      <version>26.3.0.1-beta</version>
+      <version>26.3.0.76</version>
+      <version>26.2.0.93</version>
+      <version>21.11.48</version>
+      <version>21.1.265</version>
+      <version>26.1.2.123</version>
+      <version>26.1.2.124</version>
+      <version>26.3.0.99</version>
+    </versions>
+  </versioning>
+</metadata>
