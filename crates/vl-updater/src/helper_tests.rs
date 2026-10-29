@@ -361,13 +361,17 @@ fn prepare_refuses_what_it_cannot_install() {
         prepare_for(InstallMethod::Msi).unwrap_err(),
         UpdaterError::NotImplemented(_)
     ));
-    assert!(matches!(
-        prepare_for(InstallMethod::MacApp {
-            bundle: "/Applications/VibeLauncher.app".into()
-        })
-        .unwrap_err(),
-        UpdaterError::NotImplemented(_)
-    ));
+    let mac_app = prepare_for(InstallMethod::MacApp {
+        bundle: "/Applications/VibeLauncher.app".into(),
+    });
+    if cfg!(target_os = "macos") {
+        assert!(mac_app.is_ok());
+    } else {
+        assert!(matches!(
+            mac_app.unwrap_err(),
+            UpdaterError::NotImplemented(_)
+        ));
+    }
     // A download changed after it was checked is refused before the launcher exits.
     std::fs::write(&install.staged.file, b"changed").unwrap();
     assert!(matches!(

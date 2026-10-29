@@ -498,7 +498,7 @@ fn appimage_is_renamed_over_the_old_one() {
 }
 
 #[test]
-fn msi_and_disk_image_are_planned_but_not_implemented() {
+fn msi_is_planned_but_not_implemented_and_disk_images_only_on_macos() {
     let dir = Dir::new();
     let file = dir.path().join("f");
     fs::write(&file, b"pkg").unwrap();
@@ -520,10 +520,14 @@ fn msi_and_disk_image_are_planned_but_not_implemented() {
         bundle: dir.path().join("VibeLauncher.app"),
     };
     let dmg = plan(&app, &exe, &version, &artifact, &file);
-    assert!(matches!(
-        apply(&dmg, &|| false),
-        Err(UpdaterError::NotImplemented(_))
-    ));
+    // Not a disk image: refused on macOS, not attempted elsewhere.
+    let result = apply(&dmg, &|| false);
+    if cfg!(target_os = "macos") {
+        assert!(result.is_err());
+        assert!(!dir.path().join("VibeLauncher.app").exists());
+    } else {
+        assert!(matches!(result, Err(UpdaterError::NotImplemented(_))));
+    }
     let deb = plan(&InstallMethod::Deb, &exe, &version, &artifact, &file);
     assert_eq!(apply(&deb, &|| false), Err(UpdaterError::NothingToReplace));
     let error: vl_core::Error = UpdaterError::GameRunning.into();
