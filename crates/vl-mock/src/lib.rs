@@ -3,11 +3,13 @@
 //! [`MockFacade`] answers every facade command from in-memory synthetic data (instances, versions,
 //! accounts, Java runtimes, settings, installed mods and packs, a catalog of invented projects on
 //! both platforms, modpacks, mod bisection) and simulates long operations on background threads: a
-//! launch reports task progress, moves the instance to `Running`, streams game log lines and
+//! launch reports task progress, moves the instance to `Running`, streams a deterministic game log
+//! (paced lines, a stack trace and a burst of spam) in batches into a bounded console buffer, and
 //! exits. Nothing touches files, the network or real processes.
 
 mod bisect;
 mod catalog;
+pub mod console;
 mod data;
 mod installs;
 mod packs;
@@ -98,6 +100,8 @@ struct State {
     tasks: HashMap<TaskId, (TaskSnapshot, Arc<AtomicBool>)>,
     /// Stop flags of running (or preparing) games.
     games: HashMap<InstanceId, Arc<AtomicBool>>,
+    /// The console of each instance's current or last run.
+    consoles: HashMap<InstanceId, console::Console>,
     /// Whether a CurseForge API key is set.
     curseforge_key: bool,
     /// Resource folders by instance and folder key (see `resources`), created on first use.
@@ -122,6 +126,7 @@ impl MockFacade {
             overrides: HashMap::new(),
             tasks: HashMap::new(),
             games: HashMap::new(),
+            consoles: HashMap::new(),
             curseforge_key: options.curseforge_key,
             resources: HashMap::new(),
             packs: packs::initial().into_iter().collect(),
@@ -152,6 +157,7 @@ impl MockFacade {
             Command::Java(c) => self.java(c),
             Command::Settings(c) => self.settings(c),
             Command::Launch(c) => self.launch(c),
+            Command::Console(c) => console::handle(&self.inner, c),
             Command::Tasks(c) => self.tasks(c),
             Command::Resources(c) => resources::handle(&self.inner, c),
             Command::Bisect(c) => bisect::handle(&self.inner, c),

@@ -59,6 +59,8 @@ pub(crate) struct Service {
     loaders: Arc<Loaders>,
     active: Arc<Mutex<HashMap<InstanceId, Active>>>,
     events: Arc<EventBus>,
+    /// The output buffers of current and recent game runs.
+    pub(crate) consoles: crate::console::Consoles,
 }
 
 impl Service {
@@ -81,6 +83,7 @@ impl Service {
             loaders: Arc::new(loaders),
             active: Arc::default(),
             events,
+            consoles: crate::console::Consoles::default(),
         })
     }
 
@@ -398,6 +401,7 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
             format!("game log: {}", file.display()),
         );
     }
+    service.consoles.started(id, game.clone());
     service.active().insert(id.clone(), Active::Running(game));
     service.state(id, InstanceState::Running { pid: Some(pid) });
     Ok(())

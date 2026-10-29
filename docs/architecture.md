@@ -118,7 +118,7 @@ pub trait Facade: Send + Sync {
 
 - A `Command` is grouped by domain: `Hello`, `Instances(InstanceCommand)`,
   `Versions(VersionCommand)`, `Accounts(AccountCommand)`, `Java(JavaCommand)`,
-  `Settings(SettingsCommand)`, `Launch(LaunchCommand)`, `Tasks(TaskCommand)`,
+  `Settings(SettingsCommand)`, `Launch(LaunchCommand)`, `Console(ConsoleCommand)`, `Tasks(TaskCommand)`,
   `Catalog(CatalogCommand)`, `Storage(StorageCommand)`, `SelfUpdate(SelfUpdateCommand)`. Each domain's
   command enum lives in that domain's module of `vl-core` and documents the `Response` variant it
   answers.
@@ -137,7 +137,7 @@ pub trait Facade: Send + Sync {
 |---|---|
 | `Task(TaskEvent)` | `Started(TaskInfo)`, `Progress { id, progress }`, `Finished { id, outcome }` |
 | `Log(LogLine)` | a launcher log line with its source and level |
-| `LogBatch(LogBatch)` | a group of game output lines (level, time, text) with a count of lines left out |
+| `LogBatch(LogBatch)` | a group of game output lines (`LogEntry`: level, time, text, line number, record, stream, thread, logger, the game's own time) with a count of lines left out |
 | `Instance(InstanceEvent)` | `Added`, `Changed`, `Removed` |
 | `Launch(LaunchEvent)` | `StateChanged { instance, state }`, `Exited { instance, exit }`, `Diagnosed { instance, diagnosis }` |
 | `Bisect(BisectEvent)` | `Run { instance, run, steps_done, steps_estimate }` after each run of an automatic search, `Finished { instance, report }` |
@@ -173,6 +173,30 @@ stop, the crash report and `hs_err_pid*.log` written during the run, the log fil
 lines. `LaunchCommand::Stop` stops a
 preparing or running game.
 
+### Game console
+
+Each game run has a console buffer (`vl_core::console::ConsoleBuffer`): the newest output lines
+within `console.max_lines` and 8 MiB (each line counted with its entry overhead). Lines are
+numbered from 0 without gaps (`seq`); a line that leaves the buffer is counted as `dropped`, a
+line left out of the event stream as `skipped` (both stay in the run's log file). A record is a
+header line and the lines that continue it (message lines, a stack trace); continuation lines
+carry the level of their record and its first line's `seq` in `record`, per stream.
+
+`ConsoleCommand` reads the buffer of an instance's current or last run (kept after the exit until
+the next launch; the backend keeps at most four ended runs):
+
+| Command | Answers |
+|---|---|
+| `Status { instance }` | `Response::ConsoleStatus`: running or not, counters (`first_seq`, `next_seq`, lines, bytes, dropped, skipped, limits), the log file |
+| `Fetch { instance, from, limit }` | `Response::ConsolePage`: up to `limit` (at most 5 000) lines from `from`, or the newest ones |
+| `Search { instance, query }` | `Response::ConsoleMatches`: lines whose text contains `query.text` ignoring case and whose level is in `query.levels` (empty: any), forwards or backwards from `query.from`, at most `query.limit`, with the total count and where to continue |
+| `OpenLogFile { instance }` | `Response::Done` after opening the run's log file with the system's default application; `NotFound` without one |
+
+A console subscribes to `Event::LogBatch` (at most ten batches a second, at most 500 lines each),
+fills gaps in `seq` and scrolls back with `Fetch`. Under a flood the buffer stays at its limit and
+the batch rate stays capped (`vl-launch` test `console_budget`; its ignored `budget_report`
+measures the launcher's CPU and memory at 10 000 and 100 000 lines a second).
+
 `vl-launch` does the work behind it:
 
 - `Installer::install` makes a version ready below the shared game files (`libraries/`, `assets/`,
@@ -195,10 +219,11 @@ preparing or running game.
 - `process::spawn` starts Java without a shell in the instance's game directory and reports the
   exit; a stop kills the whole process tree (`taskkill /T` on Windows, a process group on Unix).
   Reader threads only hand lines over, so the game never waits for a front end. A collector parses
-  them (log4j XML events and plain lines into levels; the access token is masked), writes the full
-  output to `<instance>/logs/vl-game-<UTC time>.log` (the newest 10 are kept), keeps the last
-  `console.max_lines` lines in memory (at most 16 MiB) and delivers batches every 100 ms of at
-  most 500 lines; the surplus is counted as skipped. A run is a crash when the code is not 0 or a
+  them (log4j XML events and plain lines into records with level, thread, logger and time; stack
+  traces join their record; the access token is masked), writes the full output to
+  `<instance>/logs/vl-game-<UTC time>.log` (the newest 10 are kept), keeps the newest lines in the
+  console buffer (see Game console) and delivers batches every 100 ms of at most 500 lines; the
+  surplus is counted as skipped. A run is a crash when the code is not 0 or a
   new file appeared in `crash-reports/` or as `hs_err_pid*.log` in the game directory.
 - Crash diagnosis (`vl-backend`): after a run that crashed (not stopped by the user) the backend
   reads the tail (512 KiB) of the run's output file, else of `logs/latest.log`, and the head
@@ -809,7 +834,9 @@ through the same commands.
 `vl-mock` implements every facade domain on synthetic data: several instances (including a damaged
 one), game versions of each kind, an offline account, Java runtimes and default settings. Long
 operations run on background threads: a launch reports preparation progress by stage, moves the
-instance to `Running`, prints synthetic game log lines and exits (or runs until stopped); a
+instance to `Running`, streams a deterministic game log (paced lines, an error record with a stack
+trace, a burst of 2 000 lines cut to one batch) into a console buffer that answers the console
+commands, and exits (or runs until stopped); a
 Microsoft sign-in shows a device code and adds a synthetic account; tasks can be cancelled.
 
 The mock also answers the resource, catalog and bisection domains. Instances have mod, pack and

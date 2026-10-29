@@ -2,7 +2,8 @@
 //!
 //! `LaunchCommand::Launch` answers `Response::Task` for the preparation; then the instance moves
 //! `Preparing → Running → Stopped` (`LaunchEvent::StateChanged`), the game's output arrives as
-//! `Event::LogBatch` with `LogSource::Game` (groups of lines, a few per second), and the end of the process as `LaunchEvent::Exited`.
+//! `Event::LogBatch` with `LogSource::Game` (groups of lines, a few per second; the console buffer
+//! answers `ConsoleCommand`s), and the end of the process as `LaunchEvent::Exited`.
 
 use std::path::PathBuf;
 

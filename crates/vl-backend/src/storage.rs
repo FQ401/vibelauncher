@@ -78,7 +78,11 @@ impl Drop for MoveGuard {
 pub(crate) fn admit(backend: &Backend, command: &Command) -> Result<(), Error> {
     if matches!(
         command,
-        Command::Hello | Command::Storage(_) | Command::Tasks(_) | Command::SelfUpdate(_)
+        Command::Hello
+            | Command::Storage(_)
+            | Command::Tasks(_)
+            | Command::SelfUpdate(_)
+            | Command::Console(_)
     ) {
         return Ok(());
     }

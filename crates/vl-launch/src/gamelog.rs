@@ -6,6 +6,10 @@
 //! `2013-01-01 12:00:00 [INFO] text`. One [`LineParser`] per stream consumes raw lines and
 //! produces [`Parsed`] lines; an XML event becomes a header line plus its message and stack trace
 //! lines. Anything that is not recognized stays a line with an unknown level, so nothing is lost.
+//!
+//! A record is a header line (level, thread, logger and time when the format names them) and the
+//! lines that continue it: further message lines and a stack trace (indented `at …` lines,
+//! `Caused by: …`, a throwable's first line). Continuation lines carry the level of their record.
 
 use vl_core::log::LogLevel;
 
@@ -14,15 +18,49 @@ const MAX_EVENT: usize = 256 * 1024;
 const EVENT_START: &str = "<log4j:Event";
 const EVENT_END: &str = "</log4j:Event>";
 
-/// One output line with its level.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One output line with its level and, on a record's first line, its header details.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Parsed {
     /// The level, `Unknown` when the line has none.
     pub level: LogLevel,
     /// The text, without the line ending.
     pub text: String,
+    /// Whether the line continues the record of the previous line of its stream.
+    pub continues: bool,
+    /// The thread named in the header.
+    pub thread: Option<String>,
+    /// The logger named in the header.
+    pub logger: Option<String>,
+    /// The time as written in a text header.
+    pub stamp: Option<String>,
+    /// The time of an XML event, milliseconds since the Unix epoch.
+    pub game_time_ms: Option<u64>,
 }
 
+impl Parsed {
+    /// A line with a level and nothing else.
+    fn plain(level: LogLevel, text: String, continues: bool) -> Self {
+        Self {
+            level,
+            text,
+            continues,
+            ..Self::default()
+        }
+    }
+}
+
+/// What the leading groups of a text line say.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Header {
+    /// The level.
+    pub level: LogLevel,
+    /// The thread (`Render thread` of `[Render thread/INFO]`).
+    pub thread: Option<String>,
+    /// The logger (`FML` of `[main/INFO] [FML]:`, `FabricLoader` of `[main/INFO] (FabricLoader)`).
+    pub logger: Option<String>,
+    /// The time (`12:34:56`, `2013-01-01 12:00:00`, `29Oct2026 12:34:56.789`).
+    pub stamp: Option<String>,
+}
 /// A stateful parser for one output stream.
 #[derive(Debug)]
 pub struct LineParser {
@@ -69,12 +107,7 @@ impl LineParser {
             }
             return;
         }
-        let level = self.plain_level(line);
-        self.last = level;
-        out.push(Parsed {
-            level,
-            text: line.to_owned(),
-        });
+        out.push(self.plain(line));
     }
 
     /// Hands out what is still buffered; call when the stream ended.
@@ -85,17 +118,29 @@ impl LineParser {
         self.last = LogLevel::Unknown;
     }
 
-    fn plain_level(&self, line: &str) -> LogLevel {
-        if let Some(level) = plain_line_level(line) {
-            return level;
+    fn plain(&mut self, line: &str) -> Parsed {
+        if let Some(header) = plain_header(line) {
+            self.last = header.level;
+            return Parsed {
+                level: header.level,
+                text: line.to_owned(),
+                continues: false,
+                thread: header.thread,
+                logger: header.logger,
+                stamp: header.stamp,
+                game_time_ms: None,
+            };
         }
         if is_continuation(line) {
-            return self.last;
+            return Parsed::plain(self.last, line.to_owned(), true);
         }
-        if line.starts_with("Exception in thread ") {
-            return LogLevel::Error;
-        }
-        LogLevel::Unknown
+        let level = if line.starts_with("Exception in thread ") {
+            LogLevel::Error
+        } else {
+            LogLevel::Unknown
+        };
+        self.last = level;
+        Parsed::plain(level, line.to_owned(), false)
     }
 
     fn finish_event(&mut self, out: &mut Vec<Parsed>) {
@@ -115,10 +160,10 @@ impl LineParser {
 }
 
 fn raw_lines(text: &str, out: &mut Vec<Parsed>) {
-    out.extend(text.split('\n').map(|line| Parsed {
-        level: LogLevel::Unknown,
-        text: line.to_owned(),
-    }));
+    out.extend(
+        text.split('\n')
+            .map(|line| Parsed::plain(LogLevel::Unknown, line.to_owned(), false)),
+    );
 }
 
 /// Whether `line` continues the previous entry: a stack trace line.
@@ -144,33 +189,92 @@ fn is_throwable_header(line: &str) -> bool {
 
 /// The level of a plain-text line, from its leading bracket groups.
 pub fn plain_line_level(line: &str) -> Option<LogLevel> {
-    let mut rest = skip_date(line.trim_start());
+    plain_header(line).map(|h| h.level)
+}
+
+/// The header of a plain-text line: its leading bracket groups name a level, and maybe a time,
+/// a thread and a logger. `None` when no level is named.
+pub fn plain_header(line: &str) -> Option<Header> {
+    let trimmed = line.trim_start();
+    let (date, mut rest) = split_date(trimmed);
+    let mut header = Header {
+        stamp: date.map(str::to_owned),
+        ..Header::default()
+    };
     for _ in 0..4 {
         rest = rest.trim_start();
         let inner = rest.strip_prefix('[')?;
         let end = inner.find(']')?;
         let group = &inner[..end];
-        if let Some(level) = group
-            .split(|c: char| c.is_whitespace() || c == '/')
-            .find_map(|word| level_name(word.trim_matches(':')))
-        {
-            return Some(level);
-        }
         rest = &inner[end + 1..];
+        if let Some(level) = group_level(group, &mut header) {
+            header.level = level;
+            header.logger = logger_after(rest);
+            return Some(header);
+        }
+        if header.stamp.is_none() && is_time(group) {
+            header.stamp = Some(group.to_owned());
+        }
     }
     None
 }
 
-/// Skips a leading `YYYY-MM-DD HH:MM:SS` stamp.
-fn skip_date(line: &str) -> &str {
+/// The level a bracket group names (`Render thread/INFO`, `12:34:56 WARN`, `INFO`); the thread
+/// or time before it goes into `header`.
+fn group_level(group: &str, header: &mut Header) -> Option<LogLevel> {
+    if let Some((thread, name)) = group.rsplit_once('/')
+        && let Some(level) = level_name(name.trim().trim_matches(':'))
+    {
+        let thread = thread.trim();
+        if !thread.is_empty() {
+            header.thread = Some(thread.to_owned());
+        }
+        return Some(level);
+    }
+    let group = group.trim();
+    let (before, name) = group.rsplit_once(' ').unwrap_or(("", group));
+    let level = level_name(name.trim_matches(':'))?;
+    let before = before.trim();
+    if header.stamp.is_none() && is_time(before) {
+        header.stamp = Some(before.to_owned());
+    }
+    Some(level)
+}
+
+/// The logger after the level group: `[name]` or `(name)`, before the message.
+fn logger_after(rest: &str) -> Option<String> {
+    let rest = rest.trim_start();
+    let (open, close) = match rest.chars().next()? {
+        '[' => ('[', ']'),
+        '(' => ('(', ')'),
+        _ => return None,
+    };
+    let inner = rest.strip_prefix(open)?;
+    let end = inner.find(close)?;
+    let name = inner[..end].trim();
+    (!name.is_empty() && !name.contains(' ')).then(|| name.to_owned())
+}
+
+/// Whether a group is a time of day (`12:34:56`, `12:34:56.789`, `29Oct2026 12:34:56.789`).
+fn is_time(group: &str) -> bool {
+    let time = group.rsplit(' ').next().unwrap_or_default();
+    time.len() >= 5
+        && time.contains(':')
+        && time
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, ':' | '.' | ','))
+}
+
+/// Splits a leading `YYYY-MM-DD HH:MM:SS` stamp off.
+fn split_date(line: &str) -> (Option<&str>, &str) {
     let stamp = line
         .char_indices()
         .find(|(_, c)| !(c.is_ascii_digit() || matches!(c, '-' | ':' | '.' | ',' | ' ')))
         .map_or(line.len(), |(i, _)| i);
     if stamp >= 8 && line.as_bytes().first().is_some_and(u8::is_ascii_digit) {
-        &line[stamp..]
+        (Some(line[..stamp].trim_end()), &line[stamp..])
     } else {
-        line
+        (None, line)
     }
 }
 
@@ -223,21 +327,20 @@ fn parse_event(raw: &str) -> Option<Vec<Parsed>> {
     lines.push(Parsed {
         level,
         text: format!("{head}{first}"),
+        continues: false,
+        thread: (!thread.is_empty()).then_some(thread),
+        logger: (!logger.is_empty()).then_some(logger),
+        stamp: None,
+        game_time_ms: attr(attrs, "timestamp").and_then(|t| t.trim().parse().ok()),
     });
-    lines.extend(message_lines.map(|l| Parsed {
-        level,
-        text: l.to_owned(),
-    }));
+    lines.extend(message_lines.map(|l| Parsed::plain(level, l.to_owned(), true)));
     if let Some(trace) = throwable {
         lines.extend(
             trace
                 .split('\n')
                 .map(|l| l.trim_end_matches('\r'))
                 .filter(|l| !l.is_empty())
-                .map(|l| Parsed {
-                    level,
-                    text: l.to_owned(),
-                }),
+                .map(|l| Parsed::plain(level, l.to_owned(), true)),
         );
     }
     Some(lines)
@@ -399,9 +502,89 @@ mod tests {
             [Parsed {
                 level: LogLevel::Info,
                 text: "[Render thread/INFO] [net.minecraft.client.Minecraft]: Setting user: Steve"
-                    .to_owned()
+                    .to_owned(),
+                continues: false,
+                thread: Some("Render thread".to_owned()),
+                logger: Some("net.minecraft.client.Minecraft".to_owned()),
+                stamp: None,
+                game_time_ms: Some(1_700_000_000_000),
             }]
         );
+    }
+
+    fn header(line: &str) -> Header {
+        plain_header(line).unwrap_or_else(|| panic!("no header in {line:?}"))
+    }
+
+    fn some(s: &str) -> Option<String> {
+        Some(s.to_owned())
+    }
+
+    #[test]
+    fn text_headers_name_time_thread_and_logger() {
+        let h = header("[12:34:56] [Render thread/INFO]: Setting user: Steve");
+        assert_eq!(
+            (h.level, h.stamp, h.thread, h.logger),
+            (
+                LogLevel::Info,
+                some("12:34:56"),
+                some("Render thread"),
+                None
+            )
+        );
+        let h = header("[12:34:56] [Client thread/WARN] [FML]: Potentially Dangerous");
+        assert_eq!(
+            (h.level, h.thread, h.logger),
+            (LogLevel::Warn, some("Client thread"), some("FML"))
+        );
+        let h = header("[12:34:56] [main/INFO] (FabricLoader) Loading 50 mods");
+        assert_eq!(h.logger, some("FabricLoader"));
+        let h = header(
+            "[29Oct2026 12:34:56.789] [main/INFO] [cpw.mods.modlauncher.Launcher/MODLAUNCHER]: ok",
+        );
+        assert_eq!(
+            (h.stamp, h.thread, h.logger),
+            (
+                some("29Oct2026 12:34:56.789"),
+                some("main"),
+                some("cpw.mods.modlauncher.Launcher/MODLAUNCHER")
+            )
+        );
+        let h = header("[12:34:56 WARN]: Can't keep up!");
+        assert_eq!(
+            (h.level, h.stamp, h.thread),
+            (LogLevel::Warn, some("12:34:56"), None)
+        );
+        let h = header("2013-01-01 12:00:00 [INFO] [Minecraft-Client] Setting user");
+        assert_eq!(
+            (h.level, h.stamp, h.logger),
+            (
+                LogLevel::Info,
+                some("2013-01-01 12:00:00"),
+                some("Minecraft-Client")
+            )
+        );
+        // A message that starts with words in brackets is not a logger.
+        let h = header("[12:00:00] [main/INFO]: [two words] text");
+        assert_eq!(h.logger, None);
+    }
+
+    #[test]
+    fn stack_traces_are_grouped_with_their_record() {
+        let out = parse_all(&[
+            "[12:00:00] [main/ERROR]: Crash",
+            "java.lang.IllegalStateException: no",
+            "\tat net.minecraft.Foo.bar(Foo.java:10)",
+            "[12:00:01] [main/INFO]: next",
+            "plain text",
+            "Exception in thread \"main\" java.lang.Error",
+            "\tat a.B.c(B.java:1)",
+        ]);
+        let continues: Vec<_> = out.iter().map(|p| p.continues).collect();
+        assert_eq!(continues, [false, true, true, false, false, false, true]);
+        assert_eq!(out[6].level, LogLevel::Error);
+        assert_eq!(out[0].thread, some("main"));
+        assert_eq!(out[1].thread, None);
     }
 
     #[test]
@@ -428,6 +611,9 @@ mod tests {
             ]
         );
         assert!(out[..4].iter().all(|p| p.level == LogLevel::Error));
+        let continues: Vec<_> = out.iter().map(|p| p.continues).collect();
+        assert_eq!(continues, [false, true, true, true, false]);
+        assert_eq!(out[0].game_time_ms, Some(1));
         assert_eq!(out[4].level, LogLevel::Info);
     }
 
