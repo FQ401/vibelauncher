@@ -7,13 +7,12 @@ use std::time::Duration;
 use vl_core::account::{Account, AccountEvent, AccountKind, DeviceCodePrompt};
 use vl_core::instance::InstanceState;
 use vl_core::launch::{GameExit, LaunchEvent};
-use vl_core::log::{LogLevel, LogLine, LogSource};
 use vl_core::task::{
     Progress, ProgressUnit, TaskEvent, TaskInfo, TaskKind, TaskOutcome, TaskSnapshot,
 };
 use vl_core::{AccountId, Error, Event, InstanceId, Response, Result, TaskId};
 
-use crate::{Inner, data};
+use crate::{Inner, console};
 
 /// A registered task: reports progress and finishes exactly once.
 pub(crate) struct Task {
@@ -233,23 +232,24 @@ fn run_game(task: Task, instance: &InstanceId, account: &Account) {
         return;
     }
     task.finish(TaskOutcome::Succeeded);
+    console::start(&inner, instance);
     inner.set_state(instance, InstanceState::Running { pid: Some(4242) });
 
-    let log = |level, text: String| {
-        inner.publish(Event::Log(LogLine {
-            source: LogSource::Game(instance.clone()),
-            level,
-            text,
-        }));
-    };
-    log(LogLevel::Info, format!("Setting user: {}", account.name));
+    console::emit(&inner, instance, console::greeting(&account.name));
+    let mut stopped = false;
     for n in 1..=inner.options.game_log_lines {
         if stop.load(Ordering::Relaxed) {
+            stopped = true;
             break;
         }
         pause(&inner);
-        let (level, text) = data::game_log_line(n);
-        log(level, text);
+        console::emit(&inner, instance, console::paced(n));
+    }
+    if !stopped {
+        pause(&inner);
+        console::emit(&inner, instance, console::stack_trace());
+        pause(&inner);
+        console::emit(&inner, instance, console::spam());
     }
     if !inner.options.exit_after_log {
         let idle = inner.options.step_delay.max(Duration::from_millis(20));

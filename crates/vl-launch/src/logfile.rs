@@ -81,6 +81,42 @@ impl GameLogFile {
     }
 }
 
+/// Opens `path` with the system's default application for it (`explorer` on Windows, `open` on
+/// macOS, `xdg-open` elsewhere) without waiting for that application.
+///
+/// # Errors
+///
+/// `NotFound` when the file does not exist; `Io` when the opener cannot be started.
+pub fn open_with_system(path: &Path) -> vl_core::Result<()> {
+    use vl_core::{Error, ErrorKind};
+    if !path.is_file() {
+        return Err(Error::not_found(format!(
+            "the log file {} does not exist",
+            path.display()
+        )));
+    }
+    let program = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let mut child = std::process::Command::new(program)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| Error::new(ErrorKind::Io, format!("cannot start {program}: {e}")))?;
+    // Collect the opener's exit so it does not linger; its result says nothing useful
+    // (`explorer` exits with 1 after opening a file).
+    let _ = std::thread::Builder::new()
+        .name("vl-open-file".to_owned())
+        .spawn(move || child.wait());
+    Ok(())
+}
+
 /// Deletes the oldest launch logs in `dir` until at most `keep` are left.
 fn rotate(dir: &Path, keep: usize) {
     let Ok(entries) = fs::read_dir(dir) else {

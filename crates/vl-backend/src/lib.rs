@@ -13,6 +13,7 @@ mod api_keys;
 pub mod auto_bisect;
 mod bisect;
 mod catalog;
+mod console;
 mod crash;
 mod instances;
 mod java;
@@ -159,6 +160,7 @@ impl Facade for Backend {
             Command::Java(c) => java::handle(self, c, replier),
             Command::Settings(c) => settings::handle(self, c, replier),
             Command::Launch(c) => launch::handle(self, c, replier),
+            Command::Console(c) => console::handle(self, c, replier),
             Command::Tasks(c) => tasks::handle(self, c, replier),
             Command::Resources(c) => resources::handle(self, c, replier),
             Command::Catalog(vl_core::catalog::CatalogCommand::ExportPack(r)) => {

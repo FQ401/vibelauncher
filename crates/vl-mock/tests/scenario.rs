@@ -3,12 +3,13 @@
 
 use std::time::Duration;
 
+use vl_core::console::{ConsoleCommand, ConsoleQuery};
 use vl_core::instance::{InstanceCommand, InstanceState, NewInstance};
 use vl_core::launch::{LaunchCommand, LaunchEvent, LaunchRequest};
-use vl_core::log::LogSource;
+use vl_core::log::{LogLevel, LogSource};
 use vl_core::task::{TaskCommand, TaskEvent, TaskKind, TaskOutcome};
 use vl_core::{Command, ErrorKind, Event, EventStream, Facade, InstanceId, Response};
-use vl_mock::{MockFacade, MockOptions};
+use vl_mock::{MockFacade, MockOptions, console};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -89,13 +90,140 @@ fn list_instances_then_launch_then_read_the_game_log() {
             InstanceState::Stopped
         ]
     ));
-    let game_lines = seen
+    let (delivered, skipped) = seen
         .iter()
-        .filter(
-            |e| matches!(e, Event::Log(line) if line.source == LogSource::Game(instance.clone())),
-        )
-        .count();
-    assert_eq!(game_lines, MockOptions::instant().game_log_lines + 1);
+        .filter_map(|e| match e {
+            Event::LogBatch(batch) if batch.source == LogSource::Game(instance.clone()) => {
+                Some((batch.lines.len(), batch.skipped))
+            }
+            _ => None,
+        })
+        .fold((0, 0), |(d, s), (bd, bs)| (d + bd as u64, s + bs));
+    // The greeting, the paced lines, the stack trace record (6 lines) and the burst.
+    let written = 1 + MockOptions::instant().game_log_lines + 6 + console::SPAM_LINES;
+    assert_eq!(delivered + skipped, written as u64);
+    assert_eq!(
+        skipped,
+        (console::SPAM_LINES - console::BATCH_LINES) as u64,
+        "the burst is cut to one batch"
+    );
+}
+
+fn console_call(facade: &MockFacade, command: ConsoleCommand) -> Response {
+    match facade.call(Command::Console(command)).wait() {
+        Ok(response) => response,
+        Err(e) => panic!("console command failed: {e:?}"),
+    }
+}
+
+#[test]
+fn the_console_buffer_pages_searches_and_outlives_the_game() {
+    let facade = MockFacade::new(MockOptions::instant());
+    let events = facade.subscribe();
+    let instance = InstanceId::new("survival").unwrap();
+    let status = facade
+        .call(Command::Console(ConsoleCommand::Status {
+            instance: instance.clone(),
+        }))
+        .wait();
+    assert_eq!(status.unwrap_err().kind, ErrorKind::NotFound);
+
+    facade
+        .call(Command::Launch(LaunchCommand::Launch(LaunchRequest {
+            instance: instance.clone(),
+            account: None,
+            offline: true,
+        })))
+        .wait()
+        .unwrap();
+    collect_until(&events, exited(&instance));
+
+    let Response::ConsoleStatus(status) = console_call(
+        &facade,
+        ConsoleCommand::Status {
+            instance: instance.clone(),
+        },
+    ) else {
+        panic!("expected a status");
+    };
+    assert!(!status.running);
+    let written = (1 + MockOptions::instant().game_log_lines + 6 + console::SPAM_LINES) as u64;
+    assert_eq!(status.stats.next_seq, written);
+    assert_eq!(status.stats.lines, written);
+    assert_eq!(
+        status.stats.skipped,
+        (console::SPAM_LINES - console::BATCH_LINES) as u64
+    );
+    assert!(status.log_file.is_some());
+
+    let Response::ConsolePage(page) = console_call(
+        &facade,
+        ConsoleCommand::Fetch {
+            instance: instance.clone(),
+            from: Some(0),
+            limit: 3,
+        },
+    ) else {
+        panic!("expected a page");
+    };
+    assert_eq!(page.lines.len(), 3);
+    assert!(page.lines[0].text.contains("Setting user"));
+
+    // The stack trace is one record: its lines point at the header.
+    let Response::ConsoleMatches(found) = console_call(
+        &facade,
+        ConsoleCommand::Search {
+            instance: instance.clone(),
+            query: ConsoleQuery {
+                text: "NULLPOINTER".into(),
+                levels: vec![LogLevel::Error],
+                limit: 10,
+                ..ConsoleQuery::default()
+            },
+        },
+    ) else {
+        panic!("expected matches");
+    };
+    assert_eq!(found.total, 1);
+    let caused = &found.lines[0];
+    assert!(caused.is_continuation());
+    let Response::ConsolePage(record) = console_call(
+        &facade,
+        ConsoleCommand::Fetch {
+            instance: instance.clone(),
+            from: Some(caused.record),
+            limit: 6,
+        },
+    ) else {
+        panic!("expected a page");
+    };
+    assert_eq!(
+        record.lines[0].logger.as_deref(),
+        Some("net.example.mockmod.MockMod")
+    );
+    assert!(record.lines.iter().all(|l| l.record == caused.record));
+
+    let Response::ConsoleMatches(warnings) = console_call(
+        &facade,
+        ConsoleCommand::Search {
+            instance: instance.clone(),
+            query: ConsoleQuery {
+                levels: vec![LogLevel::Warn],
+                ..ConsoleQuery::default()
+            },
+        },
+    ) else {
+        panic!("expected matches");
+    };
+    assert_eq!(
+        warnings.total,
+        (console::SPAM_LINES / 10 + MockOptions::instant().game_log_lines / 7) as u64
+    );
+
+    assert_eq!(
+        console_call(&facade, ConsoleCommand::OpenLogFile { instance }),
+        Response::Done
+    );
 }
 
 #[test]

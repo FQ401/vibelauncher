@@ -187,6 +187,41 @@ fn xml_and_plain_output_get_levels_and_reach_the_file() {
             .contains("[Render thread/INFO] [net.minecraft.client.Minecraft]: Setting user: Steve")
     );
     assert!(run.exit.tail.iter().any(|l| l.contains("plain after xml")));
+
+    // The stack trace is grouped with its record; the header names thread and logger.
+    let head = run
+        .lines
+        .iter()
+        .find(|l| l.text.contains("Broken"))
+        .unwrap();
+    assert_eq!(head.thread.as_deref(), Some("main"));
+    assert_eq!(head.logger.as_deref(), Some("Mod"));
+    assert_eq!(head.game_time_ms, Some(2));
+    let trace = run
+        .lines
+        .iter()
+        .find(|l| l.text.contains("	at a.B.c"))
+        .unwrap();
+    assert!(trace.is_continuation());
+    assert_eq!(trace.record, head.seq);
+    let stderr = run
+        .lines
+        .iter()
+        .find(|l| l.text.contains("Exception in thread"))
+        .unwrap();
+    assert!(stderr.stderr);
+
+    // The buffer answers the same lines, by range and by search.
+    let page = run.game.console_page(Some(head.seq), 2);
+    assert_eq!(page.lines[0], *head);
+    let found = run.game.console_search(&vl_core::console::ConsoleQuery {
+        text: "illegalstate".into(),
+        levels: vec![LogLevel::Error],
+        limit: 10,
+        ..Default::default()
+    });
+    assert_eq!(found.total, 1);
+    assert_eq!(found.lines[0].record, head.seq);
 }
 
 #[test]
@@ -316,4 +351,11 @@ fn spam_is_batched_bounded_and_written_whole() {
 
     assert_eq!(run.game.history().len(), 500);
     assert_eq!(run.exit.tail.len(), vl_launch::process::TAIL_LINES);
+    let stats = run.game.console_stats();
+    assert_eq!(stats.lines, 500);
+    assert_eq!(stats.next_seq, total);
+    assert_eq!(stats.dropped, total - 500);
+    assert_eq!(stats.skipped, run.skipped);
+    // Line numbers have no gaps: delivered ones rise, the skipped ones are the holes.
+    assert!(run.lines.windows(2).all(|w| w[0].seq < w[1].seq));
 }

@@ -3,11 +3,10 @@
 //! The output of both streams is read by one thread each, which only hands lines over: a game
 //! never waits for the launcher's front ends. One collector thread parses the lines
 //! ([`gamelog`](crate::gamelog)), writes the full log to a file ([`logfile`](crate::logfile)),
-//! keeps the last lines in a bounded history, and delivers the lines to the caller in batches
-//! at a fixed pace. When the game writes faster than a front end can show, the surplus is counted
-//! instead of delivered; it is in the file and in the history.
+//! keeps the newest lines in a bounded console buffer ([`ConsoleBuffer`]), and delivers the lines
+//! to the caller in batches at a fixed pace. When the game writes faster than a front end can
+//! show, the surplus is counted instead of delivered; it is in the file and in the buffer.
 
-use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -17,6 +16,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use vl_core::console::{
+    ConsoleBuffer, ConsoleMatches, ConsolePage, ConsoleQuery, ConsoleStats, DEFAULT_MAX_BYTES,
+};
 use vl_core::launch::GameExit;
 use vl_core::log::LogEntry;
 use vl_core::{Error, ErrorKind, Result};
@@ -34,8 +36,6 @@ const DRAIN: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(50);
 /// Lines waiting between the readers and the collector; a full queue slows the readers.
 const QUEUE: usize = 4096;
-/// The most memory the history may use, whatever the line limit says.
-const HISTORY_BYTES: usize = 16 * 1024 * 1024;
 /// How many of the last lines the exit report carries.
 pub const TAIL_LINES: usize = 200;
 
@@ -48,6 +48,8 @@ pub struct SpawnOptions {
     pub keep_logs: usize,
     /// How many of the last lines to keep in memory (the console history limit).
     pub history_lines: usize,
+    /// The most memory the kept lines may use, whatever the line limit says.
+    pub history_bytes: usize,
     /// How often collected lines are delivered.
     pub batch_interval: Duration,
     /// The most lines delivered per interval; more are counted as skipped.
@@ -55,12 +57,14 @@ pub struct SpawnOptions {
 }
 
 impl SpawnOptions {
-    /// Defaults: no file, a batch every 100 ms of at most 500 lines (about ten redraws a second).
+    /// Defaults: no file, a buffer of at most [`DEFAULT_MAX_BYTES`], a batch every 100 ms of at
+    /// most 500 lines (at most ten batches a second).
     pub fn new(history_lines: usize) -> Self {
         Self {
             log_dir: None,
             keep_logs: DEFAULT_KEEP,
             history_lines,
+            history_bytes: DEFAULT_MAX_BYTES,
             batch_interval: Duration::from_millis(100),
             max_batch_lines: 500,
         }
@@ -76,45 +80,10 @@ pub struct GameBatch {
     pub skipped: u64,
 }
 
-/// The last lines of the output, bounded by count and by size.
-#[derive(Debug)]
-struct History {
-    lines: VecDeque<String>,
-    bytes: usize,
-    max_lines: usize,
-}
-
-impl History {
-    fn new(max_lines: usize) -> Self {
-        Self {
-            lines: VecDeque::new(),
-            bytes: 0,
-            max_lines: max_lines.max(1),
-        }
-    }
-
-    fn push(&mut self, text: &str) {
-        self.bytes += text.len();
-        self.lines.push_back(text.to_owned());
-        while self.lines.len() > self.max_lines
-            || (self.bytes > HISTORY_BYTES && self.lines.len() > 1)
-        {
-            if let Some(old) = self.lines.pop_front() {
-                self.bytes -= old.len();
-            }
-        }
-    }
-
-    fn last(&self, n: usize) -> Vec<String> {
-        let skip = self.lines.len().saturating_sub(n);
-        self.lines.iter().skip(skip).cloned().collect()
-    }
-}
-
 struct Shared {
     child: Mutex<Child>,
     stopped: AtomicBool,
-    history: Mutex<History>,
+    console: Mutex<ConsoleBuffer>,
     /// When the process was seen ended; the collector then gives the readers [`DRAIN`] to finish.
     ended: Mutex<Option<Instant>>,
 }
@@ -142,10 +111,29 @@ impl RunningGame {
         self.log_file.as_deref()
     }
 
-    /// The last output lines (at most the history limit), oldest first: for a console that opens
-    /// after the game started.
+    /// The texts of the kept output lines, oldest first.
     pub fn history(&self) -> Vec<String> {
-        locked(&self.shared.history).last(usize::MAX)
+        locked(&self.shared.console).tail_texts(usize::MAX)
+    }
+
+    /// The counters of the console buffer.
+    pub fn console_stats(&self) -> ConsoleStats {
+        locked(&self.shared.console).stats()
+    }
+
+    /// Lines of the console buffer (see [`ConsoleBuffer::page`]).
+    pub fn console_page(&self, from: Option<u64>, limit: u32) -> ConsolePage {
+        locked(&self.shared.console).page(from, limit)
+    }
+
+    /// Searches the console buffer (see [`ConsoleBuffer::search`]).
+    pub fn console_search(&self, query: &ConsoleQuery) -> ConsoleMatches {
+        locked(&self.shared.console).search(query)
+    }
+
+    /// Whether the process has ended.
+    pub fn has_exited(&self) -> bool {
+        locked(&self.shared.ended).is_some()
     }
 
     /// Kills the process and everything it started. The exit is then reported with
@@ -240,7 +228,10 @@ pub fn spawn(
     let shared = Arc::new(Shared {
         child: Mutex::new(child),
         stopped: AtomicBool::new(false),
-        history: Mutex::new(History::new(options.history_lines)),
+        console: Mutex::new(ConsoleBuffer::new(
+            options.history_lines,
+            options.history_bytes,
+        )),
         ended: Mutex::new(None),
     });
     let file = options
@@ -302,7 +293,7 @@ pub fn spawn(
             let stopped_by_user = waiter.stopped.load(Ordering::SeqCst);
             let code = status.and_then(|s| s.code());
             let found = baseline.detect(&game_dir, pid);
-            let tail = locked(&waiter.history).last(TAIL_LINES);
+            let tail = locked(&waiter.console).tail_texts(TAIL_LINES);
             let crashed = !stopped_by_user
                 && (code != Some(0) || found.crash_report.is_some() || found.hs_err.is_some());
             on_exit(GameExit {
@@ -420,44 +411,50 @@ impl<F: FnMut(GameBatch)> Collector<F> {
         while let Ok(raw) = self.rx.try_recv() {
             self.accept(&raw, &mut parsed, &mut pending);
         }
-        for parser in &mut self.parsers {
-            parser.flush(&mut parsed);
+        for stderr in [false, true] {
+            self.parsers[usize::from(stderr)].flush(&mut parsed);
+            self.store(&mut parsed, stderr, &mut pending);
         }
-        self.store(&mut parsed, &mut pending);
         self.deliver(&mut pending);
     }
 
     fn accept(&mut self, raw: &RawLine, parsed: &mut Vec<Parsed>, pending: &mut Pending) {
         self.parsers[usize::from(raw.stderr)].push(&raw.text, parsed);
-        self.store(parsed, pending);
+        self.store(parsed, raw.stderr, pending);
     }
 
-    /// Writes `parsed` to the file and the history and queues it for delivery.
-    fn store(&mut self, parsed: &mut Vec<Parsed>, pending: &mut Pending) {
+    /// Writes `parsed` (lines of one stream) to the file and the console buffer and queues it
+    /// for delivery.
+    fn store(&mut self, parsed: &mut Vec<Parsed>, stderr: bool, pending: &mut Pending) {
         if parsed.is_empty() {
             return;
         }
         let time_ms = now_ms();
-        {
-            let mut history = locked(&self.shared.history);
+        if let Some(file) = &mut self.file {
             for line in parsed.iter() {
-                history.push(&line.text);
-            }
-        }
-        for line in parsed.drain(..) {
-            if let Some(file) = &mut self.file {
                 file.write_line(&line.text);
             }
+        }
+        let mut console = locked(&self.shared.console);
+        let mut skipped = 0;
+        for line in parsed.drain(..) {
+            let entry = LogEntry {
+                stderr,
+                thread: line.thread,
+                logger: line.logger,
+                stamp: line.stamp,
+                game_time_ms: line.game_time_ms,
+                ..LogEntry::new(time_ms, line.level, line.text)
+            };
+            let stored = console.push(entry, line.continues);
             if pending.lines.len() < self.max_batch {
-                pending.lines.push(LogEntry {
-                    time_ms,
-                    level: line.level,
-                    text: line.text,
-                });
+                pending.lines.push(stored.clone());
             } else {
-                pending.skipped += 1;
+                skipped += 1;
             }
         }
+        console.add_skipped(skipped);
+        pending.skipped += skipped;
     }
 
     fn deliver(&mut self, pending: &mut Pending) {
@@ -578,23 +575,5 @@ mod tests {
             .expect_err("fails");
         assert_eq!(err.kind, ErrorKind::Game);
         assert!(!err.message.contains("--secret"));
-    }
-
-    #[test]
-    fn history_is_bounded_by_lines_and_bytes() {
-        let mut history = History::new(3);
-        for n in 0..10 {
-            history.push(&format!("line {n}"));
-        }
-        assert_eq!(history.last(10), ["line 7", "line 8", "line 9"]);
-        assert_eq!(history.last(2), ["line 8", "line 9"]);
-
-        let mut big = History::new(usize::MAX);
-        let chunk = "x".repeat(1024 * 1024);
-        for _ in 0..40 {
-            big.push(&chunk);
-        }
-        assert!(big.bytes <= HISTORY_BYTES);
-        assert_eq!(big.lines.len(), 16);
     }
 }

@@ -21,6 +21,7 @@ use crate::bisect::{AutoBisectReport, BisectCommand, BisectEvent, BisectStatus};
 use crate::catalog::{
     ApiKeyStatus, CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage,
 };
+use crate::console::{ConsoleCommand, ConsoleMatches, ConsolePage, ConsoleStatus};
 use crate::crash::CrashDiagnosis;
 use crate::ids::TaskId;
 use crate::install::{
@@ -67,6 +68,8 @@ pub enum Command {
     Settings(SettingsCommand),
     /// Launching and stopping the game.
     Launch(LaunchCommand),
+    /// Reading a game's console buffer.
+    Console(ConsoleCommand),
     /// Tasks.
     Tasks(TaskCommand),
     /// Mods, packs and other instance resources.
@@ -161,6 +164,12 @@ pub enum Response {
     StorageSuggestion(StorageSuggestion),
     /// What the launcher knows about its own updates.
     SelfUpdate(SelfUpdateStatus),
+    /// The state of a game's console buffer.
+    ConsoleStatus(ConsoleStatus),
+    /// Lines of a game's console buffer.
+    ConsolePage(ConsolePage),
+    /// Lines of a game's console buffer that match a search.
+    ConsoleMatches(ConsoleMatches),
 }
 
 /// Something that happened in the launcher.
