@@ -188,7 +188,6 @@ impl Installer {
     ) -> Result<Installed> {
         check_component("version id", game)?;
         job.check()?;
-        job.report("metadata", 0, None, ProgressUnit::Steps);
         let mut meta = Metadata {
             installer: self,
             job,
@@ -288,7 +287,7 @@ impl Installer {
         let assets = match &version.asset_index {
             Some(index_ref) => {
                 let dest = self.layout.asset_index_file(&assets_index_id);
-                let control = job.net_control("metadata", 0);
+                let control = job.net_control("metadata", index_ref.size);
                 let spec = Download::new(&index_ref.url, &dest)
                     .size(index_ref.size)
                     .max_bytes(MAX_ASSET_INDEX_BYTES as u64);
@@ -333,6 +332,8 @@ impl Installer {
         );
         let natives_dir = self.layout.natives_dir(&version.client_jar);
         natives::extract_all(&plan.natives, &libraries_dir, &natives_dir, job)?;
+        let count = plan.natives.len() as u64;
+        job.report("natives", count, Some(count), ProgressUnit::Items);
 
         if let Some(assets) = &assets {
             restore_assets(assets, &self.layout.assets_dir(), game_dir, job)?;
@@ -437,7 +438,12 @@ impl Installer {
             }
         }
         match first {
-            None => Ok(()),
+            None => {
+                // The last event of a finished download is the total, whatever order the
+                // workers reported in.
+                job.report("downloading", total, Some(total), ProgressUnit::Bytes);
+                Ok(())
+            }
             Some(_) if job.is_cancelled() => Err(Error::cancelled()),
             Some(e) => Err(e.into()),
         }
@@ -611,5 +617,6 @@ fn restore_assets(
         fs::copy(&source, &temp).map_err(|e| io_error(&source, &e))?;
         fs::rename(&temp, &dest).map_err(|e| io_error(&dest, &e))?;
     }
+    job.report("assets", total, Some(total), ProgressUnit::Items);
     Ok(())
 }

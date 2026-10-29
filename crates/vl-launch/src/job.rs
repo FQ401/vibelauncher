@@ -58,8 +58,12 @@ impl Job {
         }
     }
 
-    /// Reports progress of `stage`.
+    /// Reports progress of `stage`. A stage whose total is zero has nothing to do and reports
+    /// nothing.
     pub fn report(&self, stage: &str, done: u64, total: Option<u64>, unit: ProgressUnit) {
+        if total == Some(0) {
+            return;
+        }
         if let Some(sink) = &self.sink {
             sink(Progress {
                 done,
@@ -71,14 +75,15 @@ impl Job {
     }
 
     /// A [`Control`] for `vl-net` whose byte progress is reported as `stage`, against `total`
-    /// bytes overall.
+    /// bytes overall (`0` when the size is not known).
     pub(crate) fn net_control(&self, stage: &'static str, total: u64) -> Control {
+        let total = (total > 0).then_some(total);
         let mut control = Control::with_cancel(self.cancel.clone());
         if let Some(sink) = self.sink.clone() {
             control = control.on_progress(move |p| {
                 sink(Progress {
                     done: p.done,
-                    total: Some(total),
+                    total,
                     unit: ProgressUnit::Bytes,
                     stage: Some(stage.to_owned()),
                 });
