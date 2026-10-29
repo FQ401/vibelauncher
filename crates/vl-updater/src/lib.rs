@@ -15,23 +15,29 @@
 //!   folders ([`replace_portable`]) and AppImages ([`replace_appimage`]) are replaced; the MSI
 //!   and macOS disk image replacements answer [`UpdaterError::NotImplemented`].
 //! - [`UpdateDir::mark_updated`] / [`UpdateDir::take_just_updated`]: the "just updated" marker
-//!   for the first start of the new version.
+//!   for the first start of the new version; [`UpdateDir::record_staged`] for the download
+//!   waiting to be installed and [`UpdateDir::record_failure`] for a failed installation.
+//! - [`helper`]: the update helper process that installs the download after the launcher exits
+//!   and starts it again.
 
 mod apply;
 mod check;
 mod detect;
 mod error;
+pub mod helper;
 mod store;
 
 pub use apply::{
-    GameGuard, MAX_ARCHIVE_ENTRIES, MAX_UNPACKED_BYTES, NEW_DIR, OLD_DIR, apply, clean_portable,
-    replace_appimage, replace_portable, verify_file,
+    GameGuard, LOCK_WAIT, MAX_ARCHIVE_ENTRIES, MAX_UNPACKED_BYTES, NEW_DIR, OLD_DIR, apply,
+    clean_portable, replace_appimage, replace_portable, verify_file,
 };
 pub use check::{SIGNATURE_SUFFIX, Updater, file_name};
 pub use detect::{current_exe, current_install, inputs_for};
 pub use error::UpdaterError;
-pub use store::{JustUpdated, UpdateDir};
+pub use store::{JustUpdated, StagedUpdate, UpdateDir, UpdateFailure};
 
+#[cfg(test)]
+mod helper_tests;
 #[cfg(test)]
 pub(crate) mod testkit;
 #[cfg(test)]

@@ -39,6 +39,8 @@ pub enum TaskKind {
     VerifyFiles,
     /// Searching the mods for the cause of a crash, launching the game for each step.
     Bisect,
+    /// Downloading a launcher update.
+    DownloadUpdate,
 }
 
 /// A task as announced when it starts.

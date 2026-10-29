@@ -33,6 +33,14 @@ use vl_core::platform::{Arch, Os, Platform};
 use crate::key::UpdateKey;
 use crate::{UpdateError, Version};
 
+/// The address of the stable manifest: the `VL_UPDATE_MANIFEST_URL` environment variable at
+/// build time, else the `latest.json` asset of the newest release of the project on GitHub. The
+/// signature is read from the same address with `.minisig` appended.
+pub const MANIFEST_URL: &str = match option_env!("VL_UPDATE_MANIFEST_URL") {
+    Some(url) => url,
+    None => "https://github.com/FQ401/vibelauncher/releases/latest/download/latest.json",
+};
+
 /// The largest manifest accepted.
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 /// The most artifacts a manifest may list.

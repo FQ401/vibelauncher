@@ -27,9 +27,12 @@ vl-loaders.workspace = true
 vl-platforms.workspace = true
 vl-install.workspace = true
 vl-modrinth.workspace = true
+vl-update.workspace = true
+vl-updater.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+minisign.workspace = true
 vl-curseforge.workspace = true
 zip.workspace = true
 flate2.workspace = true

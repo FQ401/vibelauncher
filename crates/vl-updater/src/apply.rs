@@ -3,6 +3,7 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use vl_update::{Replacement, UpdatePlan};
@@ -18,6 +19,10 @@ pub const OLD_DIR: &str = ".vl-update-old";
 pub const MAX_ARCHIVE_ENTRIES: usize = 10_000;
 /// The most bytes a portable archive may unpack to.
 pub const MAX_UNPACKED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// How long a rename is tried again while Windows reports the file as locked (an antivirus
+/// scan, the last handles of the exiting launcher).
+pub const LOCK_WAIT: Duration = Duration::from_secs(10);
 
 /// Names a portable archive may not hold at its top level: the data folder and portable marker
 /// of the user (`vl_store`), the install marker, and the update's own folders.
@@ -232,6 +237,10 @@ fn set_mode(_: &Path, _: Option<u32>) -> Result<(), UpdaterError> {
 
 /// Moves each `names` item from `new_dir` into `dir`, the old one first into `old_dir`. On a
 /// failure everything moved so far is put back.
+///
+/// Renaming the old item away first is what makes this work on Windows: a running executable or
+/// a loaded library can be renamed but not overwritten or deleted. A rename that finds the file
+/// locked is tried again for up to [`LOCK_WAIT`].
 fn swap_in(
     names: &[String],
     dir: &Path,
@@ -245,13 +254,13 @@ fn swap_in(
         let target = dir.join(name);
         let mut step = (name.as_str(), false, false);
         if fs::symlink_metadata(&target).is_ok() {
-            if let Err(e) = fs::rename(&target, old_dir.join(name)) {
+            if let Err(e) = rename(&target, &old_dir.join(name)) {
                 result = Err(UpdaterError::io(&target, &e));
                 break;
             }
             step.1 = true;
         }
-        let moved = fs::rename(new_dir.join(name), &target);
+        let moved = rename(&new_dir.join(name), &target);
         step.2 = moved.is_ok();
         done.push(step);
         if let Err(e) = moved {
@@ -263,14 +272,33 @@ fn swap_in(
         for (name, had_old, moved_in) in done.into_iter().rev() {
             let target = dir.join(name);
             if moved_in {
-                let _ = fs::rename(&target, new_dir.join(name));
+                let _ = rename(&target, &new_dir.join(name));
             }
             if had_old {
-                let _ = fs::rename(old_dir.join(name), &target);
+                let _ = rename(&old_dir.join(name), &target);
             }
         }
     }
     result
+}
+
+/// `fs::rename`, tried again for up to [`LOCK_WAIT`] while the file is locked.
+fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    let start = Instant::now();
+    loop {
+        match fs::rename(from, to) {
+            Err(e) if is_locked(&e) && start.elapsed() < LOCK_WAIT => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Whether `e` is Windows reporting a file in use: access denied (5), sharing violation (32),
+/// lock violation (33).
+fn is_locked(e: &io::Error) -> bool {
+    cfg!(windows) && matches!(e.raw_os_error(), Some(5 | 32 | 33))
 }
 
 /// Replaces the AppImage `target` with `file`: copies it next to the target, makes it
@@ -293,7 +321,7 @@ pub fn replace_appimage(file: &Path, target: &Path) -> Result<(), UpdaterError> 
             .open(&temp)
             .and_then(|f| f.sync_all())
             .map_err(|e| UpdaterError::io(&temp, &e))?;
-        fs::rename(&temp, target).map_err(|e| UpdaterError::io(target, &e))
+        rename(&temp, target).map_err(|e| UpdaterError::io(target, &e))
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
@@ -323,6 +351,36 @@ mod tests {
         assert_eq!(fs::read(app.join("b")).unwrap(), b"old b");
         assert_eq!(fs::read(new_dir.join("a")).unwrap(), b"new a");
         assert_eq!(fs::read_dir(&old_dir).unwrap().count(), 0);
+    }
+
+    /// A file another process holds open without sharing (as an antivirus scan may) is moved
+    /// once it is released.
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_file_is_moved_once_released() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = Dir::new();
+        let app = dir.path();
+        let (new_dir, old_dir) = (app.join(NEW_DIR), app.join(OLD_DIR));
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::write(app.join("a"), b"old a").unwrap();
+        fs::write(new_dir.join("a"), b"new a").unwrap();
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(app.join("a"))
+            .unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            drop(held);
+        });
+        let start = Instant::now();
+        swap_in(&["a".to_owned()], app, &new_dir, &old_dir).unwrap();
+        assert!(start.elapsed() >= Duration::from_millis(300));
+        release.join().unwrap();
+        assert_eq!(fs::read(app.join("a")).unwrap(), b"new a");
+        assert_eq!(fs::read(old_dir.join("a")).unwrap(), b"old a");
     }
 
     #[test]

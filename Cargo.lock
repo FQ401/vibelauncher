@@ -4253,6 +4253,7 @@ name = "vl-backend"
 version = "0.0.0"
 dependencies = [
  "flate2",
+ "minisign",
  "serde_json",
  "vl-auth",
  "vl-bisect",
@@ -4272,6 +4273,8 @@ dependencies = [
  "vl-settings",
  "vl-store",
  "vl-tasks",
+ "vl-update",
+ "vl-updater",
  "zip",
 ]
 
@@ -4531,6 +4534,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "sysinfo",
  "vl-core",
  "vl-net",
  "vl-store",
