@@ -1,0 +1,70 @@
+name: watcher-budget
+
+# By hand only: the ignored `watcher_budget` measurement of the desktop app (memory and CPU while
+# it watches a running game without its window) on Linux and macOS, and the lint stage on macOS
+# for the ref it runs on. Linux draws on a virtual X display (Xvfb) with Mesa's software Vulkan
+# (lavapipe) and OpenGL (llvmpipe). The figures are in the job summary and in an artifact.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  measure:
+    name: watcher budget (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: watcher-budget
+      - name: Virtual display and software renderer (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth mesa-vulkan-drivers \
+            libvulkan1 libegl1 libegl-mesa0 libgl1-mesa-dri libxkbcommon-x11-0 libxcursor1 \
+            libxi6 libxrandr2
+      - name: Lint (macOS)
+        if: runner.os == 'macOS'
+        run: cargo xtask ci lint
+      - name: Build
+        run: cargo test -p vl-app --release --features dev-game --test watcher_budget --no-run
+      - name: Measure
+        shell: bash
+        run: |
+          command=(cargo test -p vl-app --release --features dev-game --test watcher_budget
+            -- --ignored --nocapture)
+          if [ "$RUNNER_OS" = Linux ]; then
+            command=(xvfb-run -a -s "-screen 0 1920x1080x24" "${command[@]}")
+          fi
+          set -o pipefail
+          "${command[@]}" 2>&1 | tee watcher-budget.txt
+      - name: Report
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### watcher budget (${{ matrix.os }})"
+            echo '```'
+            grep -E '^(window open|watching)|panicked|vibelauncher:' watcher-budget.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: watcher-budget-${{ matrix.os }}
+          path: watcher-budget.txt
+          if-no-files-found: ignore
