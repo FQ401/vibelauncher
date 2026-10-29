@@ -1,0 +1,9 @@
+#!/bin/sh
+# The entry point of the VibeLauncher AppImage: the desktop app, or `vl-cli` when the first
+# argument is `--vl-cli`.
+here="$(dirname "$(readlink -f "$0")")"
+if [ "${1-}" = "--vl-cli" ]; then
+    shift
+    exec "$here/usr/bin/vl-cli" "$@"
+fi
+exec "$here/usr/bin/vibelauncher" "$@"

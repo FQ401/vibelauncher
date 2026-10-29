@@ -1,4 +1,5 @@
-//! `cargo xtask package portable [--target <triple>]`: the portable Windows archive.
+//! `cargo xtask package portable [--target <triple>]`: the portable Windows archive, and the
+//! steps every package shares (the release build, the `.sha256` files).
 //!
 //! Builds `vibelauncher` and `vl-cli` in release mode for a Windows MSVC target and writes
 //! `target/dist/vibelauncher-<version>-windows-<arch>-portable.zip` with a `.sha256` file next to
@@ -16,9 +17,9 @@ use zip::write::SimpleFileOptions;
 use crate::{read_version, root, run};
 
 /// The marker file that switches on portable mode (`vl_store::PORTABLE_MARKER`).
-const PORTABLE_MARKER: &str = "vibelauncher.portable";
-/// The executables in the archive, as `(package, binary)`.
-const BINARIES: [(&str, &str); 2] = [("vl-app", "vibelauncher"), ("vl-cli", "vl-cli")];
+pub(crate) const PORTABLE_MARKER: &str = "vibelauncher.portable";
+/// The executables in the packages, as `(package, binary)`.
+pub(crate) const BINARIES: [(&str, &str); 2] = [("vl-app", "vibelauncher"), ("vl-cli", "vl-cli")];
 
 /// Builds the portable archive for `target` (the host when `None`); returns its path.
 pub fn portable(target: Option<&str>) -> Result<PathBuf, String> {
@@ -28,18 +29,11 @@ pub fn portable(target: Option<&str>) -> Result<PathBuf, String> {
     };
     let arch = windows_arch(&target)?;
     let version = read_version()?;
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let mut build = vec!["build", "--release", "--locked", "--target", &target];
-    for (package, _) in BINARIES {
-        build.extend(["-p", package]);
-    }
-    run("build", &cargo, &build)?;
+    build_release(&target, false)?;
 
     let release = root().join("target").join(&target).join("release");
     let dist = root().join("target").join("dist");
-    fs::create_dir_all(&dist).map_err(|e| format!("{}: {e}", dist.display()))?;
     let name = archive_name(&version, arch);
-    let path = dist.join(&name);
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     for (_, bin) in BINARIES {
         let exe = format!("{bin}.exe");
@@ -47,14 +41,34 @@ pub fn portable(target: Option<&str>) -> Result<PathBuf, String> {
     }
     entries.push((PORTABLE_MARKER.to_owned(), Vec::new()));
     entries.push(("LICENSE.txt".to_owned(), read(&root().join("LICENSE"))?));
-    let bytes = zip_of(&entries)?;
-    fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    write_with_sums(&dist, &name, &zip_of(&entries)?)?;
+    Ok(dist.join(name))
+}
 
-    let sha = hex(&Sha256::digest(&bytes));
+/// Builds both executables in release mode for `target`, with their symbols stripped when
+/// `strip` is set.
+pub(crate) fn build_release(target: &str, strip: bool) -> Result<(), String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let mut build = vec!["build", "--release", "--locked", "--target", target];
+    if strip {
+        build.extend(["--config", "profile.release.strip=true"]);
+    }
+    for (package, _) in BINARIES {
+        build.extend(["-p", package]);
+    }
+    run("build", &cargo, &build)
+}
+
+/// Writes `bytes` to `dist/name` and their SHA-256 to `name.sha256` next to it.
+pub(crate) fn write_with_sums(dist: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    fs::create_dir_all(dist).map_err(|e| format!("{}: {e}", dist.display()))?;
+    let path = dist.join(name);
+    fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    let sha = hex(&Sha256::digest(bytes));
     let sums = dist.join(format!("{name}.sha256"));
     fs::write(&sums, format!("{sha}  {name}\n")).map_err(|e| format!("{}: {e}", sums.display()))?;
     println!("{} ({} bytes, sha256 {sha})", path.display(), bytes.len());
-    Ok(path)
+    Ok(())
 }
 
 /// `vibelauncher-<version>-windows-<arch>-portable.zip`.
@@ -79,7 +93,7 @@ fn windows_arch(target: &str) -> Result<&'static str, String> {
 }
 
 /// The host target triple, from `rustc -vV`.
-fn host_target() -> Result<String, String> {
+pub(crate) fn host_target() -> Result<String, String> {
     let output = std::process::Command::new("rustc")
         .arg("-vV")
         .current_dir(root())
@@ -92,7 +106,7 @@ fn host_target() -> Result<String, String> {
         .ok_or_else(|| "rustc -vV printed no host".to_owned())
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 

@@ -2,9 +2,14 @@
 //!
 //! ```text
 //! vibelauncher [--light] [--section home|instances|catalog|account|settings]
+//! vibelauncher --version
 //! ```
 //! The interface currently runs on the mock facade (`vl-mock`): synthetic instances and tasks.
-//! `--light` starts with the light theme; `--section` opens a section.
+//! `--light` starts with the light theme; `--section` opens a section. `--version` prints the
+//! version and exits without opening a window.
+//!
+//! The window's application ID (Wayland app ID, X11 class) is `me.vibefork.VibeLauncher`
+//! (`APP_ID`), the name of the desktop entry and icon of the Linux packages.
 //!
 //! Language: English is built in. The OS locale (or `VL_LANG`) selects another language when a
 //! `<tag>/vibelauncher.ftl` file exists in `VL_LOCALES_DIR` or in a `locales` directory next to
@@ -25,6 +30,10 @@ use vl_ui_egui::{Launcher, Section, ThemeMode};
 /// an installer carry the same value.
 #[cfg(windows)]
 const APP_USER_MODEL_ID: &str = "VibeLauncher.VibeLauncher";
+
+/// The application ID: the Wayland app ID and X11 class of the window, which match the desktop
+/// entry, the icon and the AppStream metadata of the Linux packages.
+const APP_ID: &str = "me.vibefork.VibeLauncher";
 
 /// Directories searched for extra languages.
 fn locale_dirs() -> Vec<PathBuf> {
@@ -74,6 +83,10 @@ fn main() -> eframe::Result {
     #[cfg(windows)]
     let _ = winsafe::SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID);
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--version") {
+        println!("vibelauncher {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let light = args.iter().any(|a| a == "--light");
     let section = args
         .iter()
@@ -88,6 +101,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("VibeLauncher")
+            .with_app_id(APP_ID)
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([960.0, 600.0]),
         ..Default::default()

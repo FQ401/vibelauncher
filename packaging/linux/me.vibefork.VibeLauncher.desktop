@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=VibeLauncher
+GenericName=Game Launcher
+Comment=Install, manage and launch Minecraft with mods and modpacks
+Exec=vibelauncher
+Icon=me.vibefork.VibeLauncher
+Terminal=false
+Categories=Game;
+Keywords=Minecraft;mods;modpacks;launcher;
+StartupWMClass=me.vibefork.VibeLauncher

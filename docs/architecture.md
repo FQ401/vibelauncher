@@ -807,10 +807,36 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   `LICENSE.txt`; the entries carry a fixed time, so the same files give the same archive. Unpacked
   anywhere, the launcher keeps its data in `data/` next to the executables; `--dir` still takes
   precedence. The same archive is the `portable` artifact of the self-update.
+- **Linux packages.** `cargo xtask package tar|appimage|deb|rpm|linux [--target <triple>]`
+  (`linux`: all four) builds both executables in release mode with their symbols stripped for a
+  Linux GNU target and writes `target/dist/vibelauncher-<version>-linux-<arch>.<ext>` (`arch`:
+  `x86_64`, `aarch64`), each with a `.sha256` file next to it:
+
+  | Package | Content | Install method |
+  |---|---|---|
+  | `.tar.gz` | a folder `vibelauncher-<version>-linux-<arch>` with both executables, the portable marker and `LICENSE.txt`; entries owned by root with a fixed time | portable (data in `data/` next to the executables) |
+  | `.AppImage` | `AppRun`, the desktop entry and icon, the executables in `usr/bin`, the shared files below `usr/share`; the type 2 runtime is the file named by `APPIMAGETOOL_RUNTIME_FILE` (pinned), and the update information is `gh-releases-zsync\|FQ401\|vibelauncher\|latest\|vibelauncher-*-linux-<arch>.AppImage.zsync` | AppImage (`APPIMAGE`) |
+  | `.AppImage.zsync` | the zsync control file of the AppImage, for delta downloads | — |
+  | `.deb`, `.rpm` | the executables and the install marker (`deb`, `rpm`) in `/usr/lib/vibelauncher`, links to them in `/usr/bin`, the shared files below `/usr/share`, the license (`/usr/share/doc/vibelauncher/copyright`, `/usr/share/licenses/vibelauncher/LICENSE`); depends on glibc 2.35 or newer and recommends the Vulkan, EGL, Wayland, xkbcommon and X11 libraries the window loads at run time | deb, rpm (marker) |
+
+  The shared files come from `packaging/linux`: the desktop entry and the AppStream metadata of
+  the application ID `me.vibefork.VibeLauncher` (in the AppImage the metadata is named
+  `<id>.appdata.xml`, as appimagetool reads it), and the hicolor icons, the PNG images of
+  `assets/icons/vibelauncher.ico` (16 to 256 px, a placeholder). The desktop app's window carries
+  the same ID as its Wayland app ID and X11 class. `AppRun` starts the desktop app, or `vl-cli`
+  when the first argument is `--vl-cli`. The tools come from `PATH` or the `APPIMAGETOOL` and
+  `NFPM` variables: appimagetool (with desktop-file-validate, appstreamcli and zsyncmake) and
+  nfpm.
 - **CI.** The `package` workflow builds and smoke-tests the portable archive on Windows (the data
   folder appears next to the executables, nothing under `%APPDATA%`, the version resource is
-  present) and uploads it. It runs on the `release` branches, `v*` tags and by hand, and on a
-  pull request only when the packaging files change.
+  present) and the Linux packages on Ubuntu 22.04 for x86_64 and aarch64 (glibc 2.35), with
+  appimagetool 1.9.1, the type 2 runtime 20251108 and nfpm 2.48.0 pinned by SHA-256. The Linux
+  smoke tests run `vibelauncher --version` and check the install method `vl-cli update status`
+  reports for each package: the unpacked tar.gz (portable, `data/` appears), the AppImage (with
+  `--appimage-extract-and-run`, its update information and `.zsync` file), the deb installed and
+  purged on Ubuntu and the rpm installed and removed on Fedora (nothing of the package left). It
+  uploads the packages. It runs on the `release` branches, `v*` tags and by hand, and on a pull
+  request only when the packaging files change.
 - **Not yet.** The per-user MSI installer.
 
 ## Front ends

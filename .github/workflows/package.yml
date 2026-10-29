@@ -13,7 +13,9 @@ on:
       - ".cargo/config.toml"
       - "assets/icons/**"
       - "apps/*/build.rs"
+      - "packaging/**"
       - "xtask/src/package.rs"
+      - "xtask/src/linux.rs"
   workflow_dispatch:
 
 permissions:
@@ -55,4 +57,129 @@ jobs:
         with:
           name: vibelauncher-windows-x64-portable
           path: target/dist/
+          if-no-files-found: error
+
+  # tar.gz, AppImage (+ .zsync), deb and rpm. Built on Ubuntu 22.04, so the executables need
+  # glibc 2.35 or newer. The tools are pinned and checked against their SHA-256.
+  linux:
+    name: linux packages (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            nfpm: nfpm_2.48.0_Linux_x86_64.tar.gz
+            nfpm-sha256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+            appimagetool-sha256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+            runtime-sha256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            nfpm: nfpm_2.48.0_Linux_arm64.tar.gz
+            nfpm-sha256: a9a75213763783b7669719e505474c748c5ad7dc66591a195619deb50f85c2f4
+            appimagetool-sha256: f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+            runtime-sha256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
+    runs-on: ${{ matrix.runner }}
+    env:
+      NFPM_VERSION: 2.48.0
+      APPIMAGETOOL_VERSION: 1.9.1
+      APPIMAGE_RUNTIME_VERSION: "20251108"
+      APP_ID: me.vibefork.VibeLauncher
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: package-linux
+      - name: Packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends desktop-file-utils appstream zsync file
+          tools="$RUNNER_TEMP/tools"
+          mkdir -p "$tools/bin"
+          cd "$tools"
+          fetch() {
+            curl -fsSL --retry 3 -o "$1" "$2"
+            echo "$3  $1" | sha256sum -c -
+          }
+          fetch nfpm.tar.gz \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/${{ matrix.nfpm }}" \
+            "${{ matrix.nfpm-sha256 }}"
+          tar -xzf nfpm.tar.gz -C bin nfpm
+          fetch appimagetool.AppImage \
+            "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${{ matrix.arch }}.AppImage" \
+            "${{ matrix.appimagetool-sha256 }}"
+          chmod +x appimagetool.AppImage
+          # Unpacked, so it runs without FUSE.
+          ./appimagetool.AppImage --appimage-extract > /dev/null
+          mv squashfs-root appimagetool
+          fetch runtime \
+            "https://github.com/AppImage/type2-runtime/releases/download/${APPIMAGE_RUNTIME_VERSION}/runtime-${{ matrix.arch }}" \
+            "${{ matrix.runtime-sha256 }}"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+          echo "APPIMAGETOOL=$tools/appimagetool/AppRun" >> "$GITHUB_ENV"
+          echo "APPIMAGETOOL_RUNTIME_FILE=$tools/runtime" >> "$GITHUB_ENV"
+      - name: Validate the desktop entry and the AppStream metadata
+        run: |
+          desktop-file-validate "packaging/linux/$APP_ID.desktop"
+          appstreamcli validate --no-net "packaging/linux/$APP_ID.metainfo.xml"
+      - name: Build the packages
+        run: cargo xtask package linux --target ${{ matrix.target }}
+      - name: Smoke test (tar.gz, portable)
+        run: |
+          dir="$RUNNER_TEMP/tar"
+          mkdir -p "$dir"
+          tar -xzf target/dist/vibelauncher-*.tar.gz -C "$dir"
+          app="$(echo "$dir"/vibelauncher-*)"
+          "$app/vibelauncher" --version
+          "$app/vl-cli" update status | tee "$RUNNER_TEMP/status.txt"
+          grep -F '(portable)' "$RUNNER_TEMP/status.txt"
+          test -d "$app/data" || { echo 'no data folder next to the executables'; exit 1; }
+      - name: Smoke test (AppImage)
+        run: |
+          image="$(echo target/dist/vibelauncher-*.AppImage)"
+          test -s "$image.zsync"
+          "./$image" --appimage-updateinformation | tee "$RUNNER_TEMP/update.txt"
+          grep -F "gh-releases-zsync|FQ401|vibelauncher|latest|vibelauncher-*-linux-${{ matrix.arch }}.AppImage.zsync" "$RUNNER_TEMP/update.txt"
+          "./$image" --appimage-extract-and-run --version
+          "./$image" --appimage-extract-and-run --vl-cli update status | tee "$RUNNER_TEMP/status.txt"
+          grep -F '(app_image)' "$RUNNER_TEMP/status.txt"
+      - name: Smoke test (deb install and removal)
+        run: |
+          sudo apt-get install -y --no-install-recommends "./$(echo target/dist/vibelauncher-*.deb)"
+          vibelauncher --version
+          vl-cli update status | tee "$RUNNER_TEMP/status.txt"
+          grep -F '(deb)' "$RUNNER_TEMP/status.txt"
+          desktop-file-validate "/usr/share/applications/$APP_ID.desktop"
+          test -f "/usr/share/icons/hicolor/256x256/apps/$APP_ID.png"
+          test -f "/usr/share/metainfo/$APP_ID.metainfo.xml"
+          sudo apt-get purge -y vibelauncher
+          for path in /usr/lib/vibelauncher /usr/bin/vibelauncher /usr/bin/vl-cli \
+            "/usr/share/applications/$APP_ID.desktop" "/usr/share/metainfo/$APP_ID.metainfo.xml" \
+            "/usr/share/icons/hicolor/256x256/apps/$APP_ID.png" /usr/share/doc/vibelauncher; do
+            if [ -e "$path" ] || [ -L "$path" ]; then echo "left behind: $path"; exit 1; fi
+          done
+      - name: Smoke test (rpm install and removal, Fedora)
+        run: |
+          docker run --rm -e APP_ID -v "$PWD/target/dist:/dist:ro" fedora:43 sh -euc '
+            dnf install -y --setopt=install_weak_deps=False /dist/vibelauncher-*.rpm
+            vibelauncher --version
+            vl-cli update status | tee /tmp/status.txt
+            grep -F "(rpm)" /tmp/status.txt
+            test -f "/usr/share/applications/$APP_ID.desktop"
+            test -f "/usr/share/icons/hicolor/256x256/apps/$APP_ID.png"
+            dnf remove -y vibelauncher
+            for path in /usr/lib/vibelauncher /usr/bin/vibelauncher /usr/bin/vl-cli \
+              "/usr/share/applications/$APP_ID.desktop" "/usr/share/metainfo/$APP_ID.metainfo.xml" \
+              "/usr/share/icons/hicolor/256x256/apps/$APP_ID.png" /usr/share/licenses/vibelauncher; do
+              if [ -e "$path" ] || [ -L "$path" ]; then echo "left behind: $path"; exit 1; fi
+            done
+          '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vibelauncher-linux-${{ matrix.arch }}
+          path: target/dist/vibelauncher-*
           if-no-files-found: error
