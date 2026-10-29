@@ -15,6 +15,7 @@ mod log;
 mod mods;
 mod packs;
 mod storage;
+mod trash;
 mod update;
 mod verify;
 mod versions;
@@ -34,6 +35,11 @@ commands:
                                       create an instance (newest stable loader by default)
   instances set-loader <instance> <fabric|quilt|neoforge|forge|none> [--loader-version <v>]
                                       change or remove an instance's loader
+  instances delete <instance> [--comment <text>] [--permanent] [--yes]
+                                      move an instance to the launcher's trash with an optional
+                                      comment (refused while its game or a task runs on it);
+                                      --permanent erases it at once and asks first, --yes skips
+                                      the question
   instances verify <instance>         check every game file and download damaged ones again
   instances diagnose <instance>       analyse the newest logs of an instance (no launch)
   instances mods list <instance> [--kind <k>]
@@ -151,8 +157,18 @@ commands:
                                       pack that was installed from a file. CurseForge packs need
                                       a key; files their authors keep off other apps are listed
                                       for you to download
+  trash list                          deleted instances, newest first, with comment, size and
+                                      time; they are erased after storage.trash_days (30) days,
+                                      and the oldest when the trash is over
+                                      storage.trash_max_gib (20) GiB
+  trash restore <item>                put a deleted instance back; a taken id or name gets a
+                                      suffix
+  trash purge [<item>|--all] [--yes]  erase one item or everything for good (asks first, --yes
+                                      skips the question); without an argument erase what is
+                                      beyond the limits
   storage show [--sizes]              the data folder and the folder of every section
-                                      (data, instances, game, java, cache, backups, logs)
+                                      (data, instances, game, java, cache, backups, logs) and
+                                      the trash of deleted instances
   storage check <section> <path>      check a folder for a section (errors and warnings)
   storage move <section> <path> [--switch-only] [--yes]
                                       copy a section to a folder and switch to it after a
@@ -164,7 +180,8 @@ commands:
   storage reset <section> [--switch-only]
                                       move a section back to its default place
   storage cleanup [--trash]           remove old copies left by moves, prune logs and the
-                                      cache; --trash also empties the trash folders
+                                      cache; --trash also erases every deleted instance and
+                                      empties the resource trash of every instance
   update status                       the running version, the newest release seen, a
                                       downloaded update, the result of the last update
   update check                        fetch and verify the signed release manifest
@@ -217,6 +234,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         ["catalog", rest @ ..] => catalog::run(facade, rest, out),
         ["packs", rest @ ..] => packs::run(facade, rest, out),
         ["storage", rest @ ..] => storage::run(facade, rest, out),
+        ["trash", rest @ ..] => trash::run(facade, rest, out),
         ["update", rest @ ..] => update::run(facade, rest, out),
         _ => Err(USAGE.into()),
     }

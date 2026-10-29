@@ -10,6 +10,7 @@
 //! <root>/cache/                                        cache
 //! <root>/snapshots/                                    backups and snapshots
 //! <root>/logs/                                         launcher logs
+//! <root>/trash/                                        deleted instances (part of the data folder)
 //! ```
 //!
 //! An explicit folder for the shared game files holds the same four directories.
@@ -26,6 +27,8 @@ use crate::{StoreError, write_atomic};
 
 /// The layout file in the data folder.
 pub const STORAGE_FILE: &str = "storage.json";
+/// The trash of deleted instances inside the data folder.
+pub const TRASH_DIR: &str = "trash";
 /// The directories of the shared game files section.
 pub const GAME_ENTRIES: [&str; 4] = ["versions", "libraries", "assets", "loaders"];
 
@@ -117,6 +120,11 @@ impl Layout {
     /// The recorded layout.
     pub fn config(&self) -> &StorageConfig {
         &self.config
+    }
+
+    /// The trash of deleted instances: always inside the data folder.
+    pub fn trash_dir(&self) -> PathBuf {
+        self.root.join(TRASH_DIR)
     }
 
     /// Where `section` lives when it has no explicit folder.

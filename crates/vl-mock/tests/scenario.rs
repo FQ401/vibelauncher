@@ -323,10 +323,13 @@ fn instances_are_created_renamed_and_deleted_with_events() {
     facade
         .call(Command::Instances(InstanceCommand::Delete {
             id: created.id.clone(),
+            comment: String::new(),
+            permanent: false,
         }))
         .wait()
         .unwrap();
-    assert_eq!(events.drain().count(), 3);
+    // Added, Changed, Removed, TrashChanged.
+    assert_eq!(events.drain().count(), 4);
 
     let missing = facade
         .call(Command::Instances(InstanceCommand::Create(NewInstance {

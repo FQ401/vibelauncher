@@ -113,22 +113,6 @@ fn rename_never_overwrites_another_instance() {
 }
 
 #[test]
-fn delete_moves_to_trash_and_purge_erases() {
-    let t = Tmp::new("delete");
-    let inst = Instances::open(&t.0).unwrap();
-    let a = inst.create(&new("Gone")).unwrap();
-    let moved = inst.delete(&a.id).unwrap();
-    assert!(moved.join(CONFIG_FILE).is_file());
-    assert!(inst.list().unwrap().is_empty());
-    assert!(inst.delete(&a.id).is_err());
-    // The same name can be created and deleted again without clashing in the trash.
-    let b = inst.create(&new("Gone")).unwrap();
-    inst.delete(&b.id).unwrap();
-    inst.purge_trash().unwrap();
-    assert!(!t.0.join(".trash").exists());
-}
-
-#[test]
 fn leftover_staging_directories_are_ignored_and_cleaned() {
     let t = Tmp::new("leftover");
     let inst = Instances::open(&t.0).unwrap();

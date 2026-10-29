@@ -90,6 +90,17 @@ fn show(facade: &dyn Facade, sizes: bool, out: Out<'_>) -> Result<(), CliError> 
             s.path.display()
         )?;
     }
+    let trash_size = info
+        .trash
+        .size
+        .map(|b| format!("  {}", human_bytes(b)))
+        .unwrap_or_default();
+    writeln!(
+        out,
+        "  {:<10} {}{trash_size}",
+        "trash",
+        info.trash.path.display()
+    )?;
     if !info.leftovers.is_empty() {
         writeln!(out, "old copies (removed by `storage cleanup`):")?;
         for l in &info.leftovers {

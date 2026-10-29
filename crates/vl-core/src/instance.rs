@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::component::ComponentKind;
 use crate::ids::{InstanceId, TaskId};
+use crate::trash::PurgeTarget;
 
 /// The mod loader an instance runs on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,11 +126,29 @@ pub enum InstanceCommand {
         /// The new display name.
         name: String,
     },
-    /// Deletes a stopped instance → `Response::Done`.
+    /// Deletes an instance → `Response::Done`. Refused while its game runs or a task works on
+    /// it. The instance goes to the launcher's trash with `comment`, unless `permanent` erases it
+    /// at once.
     Delete {
         /// The instance.
         id: InstanceId,
+        /// What the user wrote about it (at most [`crate::trash::COMMENT_MAX_CHARS`] characters).
+        #[serde(default)]
+        comment: String,
+        /// Erase it at once instead of keeping it in the trash.
+        #[serde(default)]
+        permanent: bool,
     },
+    /// The deleted instances → `Response::Trash`.
+    ListTrash,
+    /// Puts a deleted instance back → `Response::Instance`. A taken id gets a suffix (`-2`), and
+    /// a display name another instance has gets one too (` (2)`).
+    Restore {
+        /// The trash item.
+        item: String,
+    },
+    /// Erases deleted instances → `Response::TrashPurged`.
+    Purge(PurgeTarget),
 }
 
 /// Changes to the instance list.
@@ -143,6 +162,9 @@ pub enum InstanceEvent {
     Changed(InstanceSummary),
     /// An instance was deleted.
     Removed(InstanceId),
+    /// The trash changed (an item was added, restored or purged); read it with
+    /// `InstanceCommand::ListTrash`.
+    TrashChanged,
 }
 
 #[cfg(test)]
