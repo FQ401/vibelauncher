@@ -110,10 +110,10 @@ pub fn verify_file(path: &Path, size: u64, sha256: &str) -> Result<(), UpdaterEr
 /// Unpacks the zip `archive` over the portable folder `dir` and returns the replaced top-level
 /// names.
 ///
-/// The archive's root is the folder's content. Everything is unpacked into `dir/.vl-update-new`
-/// first (entry names checked, no links, entry count and unpacked size capped); then each
-/// top-level item of the archive moves the old item of that name to `dir/.vl-update-old` and
-/// takes its place. Items the archive does not have — the user's `data` folder among them —
+/// The archive's root is the folder's content; a portable marker file at its root is skipped.
+/// Everything is unpacked into `dir/.vl-update-new` first (entry names checked, no links, entry
+/// count and unpacked size capped); then each top-level item of the archive moves the old item
+/// of that name to `dir/.vl-update-old` and takes its place. Items the archive does not have — the user's `data` folder among them —
 /// are not touched. A failure while moving puts every moved item back.
 pub fn replace_portable(archive: &Path, dir: &Path) -> Result<Vec<String>, UpdaterError> {
     let new_dir = dir.join(NEW_DIR);
@@ -167,6 +167,11 @@ fn unpack(archive: &Path, into: &Path) -> Result<Vec<String>, UpdaterError> {
         let rel = safe_path(name.trim_end_matches('/'))
             .ok_or_else(|| bad(format!("unsafe path {name:?}")))?;
         let first = rel.first().cloned().unwrap_or_default();
+        // The release archive is the one users download, so it carries the portable marker as a
+        // top-level file: it is skipped and the folder keeps its own (or none).
+        if !is_dir && rel.len() == 1 && first.eq_ignore_ascii_case(vl_store::PORTABLE_MARKER) {
+            continue;
+        }
         if PROTECTED.iter().any(|p| first.eq_ignore_ascii_case(p)) {
             return Err(bad(format!("the archive must not contain {first:?}")));
         }

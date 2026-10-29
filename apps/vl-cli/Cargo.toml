@@ -20,5 +20,8 @@ vl-mock.workspace = true
 ctrlc.workspace = true
 rpassword.workspace = true
 
+[build-dependencies]
+winresource.workspace = true
+
 [lints]
 workspace = true
