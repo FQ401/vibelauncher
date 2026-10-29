@@ -2,8 +2,10 @@
 //! an installer.
 //!
 //! Forge publishes every version as `net.minecraftforge:forge` in its Maven repository. A Maven
-//! version is `<game>-<forge>` (`1.20.1-47.3.0`), for some older builds with a branch suffix
-//! (`1.7.10-10.13.4.1614-1.7.10`); the launcher calls the version by its Forge part (`47.3.0`,
+//! version is `<game>-<forge>` (`1.20.1-47.3.0`, `26.3-66.1.0`), for some builds before 1.13
+//! with a branch suffix (`1.7.10-10.13.4.1614-1.7.10`, `1.12.2-14.23.4.2720-4627`). The game
+//! part is the Mojang id, except Forge's `1.7.10_pre4` for `1.7.10-pre4`, which is not mapped.
+//! The launcher calls the version by its Forge part (`47.3.0`,
 //! `10.13.4.1614`) and accepts the Maven form without a branch as input too. The Forge part is
 //! unique per game version, so [`find_maven_version`] finds the Maven version with its branch.
 //!
