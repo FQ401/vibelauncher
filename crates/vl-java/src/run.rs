@@ -80,7 +80,7 @@ pub(crate) fn run_capped(
     // Readers end when the pipes close; a grandchild holding a pipe must not hang us.
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let grace = Instant::now() + Duration::from_millis(500);
+    let grace = Instant::now() + Duration::from_secs(5);
     for _ in 0..2 {
         let left = grace.saturating_duration_since(Instant::now());
         match rx.recv_timeout(left) {

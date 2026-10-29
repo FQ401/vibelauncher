@@ -579,8 +579,13 @@ mod tests {
         });
         launcher.set_section(Section::Settings);
         let id = launch(&mut launcher);
-        assert_eq!(next_request(&mut launcher), Some(WindowRequest::Hide));
-        assert_eq!(next_request(&mut launcher), Some(WindowRequest::Show));
+        // The start and the crash can arrive in one batch of events: the show then replaces the
+        // hide, so the hide is optional and the show is what counts.
+        let mut request = next_request(&mut launcher);
+        if request == Some(WindowRequest::Hide) {
+            request = next_request(&mut launcher);
+        }
+        assert_eq!(request, Some(WindowRequest::Show));
         let error = launcher.last_error().expect("the crash is shown");
         assert!(
             error.contains("crashed") && error.contains("exit code 1"),

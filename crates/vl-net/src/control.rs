@@ -86,9 +86,10 @@ impl Control {
     }
 }
 
-/// Counts bytes of one operation or batch and reports them.
+/// Counts bytes of one operation or batch and reports them. The count and its report change
+/// together, so concurrent workers deliver the counts in order.
 pub(crate) struct Tally {
-    done: std::sync::atomic::AtomicU64,
+    done: Mutex<u64>,
     total: Option<u64>,
     sink: Option<ProgressFn>,
 }
@@ -96,32 +97,26 @@ pub(crate) struct Tally {
 impl Tally {
     pub(crate) fn new(total: Option<u64>, sink: Option<ProgressFn>) -> Self {
         Self {
-            done: Default::default(),
+            done: Mutex::new(0),
             total,
             sink,
         }
     }
 
     pub(crate) fn add(&self, n: u64) {
-        let done = self.done.fetch_add(n, Ordering::SeqCst) + n;
-        self.report(done);
+        self.update(|d| d + n);
     }
 
     pub(crate) fn sub(&self, n: u64) {
-        let done = self
-            .done
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |d| {
-                Some(d.saturating_sub(n))
-            })
-            .unwrap_or(0)
-            .saturating_sub(n);
-        self.report(done);
+        self.update(|d| d.saturating_sub(n));
     }
 
-    fn report(&self, done: u64) {
+    fn update(&self, change: impl FnOnce(u64) -> u64) {
+        let mut done = self.done.lock().unwrap_or_else(|e| e.into_inner());
+        *done = change(*done);
         if let Some(sink) = &self.sink {
             sink(Progress {
-                done,
+                done: *done,
                 total: self.total,
             });
         }
