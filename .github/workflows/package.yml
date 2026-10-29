@@ -1,15 +1,24 @@
 name: package
 
-# Release packages. Runs on release branches, version tags and by hand; on a pull request only
-# when the packaging itself changes.
+# Release packages. Runs on `release/**` branches, version tags and by hand; on a pull request
+# only when the packaging itself changes. The `release` workflow calls it for the `release`
+# branch.
 
 on:
+  workflow_call:
+    inputs:
+      build-date:
+        description: Build date (YYYY-MM-DD) embedded into the executables
+        type: string
+        default: ""
   push:
-    branches: [release, "release/**"]
+    branches: ["release/**"]
     tags: ["v*"]
   pull_request:
     paths:
       - ".github/workflows/package.yml"
+      - ".github/workflows/release.yml"
+      - "xtask/src/release.rs"
       - ".cargo/config.toml"
       - "assets/icons/**"
       - "apps/*/build.rs"
@@ -24,11 +33,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: package-${{ github.ref }}
+  # Called from `release`, `github.workflow` is the caller's name.
+  group: package-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_INCREMENTAL: 0
+  # Embedded into the executables: `vibelauncher --version` prints the commit and the date, and
+  # the self-update trusts manifests signed with the release key (none while it is empty).
+  VL_BUILD_COMMIT: ${{ github.sha }}
+  VL_BUILD_DATE: ${{ inputs.build-date }}
+  VL_UPDATE_PUBLIC_KEY: ${{ vars.VL_UPDATE_PUBLIC_KEY }}
 
 jobs:
   windows-portable:
@@ -42,7 +57,7 @@ jobs:
         with:
           key: package
       - name: Build the portable archive
-        run: cargo xtask package portable --target x86_64-pc-windows-msvc
+        run: cargo --locked xtask package portable --target x86_64-pc-windows-msvc
       - name: Smoke test (portable data stays in the folder)
         shell: pwsh
         run: |
@@ -129,14 +144,15 @@ jobs:
           desktop-file-validate "packaging/linux/$APP_ID.desktop"
           appstreamcli validate --no-net "packaging/linux/$APP_ID.metainfo.xml"
       - name: Build the packages
-        run: cargo xtask package linux --target ${{ matrix.target }}
+        run: cargo --locked xtask package linux --target ${{ matrix.target }}
       - name: Smoke test (tar.gz, portable)
         run: |
           dir="$RUNNER_TEMP/tar"
           mkdir -p "$dir"
           tar -xzf target/dist/vibelauncher-*.tar.gz -C "$dir"
           app="$(echo "$dir"/vibelauncher-*)"
-          "$app/vibelauncher" --version
+          "$app/vibelauncher" --version | tee "$RUNNER_TEMP/version.txt"
+          grep -F "commit $GITHUB_SHA" "$RUNNER_TEMP/version.txt"
           "$app/vl-cli" update status | tee "$RUNNER_TEMP/status.txt"
           grep -F '(portable)' "$RUNNER_TEMP/status.txt"
           test -d "$app/data" || { echo 'no data folder next to the executables'; exit 1; }
@@ -201,7 +217,7 @@ jobs:
         with:
           key: package-macos
       - name: Build the disk image
-        run: cargo xtask package macos
+        run: cargo --locked xtask package macos
       - name: Check the checksum file
         run: cd target/dist && shasum -a 256 -c vibelauncher-*.dmg.sha256
       - name: Self-update from a disk image (vl-updater tests, the new image included)

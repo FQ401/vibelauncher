@@ -731,8 +731,8 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   malformed hash, a size of 0 or above 1 GiB, or two artifacts for the same platform and kind
   make the manifest invalid.
 - **Key.** The minisign public key is embedded at build time (`vl_update::RELEASE_PUBLIC_KEY`,
-  from the `VL_UPDATE_PUBLIC_KEY` environment variable). A build without it refuses every
-  update check with `ErrorKind::Unsupported`.
+  from the `VL_UPDATE_PUBLIC_KEY` environment variable; an empty value counts as none). A build
+  without it refuses every update check with `ErrorKind::Unsupported`.
 - **Rollback.** A manifest older than the running version, or than the newest manifest verified
   on this machine (`<data>/updates/state.json`), is refused; the stored version only grows.
 - **Install method.** Detected from the running executable: the marker file
@@ -883,8 +883,42 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   `mac_app`, and a copy of the executable outside the bundle (as the update helper runs) starts.
   The build job also runs the disk image tests of `vl-updater` (real images made with
   `hdiutil`) and installs the new image over a bundle with the self-update's replacement.
-  It runs on the `release` branches, `v*` tags and by hand, and on a pull
-  request only when the packaging files change.
+  It runs on `release/**` branches, `v*` tags and by hand, is called by the `release`
+  workflow, and on a pull request runs only when the packaging files change. The executables
+  embed the commit (`VL_BUILD_COMMIT`), the build date of a release (`VL_BUILD_DATE`) and the
+  repository variable `VL_UPDATE_PUBLIC_KEY`; `vibelauncher --version` prints the version, then
+  `commit <sha>, built <date>`. Every build is `--locked`.
+- **Release.** The `release` workflow runs on a push to the `release` branch and by hand:
+  1. `version`: `cargo xtask sources` (every package in `Cargo.lock` comes from crates.io or the
+     workspace; git dependencies and other registries fail), the version (`cargo xtask version`)
+     and the build date. A release is drafted only from the `release` branch, for a version
+     without a pre-release part that is not released yet.
+  2. `packages`: the `package` workflow, smoke tests included.
+  3. `assemble`: the packages of all platforms in one folder. `cargo xtask release manifest`
+     accepts only release file names of the version, checks each `.sha256` file against its
+     package and drops it, and writes `SHA256SUMS.txt` and `latest.json` (the release date, the
+     minimum version, `0.0.0` unless given, the release page and one artifact per platform and
+     install method with the release download URL, SHA-256 and size; the disk image serves
+     `mac_os` on `x86_64` and `aarch64`), checked with `vl-update`'s parser. With the secret
+     `VL_UPDATE_SECRET_KEY` (a minisign secret key; `VL_UPDATE_SECRET_KEY_PASSWORD` when it has
+     a password) `cargo xtask release sign` writes `latest.json.minisig` and verifies it with the
+     key's public key and `VL_UPDATE_PUBLIC_KEY`; without the secret the manifest stays unsigned
+     with a warning, and a public key without the secret fails the run. The folder is uploaded as
+     the workflow artifact `release-v<version>`.
+  4. `draft`: a draft GitHub release `v<version>` on the commit with every file and the
+     checksums in its notes (an earlier draft of the version gets the new files). A run by hand
+     with `dry_run` (the default) skips it.
+
+  | File | Manifest artifact |
+  |---|---|
+  | `vibelauncher-<version>-windows-x64-portable.zip` | `windows` `x86_64` `portable` |
+  | `vibelauncher-<version>-windows-x64.msi` (not built yet) | `windows` `x86_64` `msi` |
+  | `vibelauncher-<version>-macos-universal.dmg` | `mac_os` `x86_64` and `aarch64` `dmg` |
+  | `vibelauncher-<version>-linux-<arch>.tar.gz` | `linux` `<arch>` `portable` |
+  | `vibelauncher-<version>-linux-<arch>.AppImage` | `linux` `<arch>` `app_image` |
+  | `vibelauncher-<version>-linux-<arch>.AppImage.zsync` | — |
+  | `vibelauncher-<version>-linux-<arch>.deb`, `.rpm` | `linux` `<arch>` `deb`, `rpm` |
+  | `SHA256SUMS.txt`, `latest.json`, `latest.json.minisig` | — |
 - **Not yet.** The per-user MSI installer.
 
 ## Front ends
@@ -968,6 +1002,7 @@ crashes with `game_crashes`); `MockOptions::instant()` makes tests run without d
 
 ## Checks
 
-`cargo xtask ci` runs, in order: the layer check, `cargo fmt --check`, `cargo clippy` with
+`cargo xtask ci` runs, in order: the layer check, the dependency source check,
+`cargo fmt --check`, `cargo clippy` with
 warnings denied, `cargo test`, and a `wasm32-unknown-unknown` build of the `core` layer and
 `vl-ui-egui`. CI runs it on Linux and Windows for every pull request and on macOS weekly.

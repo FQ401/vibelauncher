@@ -6,19 +6,28 @@
 //! - `package portable [--target <triple>]` — the portable Windows archive in `target/dist`;
 //! - `package tar|appimage|deb|rpm|linux [--target <triple>]` — the Linux packages in `target/dist`
 //!   (`linux`: all four);
-//! - `package macos` — the universal macOS disk image in `target/dist` (on macOS).
+//! - `package macos` — the universal macOS disk image in `target/dist` (on macOS);
+//! - `sources` — every dependency in `Cargo.lock` comes from crates.io or the workspace;
+//! - `release manifest <dir> --repo <owner/name> --date <YYYY-MM-DD> [--minimum-version <v>]` —
+//!   `SHA256SUMS.txt` and the self-update manifest `latest.json` for the packages in `<dir>`;
+//! - `release sign <dir>` — `latest.json.minisig` with the key in `VL_UPDATE_SECRET_KEY`.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // a command-line tool reports to the terminal
 
 mod layers;
 mod linux;
 mod macos;
 mod package;
+mod release;
+mod sources;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage: cargo xtask ci [lint|test] | cargo xtask version [set X.Y.Z[-pre]] \
-                     | cargo xtask package portable|tar|appimage|deb|rpm|linux [--target <triple>]                      | cargo xtask package macos";
+                     | cargo xtask package portable|tar|appimage|deb|rpm|linux [--target <triple>] \
+                     | cargo xtask package macos | cargo xtask sources \
+                     | cargo xtask release manifest <dir> --repo <owner/name> --date <YYYY-MM-DD> \
+                     [--minimum-version <X.Y.Z>] | cargo xtask release sign <dir>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -30,6 +39,14 @@ fn main() -> ExitCode {
         ["version"] => read_version().map(|v| println!("{v}")),
         ["version", "set", v] => set_version(v),
         ["package", "macos"] => macos::package(),
+        ["sources"] => sources::check(),
+        ["release", "sign", dir] => release::sign(Path::new(dir)),
+        ["release", "manifest", dir, rest @ ..] => {
+            let Some(options) = release_options(rest) else {
+                return usage();
+            };
+            release::manifest(Path::new(dir), &options)
+        }
         ["package", kind, rest @ ..] => {
             let target = match rest {
                 [] => None,
@@ -53,6 +70,25 @@ fn main() -> ExitCode {
     }
 }
 
+/// `--repo <owner/name> --date <YYYY-MM-DD> [--minimum-version <X.Y.Z>]` in any order; the
+/// minimum version defaults to `0.0.0` (every version may update itself).
+fn release_options<'a>(args: &[&'a str]) -> Option<release::ManifestOptions<'a>> {
+    let (mut repo, mut date, mut minimum_version) = (None, None, "0.0.0");
+    for pair in args.chunks(2) {
+        match pair {
+            ["--repo", v] => repo = Some(*v),
+            ["--date", v] => date = Some(*v),
+            ["--minimum-version", v] => minimum_version = v,
+            _ => return None,
+        }
+    }
+    Some(release::ManifestOptions {
+        repo: repo?,
+        date: date?,
+        minimum_version,
+    })
+}
+
 fn usage() -> ExitCode {
     eprintln!("xtask: {USAGE}");
     ExitCode::FAILURE
@@ -73,6 +109,7 @@ fn ci(lint: bool, test: bool) -> Result<(), String> {
         return Ok(());
     }
     let core = check_layers(&cargo)?;
+    sources::check()?;
     let steps: [(&str, &str, &[&str]); 2] = [
         ("format", &cargo, &["fmt", "--all", "--check"]),
         (
