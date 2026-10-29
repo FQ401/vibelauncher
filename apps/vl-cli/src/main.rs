@@ -20,6 +20,9 @@ use vl_core::Facade;
 use vl_mock::{MockFacade, MockOptions};
 
 fn main() -> ExitCode {
+    if let Some(code) = vl_backend::run_helper_if_requested() {
+        return ExitCode::from(u8::try_from(code).unwrap_or(1));
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let stdout = std::io::stdout();

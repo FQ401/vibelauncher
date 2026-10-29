@@ -31,7 +31,7 @@ mod version;
 
 pub use error::UpdateError;
 pub use key::{RELEASE_PUBLIC_KEY, UpdateKey};
-pub use manifest::{Artifact, ArtifactKind, Channel, Manifest, verify_manifest};
+pub use manifest::{Artifact, ArtifactKind, Channel, MANIFEST_URL, Manifest, verify_manifest};
 pub use method::{DetectInputs, INSTALL_MARKER, InstallMethod, detect};
 pub use offer::{CheckInput, ManualReason, Offer, evaluate};
 pub use plan::{Replacement, Restart, UpdatePlan, plan};

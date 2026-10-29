@@ -95,7 +95,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth 
 | `vl-platforms` | native | Online mod platforms behind the `CatalogSource` trait; `ModrinthSource` and `CurseForgeSource` fetch through `vl-net` (HTTP cache, retries, size caps) and pace themselves with a rate limiter that follows the server's `X-Ratelimit-*` headers and `429`. A platform is a module and a `Provider` variant. The CurseForge key comes from an `ApiKeySource`: the `VL_CURSEFORGE_API_KEY` environment variable (development), then the user's key in the OS keyring (`KeyringApiKey`); `CurseForgeKeys` sets and removes the keyring entry, says which places hold a key, and hands the source to the client, so a new key is used at once. `CurseForgeSource::check_key` tries the key with one uncached request: `Missing` (nothing sent), `Valid`, `Rejected` (`401`, `403`) or `Unreachable` with the detail. `CurseForgeSource::files_by_ids` and `mods_by_ids` read files and projects in batches (repeats asked once, at most 20 000 ids, `NoApiKey` before anything is sent). `CatalogSource::file_hash` names the hash a platform finds local files by: SHA-1 for Modrinth, the fingerprint for CurseForge, whose `versions_by_hashes` and `latest_versions_by_hashes` take fingerprints in decimal and answer SHA hashes with `Unsupported` (Modrinth answers fingerprints so). |
 | `vl-install` | native | Installing a catalog project into an instance: picking the version for the instance's game version and loader, following required dependencies, recognizing what is installed, the plan, verified download, all-or-nothing add to the resource folders, and the origin records (`<instance>/.vibelauncher/resources.json`). The `mrpack` module installs a Modrinth modpack (`.mrpack`, from a file or a catalog project) into a new game directory: archive checks (entry names, symlinks, entry counts), verified downloads of the client files, `overrides/` then `client-overrides/`, and the pack record `<instance>/.vibelauncher/pack.json`. The `mrpack_update` module updates an installed pack while keeping the user's changes. The `cfpack` module installs a CurseForge modpack (a zip with `manifest.json`, from a file or a catalog project) the same way: archive checks, the files resolved by id through the API, verified downloads, the override folder, and the same pack and origin records; `cfpack_update` gives `mrpack_update` the files of a new CurseForge pack in the same shape, so both formats are updated by one set of rules. |
 | `vl-update` | core | Self-update rules: the release manifest `latest.json` verified with a detached minisign signature (`minisign-verify`, prehashed signatures only) before it is parsed, the release public key embedded at build time (`RELEASE_PUBLIC_KEY`; without one every check fails closed), versions (`MAJOR.MINOR.PATCH[-pre]`, Semantic Versioning order), install method detection, the decision for a manifest (up to date, an update with its artifact, or a newer version to install by hand) with rollback refused, and the replacement plan as data. |
-| `vl-updater` | native | Self-update on the machine: the install method of the running process, the manifest check through `vl-net`, the rollback floor, verified staging downloads, the game guard, and the replacement of portable folders and AppImages; the "just updated" marker. |
+| `vl-updater` | native | Self-update on the machine: the install method of the running process, the manifest check through `vl-net`, the rollback floor, verified staging downloads with their record, the game guard, the replacement of portable folders and AppImages (renames retried while Windows reports a file locked), the "just updated" marker and the failure record, and the update helper process (`helper`). |
 | `vl-cli` | app | The headless command line. |
 
 Third-party crates are declared once in `[workspace.dependencies]` and used with
@@ -118,7 +118,7 @@ pub trait Facade: Send + Sync {
 - A `Command` is grouped by domain: `Hello`, `Instances(InstanceCommand)`,
   `Versions(VersionCommand)`, `Accounts(AccountCommand)`, `Java(JavaCommand)`,
   `Settings(SettingsCommand)`, `Launch(LaunchCommand)`, `Tasks(TaskCommand)`,
-  `Catalog(CatalogCommand)`, `Storage(StorageCommand)`. Each domain's
+  `Catalog(CatalogCommand)`, `Storage(StorageCommand)`, `SelfUpdate(SelfUpdateCommand)`. Each domain's
   command enum lives in that domain's module of `vl-core` and documents the `Response` variant it
   answers.
 - `call` returns at once with a `Reply` that receives exactly one `Result<Response, Error>`. A UI
@@ -705,7 +705,37 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   copied next to the old one, made executable and renamed over it.
 - **After the update.** `<data>/updates/just-updated.json` records the old and the new version;
   the next start reads and removes it, and reports it only when the running version is the new
-  one.
+  one. A failed replacement is undone and recorded in `<data>/updates/last-error.json` (version,
+  message, time), which the next start reads and removes. The start also removes the helper
+  folder and, for a portable install, `.vl-update-old`.
+- **Update helper.** The replacement runs in a second process, a mode of the launcher binary:
+  `<exe> --vl-update-helper <job file>` (`vl_backend::run_helper_if_requested`, called
+  first in `main`). The launcher writes the job (`<data>/updates/helper/job.json`: its process
+  id and start time, the data and update folders, the old version, the `UpdatePlan`, the restart
+  arguments, the wait limit of 60 s) and starts the helper detached (no console, own process
+  group): a copy of its executable in `<data>/updates/helper/`, or for an AppImage the AppImage
+  itself, so the helper never runs from a file it replaces. The helper waits until the launcher
+  process has exited (process id and start time, so a reused id is not mistaken for it), takes
+  the data folder lock so no launcher starts during the replacement, applies the plan, writes
+  the marker or the failure record, releases the lock and, when the job has restart arguments,
+  starts the launcher (the new version, or the old one after a failure) in its own folder; a
+  macOS bundle is opened with `open -n`. When the launcher does not exit within the limit,
+  nothing is replaced, nothing is started and the failure is recorded. On Windows a running
+  executable cannot be overwritten or deleted but can be renamed: each old item is renamed away
+  before the new one moves in, and a rename that finds a file locked (access denied, sharing or
+  lock violation) is tried again for up to 10 s.
+- **Facade.** `SelfUpdateCommand` (`vl-backend` module `self_update`):
+
+  | Command | Answer |
+  |---|---|
+  | `Status` | `Response::SelfUpdate`: running version, install method, whether the build has a release key, newest verified version, the offer of the last check in this session, the downloaded version, the last failure and the "just updated" record of this start |
+  | `Check` | the same, after fetching and verifying the manifest; `Unsupported` without a release key |
+  | `Download` | `Response::Task` (`DownloadUpdate`, cancellable, byte progress): checks again, downloads the offered file, records it as staged |
+  | `Apply { restart }` | `Response::Done` once the helper runs; refused while a game runs (the launch service's tracking) or a task runs, without a newer download, and for install methods not replaced automatically (before anything stops). Afterwards every command but `Hello`, `Status` and the task commands answers `Conflict`; the front end exits |
+
+  The manifest address is `vl_update::MANIFEST_URL` (build-time `VL_UPDATE_MANIFEST_URL`, else
+  the `latest.json` asset of the newest GitHub release). `vl-cli update status|check|download|apply`
+  follows the same commands; `vl-mock` answers them with a synthetic 0.1.0 release.
 
 ## Front ends
 

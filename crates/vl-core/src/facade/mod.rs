@@ -31,6 +31,7 @@ use crate::java::{JavaCommand, JavaEvent, JavaRuntime};
 use crate::launch::{LaunchCommand, LaunchEvent};
 use crate::log::{LogBatch, LogLine};
 use crate::resources::{ResourceCommand, ResourceEntry, WorldInfo};
+use crate::self_update::{SelfUpdateCommand, SelfUpdateStatus};
 use crate::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
 use crate::storage::{CleanupReport, PathCheck, StorageCommand, StorageInfo, StorageSuggestion};
 use crate::task::{TaskCommand, TaskEvent, TaskSnapshot};
@@ -76,6 +77,8 @@ pub enum Command {
     Catalog(CatalogCommand),
     /// Where the data is kept.
     Storage(StorageCommand),
+    /// Updating the launcher itself.
+    SelfUpdate(SelfUpdateCommand),
 }
 
 /// The answer to a [`Command`]; each command documents which variant it answers.
@@ -156,6 +159,8 @@ pub enum Response {
     StorageCleaned(CleanupReport),
     /// The suggested data folder.
     StorageSuggestion(StorageSuggestion),
+    /// What the launcher knows about its own updates.
+    SelfUpdate(SelfUpdateStatus),
 }
 
 /// Something that happened in the launcher.

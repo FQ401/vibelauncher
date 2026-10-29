@@ -20,6 +20,7 @@ mod launch;
 mod pack_export;
 mod pack_update;
 mod resources;
+mod self_update;
 mod settings;
 mod storage;
 mod tasks;
@@ -37,6 +38,8 @@ use vl_core::{
     reply_channel,
 };
 use vl_tasks::TaskEngine;
+
+pub use self_update::run_helper_if_requested;
 
 /// How many tasks run at the same time; more wait queued.
 const MAX_PARALLEL_TASKS: usize = 4;
@@ -70,6 +73,7 @@ pub struct Backend {
     catalog: catalog::Service,
     storage: storage::Gate,
     bisect: bisect::Running,
+    self_update: self_update::Service,
 }
 
 impl Backend {
@@ -85,6 +89,7 @@ impl Backend {
         let accounts = accounts::Service::new(&store, Arc::clone(&events))?;
         let launch = launch::Service::new(&store, Arc::clone(&events))?;
         let catalog = catalog::Service::new(&store.cache_dir())?;
+        let self_update = self_update::Service::new(&store)?;
         Ok(Self {
             java: java::JavaService::new(
                 store.java_dir(),
@@ -94,6 +99,7 @@ impl Backend {
             ),
             storage: storage::Gate::default(),
             bisect: bisect::Running::default(),
+            self_update,
             config,
             store,
             instances,
@@ -135,7 +141,9 @@ impl Backend {
 impl Facade for Backend {
     fn call(&self, command: Command) -> Reply {
         let (replier, reply) = reply_channel();
-        if let Err(e) = storage::admit(self, &command) {
+        if let Err(e) =
+            storage::admit(self, &command).and_then(|()| self_update::admit(self, &command))
+        {
             replier.send(Err(e));
             return reply;
         }
@@ -159,6 +167,7 @@ impl Facade for Backend {
             Command::Bisect(c) => bisect::handle(self, c, replier),
             Command::Catalog(c) => catalog::handle(self, c, replier),
             Command::Storage(c) => storage::handle(self, c, replier),
+            Command::SelfUpdate(c) => self_update::handle(self, c, replier),
             other => replier.send(Err(Error::unsupported(format!("{other:?}")))),
         }
         reply

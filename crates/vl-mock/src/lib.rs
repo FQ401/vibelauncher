@@ -12,6 +12,7 @@ mod data;
 mod installs;
 mod packs;
 mod resources;
+mod self_update;
 mod sim;
 
 use std::collections::HashMap;
@@ -84,6 +85,7 @@ struct Inner {
     events: EventBus,
     next_task: AtomicU64,
     state: Mutex<State>,
+    self_update: Mutex<self_update::State>,
 }
 
 struct State {
@@ -132,6 +134,7 @@ impl MockFacade {
                 events: EventBus::default(),
                 next_task: AtomicU64::new(1),
                 state: Mutex::new(state),
+                self_update: self_update::new_state(),
             }),
         }
     }
@@ -153,6 +156,7 @@ impl MockFacade {
             Command::Resources(c) => resources::handle(&self.inner, c),
             Command::Bisect(c) => bisect::handle(&self.inner, c),
             Command::Catalog(c) => catalog::handle(&self.inner, c),
+            Command::SelfUpdate(c) => self_update::handle(&self.inner, c),
             other => Err(unsupported(&other)),
         }
     }

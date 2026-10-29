@@ -1,19 +1,25 @@
 //! The update folder `<data>/updates/`: the newest verified manifest version, downloads waiting
-//! to be installed, and the "just updated" marker.
+//! to be installed with their record, the "just updated" marker, the record of a failed
+//! installation and the update helper.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use vl_update::Version;
+use vl_update::{Artifact, Version};
 
 use crate::UpdaterError;
 
 /// The largest state or marker file read.
-const MAX_STATE_BYTES: u64 = 4 * 1024;
+const MAX_STATE_BYTES: u64 = 16 * 1024;
 const STATE_FILE: &str = "state.json";
 const UPDATED_FILE: &str = "just-updated.json";
 const STAGING_DIR: &str = "staging";
+const STAGED_FILE: &str = "staged.json";
+const FAILURE_FILE: &str = "last-error.json";
+const HELPER_DIR: &str = "helper";
+/// The longest failure message kept.
+const MAX_MESSAGE_CHARS: usize = 1024;
 
 /// The update folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +39,28 @@ pub struct JustUpdated {
     pub from: Version,
     /// The version installed.
     pub to: Version,
+}
+
+/// A downloaded release waiting to be installed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StagedUpdate {
+    /// Its version.
+    pub version: Version,
+    /// The manifest entry it was downloaded from (size and SHA-256 are checked again).
+    pub artifact: Artifact,
+    /// The downloaded file.
+    pub file: PathBuf,
+}
+
+/// An installation that failed and was undone; written by the helper, read by the next start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateFailure {
+    /// The version that was being installed.
+    pub version: Version,
+    /// What went wrong.
+    pub message: String,
+    /// When, in seconds since the Unix epoch.
+    pub at_unix: u64,
 }
 
 impl UpdateDir {
@@ -79,6 +107,61 @@ impl UpdateDir {
                 let _ = fs::remove_dir_all(entry.path());
             }
         }
+    }
+
+    /// Records the download of `artifact` of `version` at `file`.
+    pub fn record_staged(
+        &self,
+        version: &Version,
+        artifact: &Artifact,
+        file: &Path,
+    ) -> Result<(), UpdaterError> {
+        let record = StagedUpdate {
+            version: version.clone(),
+            artifact: artifact.clone(),
+            file: file.to_path_buf(),
+        };
+        write_json(&self.root.join(STAGED_FILE), &record)
+    }
+
+    /// The download waiting to be installed: its record names a file inside the staging folder
+    /// of its version that still exists. Anything else reads as none.
+    pub fn staged(&self) -> Option<StagedUpdate> {
+        let record = read_json::<StagedUpdate>(&self.root.join(STAGED_FILE))?;
+        let inside = record.file.parent() == Some(self.staging(&record.version).as_path());
+        (inside && record.file.is_file()).then_some(record)
+    }
+
+    /// Removes every download and its record (best effort).
+    pub fn clear_staged(&self) {
+        let _ = fs::remove_file(self.root.join(STAGED_FILE));
+        self.clear_staging(None);
+    }
+
+    /// Records a failed installation of `version`; the message is cut to 1024 characters.
+    pub fn record_failure(&self, version: &Version, message: &str) -> Result<(), UpdaterError> {
+        let at_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let failure = UpdateFailure {
+            version: version.clone(),
+            message: message.chars().take(MAX_MESSAGE_CHARS).collect(),
+            at_unix,
+        };
+        write_json(&self.root.join(FAILURE_FILE), &failure)
+    }
+
+    /// Reads and removes the record of a failed installation.
+    pub fn take_failure(&self) -> Option<UpdateFailure> {
+        let path = self.root.join(FAILURE_FILE);
+        let failure = read_json::<UpdateFailure>(&path);
+        let _ = fs::remove_file(&path);
+        failure
+    }
+
+    /// The folder the update helper runs from.
+    pub fn helper_dir(&self) -> PathBuf {
+        self.root.join(HELPER_DIR)
     }
 
     /// Writes the "just updated" marker.
@@ -156,6 +239,51 @@ mod tests {
         store.mark_updated(&v("1.0.0"), &v("1.1.0")).unwrap();
         assert_eq!(store.take_just_updated(&v("1.0.0")), None);
         assert!(!store.path().join(UPDATED_FILE).exists());
+    }
+
+    #[test]
+    fn staged_record_needs_its_file_in_the_staging_folder() {
+        let dir = Dir::new();
+        let store = UpdateDir::new(dir.path());
+        let artifact = vl_update::Artifact {
+            platform: vl_core::platform::Platform::current(),
+            kind: vl_update::ArtifactKind::Portable,
+            url: "https://downloads.example.test/a.zip".into(),
+            sha256: "ab".repeat(32),
+            size: 1,
+        };
+        let file = store.staging(&v("1.1.0")).join("a.zip");
+        store.record_staged(&v("1.1.0"), &artifact, &file).unwrap();
+        assert_eq!(store.staged(), None, "the file is missing");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, b"x").unwrap();
+        assert_eq!(store.staged().unwrap().version, v("1.1.0"));
+        // A record pointing outside the staging folder of its version is ignored.
+        let outside = dir.path().join("a.zip");
+        fs::write(&outside, b"x").unwrap();
+        store
+            .record_staged(&v("1.1.0"), &artifact, &outside)
+            .unwrap();
+        assert_eq!(store.staged(), None);
+        store.record_staged(&v("1.1.0"), &artifact, &file).unwrap();
+        store.clear_staged();
+        assert_eq!(store.staged(), None);
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn failure_record_is_read_once_and_capped() {
+        let dir = Dir::new();
+        let store = UpdateDir::new(dir.path());
+        assert_eq!(store.take_failure(), None);
+        store
+            .record_failure(&v("1.1.0"), &"x".repeat(5000))
+            .unwrap();
+        let failure = store.take_failure().unwrap();
+        assert_eq!(failure.version, v("1.1.0"));
+        assert_eq!(failure.message.len(), MAX_MESSAGE_CHARS);
+        assert!(failure.at_unix > 0);
+        assert_eq!(store.take_failure(), None);
     }
 
     #[test]

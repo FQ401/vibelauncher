@@ -14,6 +14,7 @@ mod launch;
 mod mods;
 mod packs;
 mod storage;
+mod update;
 mod verify;
 mod versions;
 
@@ -149,7 +150,14 @@ commands:
   storage reset <section> [--switch-only]
                                       move a section back to its default place
   storage cleanup [--trash]           remove old copies left by moves, prune logs and the
-                                      cache; --trash also empties the trash folders";
+                                      cache; --trash also empties the trash folders
+  update status                       the running version, the newest release seen, a
+                                      downloaded update, the result of the last update
+  update check                        fetch and verify the signed release manifest
+  update download                     download the update (Ctrl+C cancels)
+  update apply                        install the downloaded update: the update helper replaces
+                                      the launcher once vl-cli has exited (refused while a game
+                                      or a task runs)";
 
 /// A failed command line.
 #[derive(Debug)]
@@ -194,6 +202,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         ["catalog", rest @ ..] => catalog::run(facade, rest, out),
         ["packs", rest @ ..] => packs::run(facade, rest, out),
         ["storage", rest @ ..] => storage::run(facade, rest, out),
+        ["update", rest @ ..] => update::run(facade, rest, out),
         _ => Err(USAGE.into()),
     }
 }

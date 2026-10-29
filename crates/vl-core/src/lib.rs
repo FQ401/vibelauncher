@@ -24,6 +24,7 @@ pub mod log;
 pub mod platform;
 pub mod resources;
 pub mod secret;
+pub mod self_update;
 pub mod settings;
 pub mod storage;
 pub mod task;
