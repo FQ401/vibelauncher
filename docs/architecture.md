@@ -827,6 +827,30 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   when the first argument is `--vl-cli`. The tools come from `PATH` or the `APPIMAGETOOL` and
   `NFPM` variables: appimagetool (with desktop-file-validate, appstreamcli and zsyncmake) and
   nfpm.
+- **macOS disk image.** `cargo xtask package macos` (on macOS) builds both executables in
+  release mode with their symbols stripped for `aarch64-apple-darwin` and `x86_64-apple-darwin`
+  with `MACOSX_DEPLOYMENT_TARGET=11.0` (macOS 11 is the oldest release for Apple silicon and the
+  oldest the `aarch64` target supports), joins each pair into a universal binary with `lipo` and
+  writes `target/dist/vibelauncher-<version>-macos-universal.dmg` with a `.sha256` file next to
+  it. The image (HFS+, zlib-compressed, volume `VibeLauncher <version>`) holds:
+
+  | Path | Content |
+  |---|---|
+  | `VibeLauncher.app/Contents/MacOS/vibelauncher` | the desktop app, the bundle's executable |
+  | `VibeLauncher.app/Contents/MacOS/vl-cli` | the command line (code identifier `me.vibefork.VibeLauncher.vl-cli`) |
+  | `VibeLauncher.app/Contents/Info.plist` | bundle ID `me.vibefork.VibeLauncher`, version `X.Y.Z` (a pre-release suffix dropped), `LSMinimumSystemVersion` 11.0, high resolution, category games; no `LSFileQuarantineEnabled`, so files the launcher downloads carry no quarantine mark |
+  | `VibeLauncher.app/Contents/Resources/VibeLauncher.icns` | the PNG images of `assets/icons/vibelauncher.ico` (a placeholder) |
+  | `VibeLauncher.app/Contents/Resources/LICENSE.txt` | the license |
+  | `Applications` | a link to `/Applications` |
+  | `If VibeLauncher does not open.txt` | how to open an app that is not notarized |
+
+  The bundle is signed ad hoc (`codesign --sign -`, no hardened runtime, no entitlements):
+  executables for Apple silicon must carry a signature, and an ad hoc one needs no Developer ID.
+  The app is not notarized, so Gatekeeper blocks the first start of a downloaded copy until the
+  user allows it (System Settings > Privacy & Security > Open Anyway, or removing the
+  `com.apple.quarantine` attribute); the README describes this for users. The same image is the
+  `dmg` artifact of the self-update for both architectures; the launcher is detected as a
+  `.app` install (`mac_app`).
 - **CI.** The `package` workflow builds and smoke-tests the portable archive on Windows (the data
   folder appears next to the executables, nothing under `%APPDATA%`, the version resource is
   present) and the Linux packages on Ubuntu 22.04 for x86_64 and aarch64 (glibc 2.35), with
@@ -835,7 +859,13 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   reports for each package: the unpacked tar.gz (portable, `data/` appears), the AppImage (with
   `--appimage-extract-and-run`, its update information and `.zsync` file), the deb installed and
   purged on Ubuntu and the rpm installed and removed on Fedora (nothing of the package left). It
-  uploads the packages. It runs on the `release` branches, `v*` tags and by hand, and on a pull
+  uploads the packages. The macOS disk image is built on Apple silicon (`macos-15`) and
+  smoke-tested on Apple silicon and Intel (`macos-15-intel`): the image mounts, holds the
+  bundle and the `/Applications` link, the `Info.plist` is valid, both executables hold both
+  architectures with macOS 11 as their minimum, the ad hoc signature verifies strictly; the
+  bundle copied into an Applications folder prints its version, `vl-cli update status` reports
+  `mac_app`, and a copy of the executable outside the bundle (as the update helper runs) starts.
+  It runs on the `release` branches, `v*` tags and by hand, and on a pull
   request only when the packaging files change.
 - **Not yet.** The per-user MSI installer.
 

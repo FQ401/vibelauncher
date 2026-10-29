@@ -16,6 +16,7 @@ on:
       - "packaging/**"
       - "xtask/src/package.rs"
       - "xtask/src/linux.rs"
+      - "xtask/src/macos.rs"
   workflow_dispatch:
 
 permissions:
@@ -183,3 +184,84 @@ jobs:
           name: vibelauncher-linux-${{ matrix.arch }}
           path: target/dist/vibelauncher-*
           if-no-files-found: error
+
+  # The universal disk image: both executables for Apple silicon and Intel joined with lipo, the
+  # bundle signed ad hoc. Built on Apple silicon; the smoke test runs on both processors.
+  macos:
+    name: macos disk image (universal)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (rust-toolchain.toml) and both macOS targets
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: package-macos
+      - name: Build the disk image
+        run: cargo xtask package macos
+      - name: Check the checksum file
+        run: cd target/dist && shasum -a 256 -c vibelauncher-*.dmg.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vibelauncher-macos-universal
+          path: target/dist/vibelauncher-*
+          if-no-files-found: error
+
+  macos-smoke:
+    name: macos smoke test (${{ matrix.arch }})
+    needs: macos
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: vibelauncher-macos-universal
+          path: dist
+      - name: Mount the disk image and check the bundle
+        run: |
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          image="$(echo dist/vibelauncher-*-macos-universal.dmg)"
+          version="${image#dist/vibelauncher-}"
+          version="${version%-macos-universal.dmg}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          mnt="$RUNNER_TEMP/mnt"
+          mkdir -p "$mnt"
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "$image"
+          app="$mnt/VibeLauncher.app"
+          test "$(readlink "$mnt/Applications")" = /Applications
+          plist="$app/Contents/Info.plist"
+          plutil -lint "$plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$plist")" = me.vibefork.VibeLauncher
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$plist")" = vibelauncher
+          test -s "$app/Contents/Resources/VibeLauncher.icns"
+          for bin in vibelauncher vl-cli; do
+            lipo "$app/Contents/MacOS/$bin" -verify_arch arm64 x86_64
+            otool -l -arch x86_64 "$app/Contents/MacOS/$bin" | grep -A3 LC_BUILD_VERSION | grep -F 'minos 11.0'
+          done
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | tee "$RUNNER_TEMP/sign.txt"
+          grep -F 'Signature=adhoc' "$RUNNER_TEMP/sign.txt"
+          grep -F 'Identifier=me.vibefork.VibeLauncher' "$RUNNER_TEMP/sign.txt"
+          # Installed as a user would: copied into an Applications folder.
+          mkdir -p "$RUNNER_TEMP/Applications"
+          ditto "$app" "$RUNNER_TEMP/Applications/VibeLauncher.app"
+          hdiutil detach "$mnt"
+      - name: Smoke test (the installed bundle)
+        run: |
+          app="$RUNNER_TEMP/Applications/VibeLauncher.app"
+          "$app/Contents/MacOS/vibelauncher" --version | tee "$RUNNER_TEMP/version.txt"
+          grep -Fx "vibelauncher $VERSION" "$RUNNER_TEMP/version.txt"
+          "$app/Contents/MacOS/vl-cli" update status | tee "$RUNNER_TEMP/status.txt"
+          grep -F '(mac_app)' "$RUNNER_TEMP/status.txt"
+          # The update helper runs from a copy of the executable outside the bundle.
+          cp "$app/Contents/MacOS/vibelauncher" "$RUNNER_TEMP/vibelauncher-update-copy"
+          "$RUNNER_TEMP/vibelauncher-update-copy" --version

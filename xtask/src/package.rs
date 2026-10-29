@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 
-use crate::{read_version, root, run};
+use crate::{read_version, root};
 
 /// The marker file that switches on portable mode (`vl_store::PORTABLE_MARKER`).
 pub(crate) const PORTABLE_MARKER: &str = "vibelauncher.portable";
@@ -48,6 +48,15 @@ pub fn portable(target: Option<&str>) -> Result<PathBuf, String> {
 /// Builds both executables in release mode for `target`, with their symbols stripped when
 /// `strip` is set.
 pub(crate) fn build_release(target: &str, strip: bool) -> Result<(), String> {
+    build_release_with(target, strip, &[])
+}
+
+/// [`build_release`] with the environment variables `env` set for the build.
+pub(crate) fn build_release_with(
+    target: &str,
+    strip: bool,
+    env: &[(&str, &str)],
+) -> Result<(), String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut build = vec!["build", "--release", "--locked", "--target", target];
     if strip {
@@ -56,7 +65,19 @@ pub(crate) fn build_release(target: &str, strip: bool) -> Result<(), String> {
     for (package, _) in BINARIES {
         build.extend(["-p", package]);
     }
-    run("build", &cargo, &build)
+    let shown: Vec<String> = env.iter().map(|(k, v)| format!("{k}={v} ")).collect();
+    println!("== build: {}{cargo} {}", shown.concat(), build.join(" "));
+    let status = std::process::Command::new(&cargo)
+        .args(&build)
+        .envs(env.iter().copied())
+        .current_dir(root())
+        .status()
+        .map_err(|e| format!("build: cannot run {cargo}: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("build failed ({status})"))
+    }
 }
 
 /// Writes `bytes` to `dist/name` and their SHA-256 to `name.sha256` next to it.
