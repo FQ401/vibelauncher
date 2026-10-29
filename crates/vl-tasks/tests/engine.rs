@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use vl_core::task::{Progress, TaskEvent, TaskKind, TaskOutcome};
+use vl_core::task::{Progress, ProgressUnit, TaskEvent, TaskKind, TaskOutcome};
 use vl_core::{Error, ErrorKind, Event, EventBus, EventStream, TaskId};
 use vl_tasks::{TaskEngine, TaskSpec};
 
@@ -437,4 +437,33 @@ fn an_unsubscribed_stream_does_not_disturb_the_engine() {
     drop(events);
     let handle = engine.spawn(TaskSpec::new(TaskKind::Download), |_| Ok(()));
     assert_eq!(handle.wait(), TaskOutcome::Succeeded);
+}
+
+#[test]
+fn a_new_stage_does_not_show_the_counters_of_the_previous_one() {
+    let (engine, events) = engine(1);
+    let handle = engine.spawn(TaskSpec::new(TaskKind::InstallVersion), |task| {
+        task.report_stage("downloading", 90, Some(100), ProgressUnit::Bytes);
+        task.set_stage("natives");
+        task.report_stage("natives", 1, Some(2), ProgressUnit::Items);
+        Ok(())
+    });
+    assert_eq!(handle.wait(), TaskOutcome::Succeeded);
+    let all = collect(&events, 1);
+    let seen: Vec<_> = progress_of(&all, handle.id())
+        .into_iter()
+        .map(|p| (p.stage, p.done, p.total, p.unit))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (
+                Some("downloading".to_owned()),
+                90,
+                Some(100),
+                ProgressUnit::Bytes
+            ),
+            (Some("natives".to_owned()), 1, Some(2), ProgressUnit::Items),
+        ]
+    );
 }

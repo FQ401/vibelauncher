@@ -408,3 +408,85 @@ fn a_missing_installer_made_library_asks_for_the_loader_again() {
         e.message
     );
 }
+
+fn stages_of(seen: &[Progress]) -> Vec<&str> {
+    let mut stages: Vec<&str> = seen.iter().filter_map(|p| p.stage.as_deref()).collect();
+    stages.dedup();
+    stages
+}
+
+#[test]
+fn the_progress_events_keep_stages_apart_and_end_at_the_total() {
+    let server = Arc::new(FakeServer::default());
+    add_version(&server, "1.0", "1.0", json!({}), json!({}));
+    let dir = TempDir::new();
+    let installer = installer(&server, dir.path());
+
+    let seen: Arc<Mutex<Vec<Progress>>> = Arc::default();
+    let sink = Arc::clone(&seen);
+    let job = Job::new().on_progress(move |p| sink.lock().unwrap().push(p));
+    installer.install("1.0", None, &job).expect("install");
+    let seen = seen.lock().unwrap();
+
+    // Each stage once, in pipeline order: the stages do not interleave.
+    assert_eq!(
+        stages_of(&seen),
+        ["metadata", "downloading", "natives"],
+        "{seen:?}"
+    );
+    // Nothing reports an empty total, and every event carries the unit of its own stage.
+    for p in seen.iter() {
+        assert_ne!(p.total, Some(0), "{p:?}");
+        match p.stage.as_deref() {
+            Some("natives") => assert_eq!(p.unit, ProgressUnit::Items, "{p:?}"),
+            _ => assert_eq!(p.unit, ProgressUnit::Bytes, "{p:?}"),
+        }
+    }
+    // The metadata stage knows the size of what it fetches and ends at it.
+    let metadata: Vec<_> = seen
+        .iter()
+        .filter(|p| p.stage.as_deref() == Some("metadata"))
+        .collect();
+    assert!(!metadata.is_empty());
+    let last = metadata.last().unwrap();
+    assert_eq!(Some(last.done), last.total, "{last:?}");
+    // The download ends at the full total.
+    let downloading: Vec<_> = seen
+        .iter()
+        .filter(|p| p.stage.as_deref() == Some("downloading"))
+        .collect();
+    let last = downloading.last().expect("downloading events");
+    assert!(last.total.is_some_and(|t| t > 0), "{last:?}");
+    assert_eq!(Some(last.done), last.total, "{last:?}");
+    // Natives count archives, ending at all of them.
+    let natives = seen
+        .iter()
+        .rfind(|p| p.stage.as_deref() == Some("natives"))
+        .expect("natives events");
+    assert_eq!((natives.done, natives.total), (1, Some(1)), "{natives:?}");
+}
+
+#[test]
+fn installing_again_downloads_nothing_and_reports_no_download() {
+    let server = Arc::new(FakeServer::default());
+    add_version(&server, "1.0", "1.0", json!({}), json!({}));
+    let dir = TempDir::new();
+    let installer = installer(&server, dir.path());
+    installer
+        .install("1.0", None, &Job::new())
+        .expect("first install");
+
+    let seen: Arc<Mutex<Vec<Progress>>> = Arc::default();
+    let sink = Arc::clone(&seen);
+    let job = Job::new().on_progress(move |p| sink.lock().unwrap().push(p));
+    installer
+        .install("1.0", None, &job)
+        .expect("second install");
+    let seen = seen.lock().unwrap();
+    // Files are present: no download stage, no stage without work.
+    assert!(
+        !stages_of(&seen).contains(&"downloading"),
+        "second pass: {seen:?}"
+    );
+    assert!(seen.iter().all(|p| p.total != Some(0)), "{seen:?}");
+}

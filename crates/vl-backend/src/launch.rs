@@ -482,6 +482,9 @@ fn ensure_java(
     heap_mib: u32,
     job: &Job,
 ) -> vl_core::Result<()> {
+    // The version JSON tells which Java the game needs, so the game is installed before Java is
+    // chosen. `vl_launch::prepare` installs it again afterwards (the loader profile is only known
+    // then); that second pass is idempotent and finds every file in place.
     let installed = installer.install(game, game_dir, job)?;
     let wanted = installed.version.java_version_or_default();
     let arch = installed.platform.arch;
@@ -576,47 +579,76 @@ fn describe(done: &Installation) -> String {
     }
 }
 
+/// Progress waiting to be passed to the task. A burst inside one stage keeps only its newest
+/// value, but a stage never swallows the last value of the stage before it.
+#[derive(Default)]
+struct Pending(std::collections::VecDeque<Progress>);
+
+impl Pending {
+    fn push(&mut self, p: Progress) {
+        match self.0.back_mut() {
+            Some(last) if last.stage == p.stage && last.unit == p.unit => *last = p,
+            _ => self.0.push_back(p),
+        }
+    }
+
+    fn drain(&mut self) -> Vec<Progress> {
+        self.0.drain(..).collect()
+    }
+}
+
+/// Passes each pending progress to the task as one event: stage and counters together.
+fn deliver(ctx: &TaskContext, pending: &Mutex<Pending>) {
+    let batch = pending
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .drain();
+    for p in batch {
+        match &p.stage {
+            Some(stage) => ctx.report_stage(stage, p.done, p.total, p.unit),
+            None => ctx.report(p.done, p.total, p.unit),
+        }
+    }
+}
+
 /// Runs `work` with a [`Job`] wired to the task: the task's cancellation stops the job's
-/// downloads, and the job's progress becomes the task's progress.
+/// downloads, and the job's progress becomes the task's progress. Every stage's last value is
+/// delivered, also when the work ends right after reporting it.
 pub(crate) fn with_job<T>(
     ctx: &TaskContext,
     work: impl FnOnce(&Job) -> vl_core::Result<T>,
 ) -> vl_core::Result<T> {
     let net_cancel = CancelToken::new();
-    let latest: Arc<Mutex<Option<Progress>>> = Arc::default();
-    let sink = Arc::clone(&latest);
+    let pending: Arc<Mutex<Pending>> = Arc::default();
+    let sink = Arc::clone(&pending);
     let job = Job::with_cancel(net_cancel.clone()).on_progress(move |p| {
-        *sink.lock().unwrap_or_else(PoisonError::into_inner) = Some(p);
+        sink.lock().unwrap_or_else(PoisonError::into_inner).push(p);
     });
     let finished = AtomicBool::new(false);
-    thread::scope(|scope| {
+    let result = thread::scope(|scope| {
         let bridge = || {
             loop {
                 if ctx.is_cancelled() {
                     net_cancel.cancel();
                 }
-                let progress = latest.lock().unwrap_or_else(PoisonError::into_inner).take();
-                if let Some(p) = progress {
-                    if let Some(stage) = &p.stage {
-                        ctx.set_stage(stage);
-                    }
-                    ctx.report(p.done, p.total, p.unit);
-                }
-                if finished.load(Ordering::SeqCst) {
+                let last_round = finished.load(Ordering::SeqCst);
+                deliver(ctx, &pending);
+                if last_round {
                     break;
                 }
                 thread::sleep(Duration::from_millis(50));
             }
         };
-        // Without the bridge the work still runs; only cancelling and progress are lost.
-        let watcher = thread::Builder::new()
+        // Without the bridge the work still runs; only cancelling and live progress are lost.
+        let _watcher = thread::Builder::new()
             .name("vl-task-bridge".into())
             .spawn_scoped(scope, bridge);
         let result = work(&job);
         finished.store(true, Ordering::SeqCst);
-        drop(watcher);
         result
-    })
+    });
+    deliver(ctx, &pending);
+    result
 }
 
 /// `VersionCommand::Install`: a task that installs `version` (and the profile and libraries of
@@ -736,3 +768,7 @@ fn verify(backend: &Backend, instance: &InstanceId) -> vl_core::Result<Response>
     );
     Ok(Response::Task(handle.id()))
 }
+
+#[cfg(test)]
+#[path = "launch_progress_tests.rs"]
+mod progress_tests;
