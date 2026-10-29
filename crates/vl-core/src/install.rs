@@ -58,6 +58,22 @@ impl MinStability {
         };
         (rank >= floor).then_some(rank)
     }
+
+    /// This floor widened so that `channel` is allowed: `release` with a beta gives `beta`, with
+    /// an alpha `alpha`; a floor that already allows `channel`, or a channel the platform did not
+    /// name, leaves it as it is.
+    pub fn allowing(self, channel: ReleaseChannel) -> Self {
+        let needed = match channel {
+            ReleaseChannel::Beta => Self::Beta,
+            ReleaseChannel::Alpha => Self::Alpha,
+            _ => return self,
+        };
+        if self.rank(channel).is_some() {
+            self
+        } else {
+            needed
+        }
+    }
 }
 
 /// What to install and how to choose.
@@ -242,6 +258,20 @@ mod tests {
         assert_eq!(MinStability::parse("BETA"), Some(MinStability::Beta));
         assert_eq!(MinStability::parse("x"), None);
     }
+
+    #[test]
+    fn a_floor_widens_to_the_channel_it_must_allow() {
+        use ReleaseChannel::*;
+        assert_eq!(MinStability::Release.allowing(Beta), MinStability::Beta);
+        assert_eq!(MinStability::Release.allowing(Alpha), MinStability::Alpha);
+        assert_eq!(MinStability::Beta.allowing(Alpha), MinStability::Alpha);
+        assert_eq!(MinStability::Alpha.allowing(Beta), MinStability::Alpha);
+        assert_eq!(MinStability::Beta.allowing(Release), MinStability::Beta);
+        assert_eq!(
+            MinStability::Release.allowing(Unknown),
+            MinStability::Release
+        );
+    }
 }
 
 /// Where a modpack comes from.
@@ -410,9 +440,12 @@ pub struct UpdateCheckRequest {
     /// first), so no file is offered twice.
     #[serde(default)]
     pub provider: Option<Provider>,
-    /// The least stable channel an update may come from. Releases only by default.
-    #[serde(default = "default_update_stability")]
-    pub min_stability: MinStability,
+    /// The least stable channel an update may come from, for every file. `None` (the default)
+    /// takes the instance's update channel setting (`updates.channel`, an instance override else
+    /// the global value, releases only by default), widened for each file to the channel of its
+    /// installed version: a file installed from a beta is offered newer betas.
+    #[serde(default)]
+    pub min_stability: Option<MinStability>,
     /// Also check files that came with the instance's modpack (they are skipped by default;
     /// the pack is updated as a whole).
     #[serde(default)]
@@ -433,7 +466,7 @@ impl UpdateCheckRequest {
         Self {
             instance,
             provider: None,
-            min_stability: MinStability::Release,
+            min_stability: None,
             include_pack_files: false,
             world: None,
         }
@@ -489,6 +522,9 @@ pub enum UncheckedReason {
     NoLoader,
     /// The file's origin record names another platform; it is checked there.
     OtherPlatform,
+    /// Another file of the folder belongs to the same project (see
+    /// [`UpdateReport::conflicts`]); neither is updated until one is removed.
+    SameProject,
 }
 
 /// A file that could not be checked.
@@ -511,6 +547,20 @@ pub struct PackFile {
     pub file: String,
 }
 
+/// Files of one folder that belong to the same project. An update would replace only one of
+/// them, so none is offered until the user keeps one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateConflict {
+    /// The folder.
+    pub kind: ResourceKind,
+    /// The platform that names the project.
+    pub provider: Provider,
+    /// Project id on the platform.
+    pub project_id: String,
+    /// The files (names without `.disabled`), sorted.
+    pub files: Vec<String>,
+}
+
 /// The result of an update check.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UpdateReport {
@@ -526,6 +576,10 @@ pub struct UpdateReport {
     pub from_pack: Vec<PackFile>,
     /// Files that could not be checked.
     pub unchecked: Vec<UncheckedFile>,
+    /// Projects with more than one file in a folder; their files are listed in `unchecked` as
+    /// [`UncheckedReason::SameProject`].
+    #[serde(default)]
+    pub conflicts: Vec<UpdateConflict>,
     /// Things worth saying.
     pub warnings: Vec<String>,
 }

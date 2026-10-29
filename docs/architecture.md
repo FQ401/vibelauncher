@@ -434,17 +434,37 @@ The data folder and its sections hold:
   as `resources.json.bad`;
 - updates and origin discovery (`vl-install::updates`): `CatalogCommand::IdentifyMods` looks
   files without an origin record up by SHA-1 (`version_files`) and writes their records.
-  `CheckUpdates` hashes every file of mods, resource packs, shader packs and data packs, asks
-  `version_files` once for all of them, then `POST /version_files/update` once for the mods
-  (loaders of the instance, its game version, `version_types` from the channel setting, release
-  only by default) and once for the other kinds (the loaders their installed versions have). The
-  answer is checked again: it must be the same project, fit the game version and loader, be of an
-  allowed channel and be published later than the installed version, so a check never proposes a
-  downgrade. The report lists `updates` (current to new), `from_pack` (files recorded in
-  `pack.json`, skipped unless `include_pack_files`; the pack is updated as a whole), and
-  `unchecked` (no origin and unknown to the platform, an origin the platform no longer knows, or
-  a mod in an instance without a loader). `PlanUpdate` and `Update` (an `InstallResource` task)
-  pin the chosen versions in the same planner as an install, reusing the check's scan and
+  `CheckUpdates` hashes every file of mods, resource packs, shader packs, data packs and global
+  data packs (`global_packs/required_data`), asks `version_files` once for all of them, then
+  `POST /version_files/update` for the mods (loaders of the instance, its game version,
+  `version_types` from the channel) and for the other kinds (the loaders their installed
+  versions have), one request per channel in use. The channel is the request's
+  (`UpdateCheckRequest::min_stability`, `--channel`) when it names one, used as it is for every
+  file; otherwise it is the `updates.channel` setting (an instance override, else the global
+  value, `release` by default) widened for each file to the channel of its installed version
+  (`MinStability::allowing`): the effective channel of a file is the less stable of the setting
+  and its installed version, so a file installed from a beta is offered newer betas while the
+  others stay on releases. Only the files directly in a folder are checked: the game loads
+  nothing from a subfolder of these folders, and a pack unpacked into a folder has no file to
+  compare. The answer is checked again: it must be the same project, fit the game version and
+  loader, be of an allowed channel and be published later than the installed version, so a check
+  never proposes a downgrade. A file with an origin record that the platform no longer finds by
+  hash (its version or file was deleted upstream) is checked from its record's project: the
+  project's versions are listed once per project (files on CurseForge) and the newest one that
+  fits the game version, the loader (the instance's own first) and the channel is offered;
+  while the recorded version is still listed it is compared by date as above, once it is gone
+  the newest fitting version replaces it, and a project with no fitting version (or none at all)
+  leaves the file `unchecked` (`UnknownToPlatform`). Two or more files of one project in one
+  folder are a conflict: the report lists them in `conflicts` and each in `unchecked`
+  (`SameProject`), no update is offered for them, a plan that names one is `Conflict`, and an
+  install or update of that project is refused with both names instead of replacing one of
+  them. The report lists `updates` (current to new), `from_pack` (files recorded in
+  `pack.json`, skipped unless `include_pack_files`; the pack is updated as a whole),
+  `unchecked` (no origin and unknown to the platform, an origin whose project has no fitting
+  version, a mod in an instance without a loader, a file of a conflict) and `conflicts`.
+  `PlanUpdate` and `Update` (an `InstallResource` task) pin the chosen versions in the same
+  planner as an install, each in the folder its file is in (data packs and global data packs
+  included), reusing the check's scan and
   versions, so new required dependencies are resolved the same way; the swap is the install
   execution (all or nothing, disabled files stay disabled, the dependency flag of a record is
   kept). `UpdateRequest::version` switches exactly one file to a given version id, older ones
@@ -640,15 +660,17 @@ launcher closes and the user is told so; nothing secret is written to disk in th
 
 The Microsoft application (client) ID is a build constant (`vl_auth::DEFAULT_CLIENT_ID`); the `VL_MS_CLIENT_ID` environment variable replaces it, so forks and development builds use their own registration.
 
-The settings model (`vl_core::settings`) has eight groups: Java, memory, window, console,
+The settings model (`vl_core::settings`) has nine groups: Java, memory, window, console,
 commands (pre-launch, wrapper, post-exit), environment variables, performance (GameMode,
-MangoHud, discrete GPU, Zink) and natives (system GLFW, OpenAL, SDL). The effective value of a
+MangoHud, discrete GPU, Zink), natives (system GLFW, OpenAL, SDL) and updates (`channel`: the
+least stable channel an update check offers, `release` by default; `vl-cli instances mods
+channel <instance>|--global [release|beta|alpha|inherit]` shows and sets it). The effective value of a
 group is the instance's override if it has one, else the global group, which starts from the
 built-in defaults. An instance overrides a whole group or inherits it (`Option` per group in
 `Overrides`); `Settings::with_overrides` computes the effective settings. Every group has range
 checks (`validate`) and every type keeps unknown fields (`Extra`).
 
-A ninth group, `advanced`, is global only (`Settings::with_overrides` always takes it from the global
+A tenth group, `advanced`, is global only (`Settings::with_overrides` always takes it from the global
 settings): the limits of launcher logs and the cache.
 
 On disk (`vl-settings`, TOML, written with `vl_store::write_atomic`):
@@ -771,7 +793,9 @@ shader folders and worlds with data packs that commands change in memory. The ca
 invented projects of every type on both platforms (a Modrinth and a CurseForge flavour) with
 sorting, filters and paging; installs, update checks and updates, modpack installs and updates
 (including a CurseForge pack with a file the API will not serve, reported as launcher log
-warnings) and exports run as tasks with progress. A bisection narrows the mods of an instance
+warnings) and exports run as tasks with progress. Update checks follow the `updates.channel`
+setting the same way (widened to a file's installed channel, a requested channel used as it is)
+and report two files of one project in a folder as a conflict. A bisection narrows the mods of an instance
 down by the user's reports, or runs as a task that finds a fixed culprit. Without a CurseForge
 key (`MockOptions::curseforge_key`) every CurseForge request answers `NoApiKey`.
 `MockOptions` sets the pacing; `MockOptions::instant()` makes tests run without delays.

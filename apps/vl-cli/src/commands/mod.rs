@@ -45,10 +45,16 @@ commands:
                                       then CurseForge by fingerprint; a file both know is
                                       recorded as Modrinth's)
   instances mods updates <instance> [--channel <c>] [--include-pack-files] [--provider <p>]
-                                      list newer versions of mods, packs and shaders; without
-                                      --provider both platforms: a file goes to the platform it
-                                      was installed from, else to the first that knows it
-                                      (Modrinth, then CurseForge when a key is set)
+                                      list newer versions of mods, packs, shaders and data packs
+                                      (global_packs included); without --provider both
+                                      platforms: a file goes to the platform it was installed
+                                      from, else to the first that knows it (Modrinth, then
+                                      CurseForge when a key is set). Without --channel the
+                                      update channel setting, widened for a file installed from
+                                      a beta or alpha to that channel
+  instances mods channel <instance>|--global [release|beta|alpha|inherit]
+                                      show or set the update channel (release by default);
+                                      inherit drops an instance's own channel
   instances mods update <instance> [<mod>...|--all] [--version <id>] [--channel <c>]
                         [--include-pack-files] [--provider <p>] [--yes]
                                       update, or switch one mod to a version (older only by id);

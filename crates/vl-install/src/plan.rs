@@ -139,6 +139,8 @@ pub(crate) struct Planner<'a> {
     requested: HashSet<String>,
     /// Versions the caller already has, by id.
     known: HashMap<String, ProjectVersion>,
+    /// The folder of each pinned project: an update stays in the folder its file is in.
+    folders: HashMap<String, ResourceKind>,
 }
 
 impl<'a> Planner<'a> {
@@ -164,6 +166,7 @@ impl<'a> Planner<'a> {
             warnings,
             requested: HashSet::new(),
             known: HashMap::new(),
+            folders: HashMap::new(),
         }
     }
 
@@ -191,11 +194,13 @@ impl<'a> Planner<'a> {
         self.known = known;
     }
 
-    /// Plans the exact `version` of each project `(project id, version id)`; all of them are
-    /// asked for, so none is skipped as somebody's dependency.
-    pub(crate) fn add_pinned(&mut self, pins: &[(String, String)]) -> Result<()> {
-        self.requested = pins.iter().map(|(p, _)| p.clone()).collect();
-        for (project, version) in pins {
+    /// Plans the exact `version` of each project `(project id, version id, folder)`; all of
+    /// them are asked for, so none is skipped as somebody's dependency. Each goes to the folder
+    /// named with it (the folder its installed file is in, `global_packs` included).
+    pub(crate) fn add_pinned(&mut self, pins: &[(String, String, ResourceKind)]) -> Result<()> {
+        self.requested = pins.iter().map(|(p, _, _)| p.clone()).collect();
+        self.folders = pins.iter().map(|(p, _, kind)| (p.clone(), *kind)).collect();
+        for (project, version, _) in pins {
             let info = self.input.source.project(project, self.input.control)?;
             self.add(info, Some(version), PlanRole::Requested, 0)?;
         }
@@ -222,7 +227,13 @@ impl<'a> Planner<'a> {
             ));
         }
         let target = self.input.target;
-        let kind = kind_for(target, project.project_type, depth == 0).ok_or_else(|| {
+        let pinned_folder = self
+            .folders
+            .get(&project.id)
+            .copied()
+            .filter(|_| depth == 0);
+        let folder = pinned_folder.or_else(|| kind_for(target, project.project_type, depth == 0));
+        let kind = folder.ok_or_else(|| {
             if project.project_type == ProjectType::DataPack {
                 Error::unsupported(format!(
                     "{} is a data pack; data packs are installed into a world, so choose one (create a \n                     world in the game first if the instance has none)",
@@ -244,16 +255,32 @@ impl<'a> Planner<'a> {
         })?;
         let is_dependency = matches!(role, PlanRole::Dependency { .. });
 
-        let hit = self
+        let hits: Vec<InstalledFile> = self
             .installed(kind)?
             .iter()
-            .find(|f| {
+            .filter(|f| {
                 f.identity
                     .as_ref()
                     .is_some_and(|i| i.project_id == project.id)
             })
-            .cloned();
-        if is_dependency && pinned.is_none() {
+            .cloned()
+            .collect();
+        let satisfies = is_dependency && pinned.is_none();
+        if hits.len() > 1 && !satisfies {
+            // Replacing one copy would leave the other: the user decides which one stays.
+            let names: Vec<&str> = hits.iter().map(|f| f.file.as_str()).collect();
+            return Err(Error::new(
+                ErrorKind::Conflict,
+                format!(
+                    "{} is in the {} folder more than once ({}); remove all but one first",
+                    project.title,
+                    kind.name(),
+                    names.join(", ")
+                ),
+            ));
+        }
+        let hit = hits.into_iter().next();
+        if satisfies {
             let by_id = match hit.clone() {
                 Some(h) => Some((h, None)),
                 None => self

@@ -13,8 +13,8 @@
 //!   characters percent-encoded).
 //!
 //! Both files start with `schema_version`, followed by one table per group (`[java]`, `[memory]`,
-//! `[window]`, `[console]`, `[commands]`, `[env]`, `[performance]`, `[natives]`). A missing key
-//! takes its default. In an instance file a table present means "this group is overridden"; an
+//! `[window]`, `[console]`, `[commands]`, `[env]`, `[performance]`, `[natives]`, `[updates]`). A
+//! missing key takes its default. In an instance file a table present means "this group is overridden"; an
 //! absent table inherits the global group.
 //!
 //! # Robustness

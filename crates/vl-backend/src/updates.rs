@@ -5,6 +5,10 @@
 //! else to the first that knows it, so nothing is offered twice. CurseForge is left out with a
 //! warning while no key is set.
 //!
+//! The channel an update may come from is the request's when it names one; otherwise the
+//! instance's `updates.channel` setting (its override, else the global value), widened file by
+//! file to the channel of the installed version.
+//!
 //! Checks and plans are answered from a worker thread. An update runs as an `InstallResource`
 //! task: it plans again when it starts, downloads the new files and swaps them in all together
 //! (the folders are put back if any step fails); disabled files stay disabled.
@@ -24,9 +28,24 @@ use vl_tasks::TaskSpec;
 use crate::Backend;
 use crate::catalog::{Job, context};
 
-fn options(check: &UpdateCheckRequest) -> UpdateOptions {
+/// How a check of `check` chooses: the channel it names, else the instance's setting followed
+/// by each file's installed channel.
+fn options(backend: &Backend, check: &UpdateCheckRequest) -> UpdateOptions {
+    let (min, follow_installed) = match check.min_stability {
+        Some(min) => (min, false),
+        None => (
+            backend
+                .settings()
+                .effective(&check.instance)
+                .value
+                .updates
+                .channel,
+            true,
+        ),
+    };
     UpdateOptions {
-        min: check.min_stability,
+        min,
+        follow_installed,
         include_pack_files: check.include_pack_files,
     }
 }
@@ -64,19 +83,29 @@ fn inputs<'a>(
 }
 
 /// Checks on the platform of the request (all of them when it names none).
-fn check_on(job: &Job, request: &UpdateCheckRequest, control: &Control) -> Result<UpdateReport> {
+fn check_on(
+    job: &Job,
+    request: &UpdateCheckRequest,
+    options: UpdateOptions,
+    control: &Control,
+) -> Result<UpdateReport> {
     let (inputs, note) = inputs(job, request.provider, control)?;
-    let mut report = vl_install::check_all(&inputs, options(request))?;
+    let mut report = vl_install::check_all(&inputs, options)?;
     report.warnings.extend(note);
     Ok(report)
 }
 
 /// Plans an update on the platform of the request (all of them when it names none).
-fn plan_on(job: &Job, request: &UpdateRequest, control: &Control) -> Result<InstallPlan> {
+fn plan_on(
+    job: &Job,
+    request: &UpdateRequest,
+    options: UpdateOptions,
+    control: &Control,
+) -> Result<InstallPlan> {
     let (inputs, note) = inputs(job, request.check.provider, control)?;
     let mut plan = vl_install::plan_update_all(
         &inputs,
-        options(&request.check),
+        options,
         selection(request)?,
         request.version.as_deref(),
     )?;
@@ -112,9 +141,10 @@ pub(crate) fn check(backend: &Backend, request: UpdateCheckRequest, replier: Rep
         Ok(j) => j,
         Err(e) => return replier.send(Err(e)),
     };
+    let options = options(backend, &request);
     spawn_reply("catalog-updates", replier, move || {
         let control = Control::default();
-        check_on(&job, &request, &control).map(Response::UpdateReport)
+        check_on(&job, &request, options, &control).map(Response::UpdateReport)
     });
 }
 
@@ -127,9 +157,10 @@ pub(crate) fn plan(backend: &Backend, request: UpdateRequest, replier: Replier) 
         Ok(j) => j,
         Err(e) => return replier.send(Err(e)),
     };
+    let options = options(backend, &request.check);
     spawn_reply("catalog-update-plan", replier, move || {
         let control = Control::default();
-        plan_on(&job, &request, &control).map(Response::InstallPlan)
+        plan_on(&job, &request, options, &control).map(Response::InstallPlan)
     });
 }
 
@@ -140,13 +171,14 @@ pub(crate) fn update(backend: &Backend, request: UpdateRequest) -> Result<Respon
         &request.check.instance,
         request.check.world.as_deref(),
     )?;
+    let options = options(backend, &request.check);
     let events = Arc::clone(&backend.events);
     let handle = backend.tasks().spawn(
         TaskSpec::new(TaskKind::InstallResource).subject(&name),
         move |ctx| {
             crate::launch::with_job(ctx, |wired| {
                 let control = crate::java::job_control(wired);
-                let plan = plan_on(&job, &request, &control)?;
+                let plan = plan_on(&job, &request, options, &control)?;
                 wired.check()?;
                 let apply = ApplyInput {
                     client: &job.client,
@@ -185,4 +217,52 @@ pub(crate) fn identify(
         let input = input(&job, provider, &control)?;
         vl_install::identify(&input).map(Response::Identified)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BackendConfig;
+    use vl_core::install::MinStability;
+    use vl_core::settings::{Overrides, Settings, UpdateSettings};
+
+    #[test]
+    fn the_channel_comes_from_the_request_else_from_the_settings() {
+        let dir = std::env::temp_dir().join(format!("vl-backend-updates-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let backend = Backend::new(BackendConfig {
+            data_dir: Some(dir.clone()),
+        })
+        .unwrap();
+        let a = InstanceId::new("a").unwrap();
+        let b = InstanceId::new("b").unwrap();
+        let mut global = Settings::default();
+        global.updates.channel = MinStability::Beta;
+        backend.settings().set_global(&global).unwrap();
+        let overrides = Overrides {
+            updates: Some(UpdateSettings {
+                channel: MinStability::Alpha,
+                ..UpdateSettings::default()
+            }),
+            ..Overrides::default()
+        };
+        backend.settings().set_overrides(&a, &overrides).unwrap();
+
+        let from_settings = options(&backend, &UpdateCheckRequest::new(a.clone()));
+        assert_eq!(from_settings.min, MinStability::Alpha);
+        assert!(from_settings.follow_installed);
+        assert_eq!(
+            options(&backend, &UpdateCheckRequest::new(b)).min,
+            MinStability::Beta
+        );
+        let named = UpdateCheckRequest {
+            min_stability: Some(MinStability::Release),
+            ..UpdateCheckRequest::new(a)
+        };
+        let named = options(&backend, &named);
+        assert_eq!(named.min, MinStability::Release);
+        assert!(!named.follow_installed);
+        drop(backend);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
