@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use vl_core::catalog::{ProjectType, VersionFile};
 use vl_core::install::{
-    IdentifyReport, InstallPlan, InstallRequest, MatchedBy, PackFile, PlanAction, PlanItem,
-    PlanRole, Recommendation, Satisfied, UncheckedFile, UncheckedReason, UpdateCandidate,
-    UpdateCheckRequest, UpdateReport, UpdateRequest,
+    IdentifyReport, InstallPlan, InstallRequest, MatchedBy, MinStability, PackFile, PlanAction,
+    PlanItem, PlanRole, Recommendation, Satisfied, UncheckedFile, UncheckedReason, UpdateCandidate,
+    UpdateCheckRequest, UpdateConflict, UpdateReport, UpdateRequest,
 };
 use vl_core::resources::ResourceKind;
 use vl_core::task::TaskKind;
@@ -246,6 +246,25 @@ fn checked_areas(world: Option<&str>) -> Vec<(ResourceKind, String)> {
     }
 }
 
+/// The least stable channel an update of a file at version `current` may come from: the
+/// request's channel, else the instance's setting widened to the installed version's channel.
+fn floor(state: &State, request: &UpdateCheckRequest, current: usize) -> MinStability {
+    match request.min_stability {
+        Some(min) => min,
+        None => {
+            let overrides = state
+                .overrides
+                .get(&request.instance)
+                .cloned()
+                .unwrap_or_default();
+            let setting = state.settings.with_overrides(&overrides).updates.channel;
+            VERSIONS
+                .get(current)
+                .map_or(setting, |(_, channel, _)| setting.allowing(*channel))
+        }
+    }
+}
+
 pub(crate) fn check_updates(state: &State, request: &UpdateCheckRequest) -> Result<UpdateReport> {
     let (game_version, loader) = describe(state, &request.instance)?;
     if let Some(provider) = request.provider {
@@ -254,7 +273,6 @@ pub(crate) fn check_updates(state: &State, request: &UpdateCheckRequest) -> Resu
     if let Some(world) = &request.world {
         resources::check_world(&request.instance, world)?;
     }
-    let newest = catalog::newest(request.min_stability);
     let mut key_missing = false;
     let mut report = UpdateReport {
         game_version,
@@ -262,7 +280,30 @@ pub(crate) fn check_updates(state: &State, request: &UpdateCheckRequest) -> Resu
         ..UpdateReport::default()
     };
     for (kind, area) in checked_areas(request.world.as_deref()) {
-        for file in resources::snapshot(state, &request.instance, &area) {
+        let files = resources::snapshot(state, &request.instance, &area);
+        // Two files of one project: a conflict, neither is offered an update.
+        let mut by_project: Vec<(usize, Vec<String>)> = Vec::new();
+        for file in &files {
+            if let Some((idx, _)) = catalog::find_by_file(&file.file) {
+                match by_project.iter_mut().find(|(i, _)| *i == idx) {
+                    Some((_, names)) => names.push(file.file.clone()),
+                    None => by_project.push((idx, vec![file.file.clone()])),
+                }
+            }
+        }
+        let first_conflict = report.conflicts.len();
+        for (idx, mut names) in by_project {
+            if names.len() > 1 {
+                names.sort();
+                report.conflicts.push(UpdateConflict {
+                    kind,
+                    provider: ENTRIES[idx].provider,
+                    project_id: catalog::id_of(idx),
+                    files: names,
+                });
+            }
+        }
+        for file in files {
             let unchecked = |reason| UncheckedFile {
                 kind,
                 file: file.file.clone(),
@@ -272,6 +313,16 @@ pub(crate) fn check_updates(state: &State, request: &UpdateCheckRequest) -> Resu
                 report.unchecked.push(unchecked(UncheckedReason::NoOrigin));
                 continue;
             };
+            let conflicting = report.conflicts[first_conflict..]
+                .iter()
+                .any(|c| c.files.contains(&file.file));
+            if conflicting {
+                report
+                    .unchecked
+                    .push(unchecked(UncheckedReason::SameProject));
+                continue;
+            }
+            let newest = catalog::newest(floor(state, request, current));
             let skipped = request.provider.is_none()
                 && catalog::check_key(state, ENTRIES[idx].provider).is_err();
             if skipped {
@@ -361,7 +412,8 @@ pub(crate) fn plan_update(state: &State, request: &UpdateRequest) -> Result<Inst
                 if file.file != *key && !catalog::find(key).is_ok_and(|k| k == idx) {
                     continue;
                 }
-                let target = catalog::pick_version(idx, Some(version), check.min_stability)?;
+                let min = floor(state, check, current);
+                let target = catalog::pick_version(idx, Some(version), min)?;
                 if target == current {
                     return Err(Error::conflict(format!(
                         "{} is already that version",
@@ -391,7 +443,7 @@ pub(crate) fn plan_update(state: &State, request: &UpdateRequest) -> Result<Inst
         if request.all || request.files.iter().any(|key| matches(candidate, key)) {
             let (idx, current) = catalog::find_by_file(&candidate.file)
                 .ok_or_else(|| Error::internal("candidate without a catalog file"))?;
-            let latest = catalog::newest(check.min_stability);
+            let latest = catalog::newest(floor(state, check, current));
             plan.items.push(item(
                 idx,
                 latest,

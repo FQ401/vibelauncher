@@ -5,6 +5,7 @@ use vl_core::install::{
     IdentifyReport, MinStability, UncheckedReason, UpdateCheckRequest, UpdateReport, UpdateRequest,
 };
 use vl_core::resources::{ResourceCommand, ResourceEntry, ResourceKind};
+use vl_core::settings::{SettingsCommand, UpdateSettings};
 use vl_core::{Command, ErrorKind, Facade, InstanceId, Response};
 
 use super::catalog::{confirmed, print_plan, run_task};
@@ -77,6 +78,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
             }
         }
         ["identify", instance, flags @ ..] => identify(facade, instance, flags, out),
+        ["channel", target, value @ ..] => channel(facade, target, value, out),
         ["update", instance, flags @ ..] => update(facade, instance, flags, out),
         _ => Err(USAGE.into()),
     }
@@ -124,6 +126,86 @@ fn identify(
             Err(e) => return Err(e.into()),
         }
     }
+    Ok(())
+}
+
+/// `channel <instance>|--global [release|beta|alpha|inherit]`: shows or sets the update
+/// channel setting. `inherit` drops an instance's override.
+fn channel(
+    facade: &dyn Facade,
+    target: &str,
+    value: &[&str],
+    out: Out<'_>,
+) -> Result<(), CliError> {
+    let wanted = match value {
+        [] => None,
+        ["inherit"] if target != "--global" => Some(None),
+        [name] => Some(Some(MinStability::parse(name).ok_or_else(|| {
+            CliError::from("channel is release, beta or alpha (or inherit for an instance)")
+        })?)),
+        _ => return Err(USAGE.into()),
+    };
+    if target == "--global" {
+        let mut settings = match call(facade, Command::Settings(SettingsCommand::GetGlobal))? {
+            Response::Settings(s) => s,
+            other => return Err(unexpected(&other)),
+        };
+        if let Some(Some(min)) = wanted {
+            settings.updates.channel = min;
+            done(
+                facade,
+                Command::Settings(SettingsCommand::SetGlobal(settings)),
+            )?;
+            writeln!(out, "update channel: {} (global)", min.name())?;
+        } else {
+            writeln!(
+                out,
+                "update channel: {} (global)",
+                settings.updates.channel.name()
+            )?;
+        }
+        return Ok(());
+    }
+    let id = InstanceId::new(target).ok_or(CliError::from(USAGE))?;
+    let get = || {
+        call(
+            facade,
+            Command::Settings(SettingsCommand::GetInstance { id: id.clone() }),
+        )
+    };
+    let (mut overrides, effective) = match get()? {
+        Response::InstanceSettings {
+            overrides,
+            effective,
+        } => (overrides, effective),
+        other => return Err(unexpected(&other)),
+    };
+    let effective = match wanted {
+        None => effective.updates.channel,
+        Some(choice) => {
+            overrides.updates = choice.map(|channel| UpdateSettings {
+                channel,
+                ..overrides.updates.clone().unwrap_or_default()
+            });
+            done(
+                facade,
+                Command::Settings(SettingsCommand::SetInstance {
+                    id: id.clone(),
+                    overrides: overrides.clone(),
+                }),
+            )?;
+            match get()? {
+                Response::InstanceSettings { effective, .. } => effective.updates.channel,
+                other => return Err(unexpected(&other)),
+            }
+        }
+    };
+    let whence = if overrides.updates.is_some() {
+        "set for this instance"
+    } else {
+        "global"
+    };
+    writeln!(out, "update channel: {} ({whence})", effective.name())?;
     Ok(())
 }
 
@@ -213,8 +295,10 @@ fn check_request<'a>(
             }
             "--channel" => {
                 let v = it.next().ok_or(CliError::from(USAGE))?;
-                check.min_stability = MinStability::parse(v)
-                    .ok_or_else(|| CliError::from("channel is release, beta or alpha"))?;
+                check.min_stability = Some(
+                    MinStability::parse(v)
+                        .ok_or_else(|| CliError::from("channel is release, beta or alpha"))?,
+                );
             }
             other => rest.push(other),
         }
@@ -259,9 +343,20 @@ fn print_report(report: &UpdateReport, out: Out<'_>) -> Result<(), CliError> {
             UncheckedReason::OtherPlatform => {
                 "installed from another platform, which was not checked"
             }
+            UncheckedReason::SameProject => "another file of the same project is in the folder",
             _ => "not checked",
         };
         writeln!(out, "  unchecked {} [{}]: {why}", f.file, f.kind.name())?;
+    }
+    for c in &report.conflicts {
+        writeln!(
+            out,
+            "  conflict  {} [{}]: the same project ({}, {}); keep one of them",
+            c.files.join(", "),
+            c.kind.name(),
+            c.project_id,
+            provider_name(c.provider)
+        )?;
     }
     for w in &report.warnings {
         writeln!(out, "  warning   {w}")?;
@@ -405,6 +500,12 @@ mod tests {
                 file: "c.jar".into(),
                 reason: UncheckedReason::NoOrigin,
             }],
+            conflicts: vec![vl_core::install::UpdateConflict {
+                kind: ResourceKind::Mods,
+                provider: Provider::Modrinth,
+                project_id: "q".into(),
+                files: vec!["d-1.jar".into(), "d-2.jar".into()],
+            }],
             warnings: Vec::new(),
         };
         let mut out = Vec::new();
@@ -420,8 +521,41 @@ mod tests {
             "{out}"
         );
         assert!(
+            out.contains("conflict  d-1.jar, d-2.jar [mods]: the same project (q, Modrinth)"),
+            "{out}"
+        );
+        assert!(
             out.contains("1 update(s), 3 up to date, 1 from pack, 1 not checked"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn the_update_channel_is_shown_and_set_globally_and_per_instance() {
+        let facade = MockFacade::new(MockOptions::instant());
+        let say = |args: &[&str]| -> Result<String, CliError> {
+            let mut out = Vec::new();
+            run(&facade, args, &mut out)?;
+            Ok(String::from_utf8_lossy(&out).into_owned())
+        };
+        assert!(
+            say(&["channel", "--global"])
+                .unwrap()
+                .contains("release (global)")
+        );
+        assert!(
+            say(&["channel", "--global", "beta"])
+                .unwrap()
+                .contains("beta (global)")
+        );
+        assert!(say(&["channel", "--global", "inherit"]).is_err());
+        assert!(say(&["channel", "--global", "nightly"]).is_err());
+        let shown = say(&["channel", "creative"]).unwrap();
+        assert!(shown.contains("beta (global)"), "{shown}");
+        let set = say(&["channel", "creative", "alpha"]).unwrap();
+        assert!(set.contains("alpha (set for this instance)"), "{set}");
+        let back = say(&["channel", "creative", "inherit"]).unwrap();
+        assert!(back.contains("beta (global)"), "{back}");
+        assert!(say(&["channel", "nobody"]).is_err());
     }
 }

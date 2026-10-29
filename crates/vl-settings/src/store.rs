@@ -220,6 +220,7 @@ fn file_stem(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vl_core::install::MinStability;
     use vl_core::settings::{
         CommandSettings, EnvSettings, MemorySettings, PerformanceSettings, WindowSettings,
     };
@@ -423,6 +424,49 @@ log_max_files = 0
         let l = s.global();
         assert_eq!(l.value.advanced.log_max_files, 30);
         assert_eq!(l.warnings.len(), 1);
+    }
+
+    #[test]
+    fn the_update_channel_is_stored_globally_and_per_instance() {
+        let d = Dir::new("updates");
+        let s = SettingsStore::new(&d.0);
+        let mut g = Settings::default();
+        g.updates.channel = MinStability::Beta;
+        s.set_global(&g).unwrap();
+        let text = fs::read_to_string(s.global_path()).unwrap();
+        assert!(
+            text.contains("[updates]") && text.contains("channel = \"beta\""),
+            "{text}"
+        );
+        assert_eq!(s.global().value.updates.channel, MinStability::Beta);
+
+        let a = id("a");
+        write(
+            s.instance_path(&a),
+            "[updates]
+channel = \"alpha\"
+",
+        );
+        assert_eq!(
+            s.instance(&a).value.effective.updates.channel,
+            MinStability::Alpha
+        );
+        assert_eq!(
+            s.instance(&id("b")).value.effective.updates.channel,
+            MinStability::Beta
+        );
+
+        // An unknown channel drops the override, so the instance inherits.
+        write(
+            s.instance_path(&a),
+            "[updates]
+channel = \"nightly\"
+",
+        );
+        let l = s.instance(&a);
+        assert!(l.value.overrides.updates.is_none());
+        assert_eq!(l.value.effective.updates.channel, MinStability::Beta);
+        assert_eq!(l.warnings.len(), 1, "{:?}", l.warnings);
     }
 
     #[test]

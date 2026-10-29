@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::ids::InstanceId;
+use crate::install::MinStability;
 
 /// The version of the settings schema written to disk and understood by this build.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -206,6 +207,28 @@ pub struct NativesSettings {
     pub extra: Extra,
 }
 
+/// How update checks of mods, resource packs, shaders and data packs choose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// The least stable channel an update may come from (`release`, `beta`, `alpha`); a file
+    /// installed from a less stable version is also offered newer versions of its own channel.
+    /// A check that names a channel uses that one instead.
+    pub channel: MinStability,
+    /// Unknown fields, kept on save.
+    #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
+    pub extra: Extra,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            channel: MinStability::Release,
+            extra: Extra::default(),
+        }
+    }
+}
+
 /// Limits of the folders that grow by themselves. Global only: an instance cannot override them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -332,11 +355,13 @@ pub enum Group {
     Performance,
     /// Natives workarounds.
     Natives,
+    /// Update checks of mods, packs and shaders.
+    Updates,
 }
 
 impl Group {
     /// All groups.
-    pub const ALL: [Group; 8] = [
+    pub const ALL: [Group; 9] = [
         Group::Java,
         Group::Memory,
         Group::Window,
@@ -345,6 +370,7 @@ impl Group {
         Group::Env,
         Group::Performance,
         Group::Natives,
+        Group::Updates,
     ];
 }
 
@@ -368,6 +394,8 @@ pub struct Settings {
     pub performance: PerformanceSettings,
     /// Natives workarounds.
     pub natives: NativesSettings,
+    /// Update checks.
+    pub updates: UpdateSettings,
     /// Limits of logs and the cache (global only).
     pub advanced: AdvancedSettings,
     /// Unknown groups and fields, kept on save.
@@ -397,6 +425,8 @@ pub struct Overrides {
     pub performance: Option<PerformanceSettings>,
     /// Natives workarounds.
     pub natives: Option<NativesSettings>,
+    /// Update checks.
+    pub updates: Option<UpdateSettings>,
     /// Unknown groups and fields, kept on save.
     #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
     pub extra: Extra,
@@ -422,7 +452,8 @@ impl Settings {
             commands,
             env,
             performance,
-            natives
+            natives,
+            updates
         )
     }
 
@@ -463,6 +494,7 @@ impl Overrides {
             Group::Env => self.env.is_some(),
             Group::Performance => self.performance.is_some(),
             Group::Natives => self.natives.is_some(),
+            Group::Updates => self.updates.is_some(),
         }
     }
 
@@ -607,6 +639,29 @@ mod tests {
         assert_eq!(e.commands.wrapper, "w");
         assert!(e.natives.system_glfw);
         assert_eq!(overrides.overridden().len(), 6);
+    }
+
+    #[test]
+    fn the_update_channel_is_release_by_default_and_overridable() {
+        let mut global = Settings::default();
+        assert_eq!(global.updates.channel, MinStability::Release);
+        global.updates.channel = MinStability::Beta;
+        assert_eq!(
+            global.with_overrides(&Overrides::default()).updates.channel,
+            MinStability::Beta
+        );
+        let overrides = Overrides {
+            updates: Some(UpdateSettings {
+                channel: MinStability::Alpha,
+                ..UpdateSettings::default()
+            }),
+            ..Overrides::default()
+        };
+        assert_eq!(
+            global.with_overrides(&overrides).updates.channel,
+            MinStability::Alpha
+        );
+        assert_eq!(overrides.overridden(), [Group::Updates]);
     }
 
     #[test]

@@ -27,7 +27,7 @@ use std::path::Path;
 use vl_core::catalog::{ProjectVersion, Provider, ReleaseChannel, VersionFilter};
 use vl_core::install::{
     IdentifiedFile, IdentifyReport, InstallPlan, MatchedBy, MinStability, PackFile, UncheckedFile,
-    UncheckedReason, UpdateCandidate, UpdateReport, VersionLabel,
+    UncheckedReason, UpdateCandidate, UpdateConflict, UpdateReport, VersionLabel,
 };
 use vl_core::resources::ResourceKind;
 use vl_core::{Error, ErrorKind, Result};
@@ -38,14 +38,16 @@ use vl_resources::{DISABLED_SUFFIX, Resources};
 use crate::mrpack::PackRecord;
 use crate::origin::{Origin, OriginStore, now_unix};
 use crate::plan::{PlanInput, Planner, Target};
-use crate::scan::{InstalledFile, normalize_id, scan_many};
+use crate::scan::{Identity, InstalledFile, normalize_id, scan_many};
 
-/// The folders that are checked.
-const KINDS: [ResourceKind; 4] = [
+/// The folders that are checked. Only the files directly in a folder count: the game loads
+/// nothing from a subfolder of these, and a pack unpacked into a folder has no file to compare.
+const KINDS: [ResourceKind; 5] = [
     ResourceKind::Mods,
     ResourceKind::ResourcePacks,
     ResourceKind::ShaderPacks,
     ResourceKind::DataPacks,
+    ResourceKind::GlobalDataPacks,
 ];
 
 /// The only folder looked at in a world.
@@ -72,6 +74,10 @@ pub struct UpdateInput<'a> {
 pub struct UpdateOptions {
     /// The least stable channel an update may come from.
     pub min: MinStability,
+    /// Widen `min`, file by file, to the channel of the installed version
+    /// ([`MinStability::allowing`]): a file installed from a beta is offered newer betas. On
+    /// when `min` is the stored setting; off when the caller named a channel.
+    pub follow_installed: bool,
     /// Also handle files that came with the modpack.
     pub include_pack_files: bool,
 }
@@ -80,7 +86,18 @@ impl Default for UpdateOptions {
     fn default() -> Self {
         Self {
             min: MinStability::Release,
+            follow_installed: false,
             include_pack_files: false,
+        }
+    }
+}
+
+impl UpdateOptions {
+    /// The least stable channel an update of a file at `installed` may come from.
+    pub fn floor(&self, installed: Option<ReleaseChannel>) -> MinStability {
+        match installed {
+            Some(channel) if self.follow_installed => self.min.allowing(channel),
+            _ => self.min,
         }
     }
 }
@@ -186,6 +203,18 @@ struct Asked<'a> {
     kind: ResourceKind,
     file: &'a InstalledFile,
     current: &'a ProjectVersion,
+    /// The least stable channel its update may come from.
+    min: MinStability,
+    /// Its place in the outcomes.
+    slot: usize,
+}
+
+/// A file with an origin record that the platform does not find by hash (its version was
+/// deleted, or its file is not indexed): its project's versions are listed instead.
+struct Orphan<'a> {
+    kind: ResourceKind,
+    file: &'a InstalledFile,
+    identity: &'a Identity,
     /// Its place in the outcomes.
     slot: usize,
 }
@@ -193,6 +222,61 @@ struct Asked<'a> {
 /// The folders to look at: a world has only data packs.
 fn kinds(target: &Target) -> &'static [ResourceKind] {
     if target.world { &WORLD_KINDS } else { &KINDS }
+}
+
+/// The loaders whose mods run in the instance, its own first. Quilt runs Fabric mods.
+fn mod_loaders(target: &Target) -> Vec<String> {
+    match target.loader.as_deref() {
+        Some("quilt") => vec!["quilt".to_owned(), "fabric".to_owned()],
+        Some(other) => vec![other.to_owned()],
+        None => Vec::new(),
+    }
+}
+
+/// Projects with more than one file in a folder, among the files this platform knows.
+fn same_project(
+    scanned: &HashMap<ResourceKind, Vec<InstalledFile>>,
+    kinds: &[ResourceKind],
+    provider: Provider,
+) -> Vec<UpdateConflict> {
+    let mut conflicts = Vec::new();
+    for &kind in kinds {
+        let mut by_project: Vec<(&str, Vec<String>)> = Vec::new();
+        for file in scanned.get(&kind).map_or(&[][..], Vec::as_slice) {
+            let Some(identity) = file.identity.as_ref().filter(|_| file.foreign.is_none()) else {
+                continue;
+            };
+            match by_project
+                .iter_mut()
+                .find(|(p, _)| *p == identity.project_id)
+            {
+                Some((_, files)) => files.push(file.file.clone()),
+                None => by_project.push((&identity.project_id, vec![file.file.clone()])),
+            }
+        }
+        for (project_id, mut files) in by_project {
+            if files.len() > 1 {
+                files.sort();
+                conflicts.push(UpdateConflict {
+                    kind,
+                    provider,
+                    project_id: project_id.to_owned(),
+                    files,
+                });
+            }
+        }
+    }
+    conflicts
+}
+
+fn conflict_of<'r>(
+    conflicts: &'r [UpdateConflict],
+    kind: ResourceKind,
+    file: &str,
+) -> Option<&'r UpdateConflict> {
+    conflicts
+        .iter()
+        .find(|c| c.kind == kind && c.files.iter().any(|f| f == file))
 }
 
 fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection> {
@@ -218,12 +302,32 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
     let pack = pack_hashes(input.meta_dir);
     let mut pack_files = HashSet::new();
     let mut outcomes: Vec<(FileKey, Outcome)> = Vec::new();
+    report.conflicts = same_project(&scanned, kinds(input.target), input.source.provider());
 
     let mut mods: Vec<Asked<'_>> = Vec::new();
     let mut others: Vec<Asked<'_>> = Vec::new();
+    let mut orphans: Vec<Orphan<'_>> = Vec::new();
     for &kind in kinds(input.target) {
         for file in scanned.get(&kind).map_or(&[][..], Vec::as_slice) {
             let key = (kind, file.file.clone());
+            let mut unchecked = |reason| {
+                report.unchecked.push(UncheckedFile {
+                    kind,
+                    file: file.file.clone(),
+                    reason,
+                });
+                outcomes.push((key.clone(), Outcome::Unchecked(reason)));
+            };
+            // A file installed from another platform is checked there.
+            if file.foreign.is_some() {
+                unchecked(UncheckedReason::OtherPlatform);
+                continue;
+            }
+            // Two files of one project: an update would replace only one of them.
+            if conflict_of(&report.conflicts, kind, &file.file).is_some() {
+                unchecked(UncheckedReason::SameProject);
+                continue;
+            }
             if pack.contains(&file.hashes.sha1) || pack.contains(&file.hashes.sha512) {
                 pack_files.insert(key.clone());
                 if !options.include_pack_files {
@@ -243,31 +347,33 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
                 });
                 outcomes.push((key.clone(), Outcome::Unchecked(reason)));
             };
-            // A file installed from another platform is checked there.
-            if file.foreign.is_some() {
-                unchecked(UncheckedReason::OtherPlatform);
-                continue;
-            }
             let Some(identity) = file.identity.as_ref() else {
                 unchecked(UncheckedReason::NoOrigin);
-                continue;
-            };
-            let Some(current) = identity.version.as_ref() else {
-                unchecked(UncheckedReason::UnknownToPlatform);
                 continue;
             };
             if kind == ResourceKind::Mods && input.target.loader.is_none() {
                 unchecked(UncheckedReason::NoLoader);
                 continue;
             }
+            let slot = outcomes.len();
+            // Up to date until the answer says otherwise.
+            outcomes.push((key, Outcome::UpToDate));
+            let Some(current) = identity.version.as_ref() else {
+                orphans.push(Orphan {
+                    kind,
+                    file,
+                    identity,
+                    slot,
+                });
+                continue;
+            };
             let asked = Asked {
                 kind,
                 file,
                 current,
-                slot: outcomes.len(),
+                min: options.floor(Some(current.channel)),
+                slot,
             };
-            // Up to date until the answer says otherwise.
-            outcomes.push((key, Outcome::UpToDate));
             if kind == ResourceKind::Mods {
                 mods.push(asked);
             } else {
@@ -276,16 +382,11 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
         }
     }
 
-    let channels = channels_for(options.min);
     let mut latest: HashMap<String, ProjectVersion> = HashMap::new();
-    let mut found: Vec<(&Asked<'_>, ProjectVersion)> = Vec::new();
+    let mut found: Vec<(usize, UpdateCandidate)> = Vec::new();
     let mut up_to_date = 0u32;
 
-    let mod_loaders = match input.target.loader.as_deref() {
-        Some("quilt") => vec!["quilt".to_owned(), "fabric".to_owned()],
-        Some(other) => vec![other.to_owned()],
-        None => Vec::new(),
-    };
+    let mod_loaders = mod_loaders(input.target);
     // Packs and shaders name their own loaders (`minecraft`, `iris`, ...): the request allows
     // the ones the installed files have.
     let mut other_loaders: Vec<String> = others
@@ -295,63 +396,124 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
     other_loaders.sort();
     other_loaders.dedup();
 
-    for (group, loaders) in [(&mods, mod_loaders), (&others, other_loaders)] {
-        if group.is_empty() {
-            continue;
+    for (group, loaders) in [(&mods, &mod_loaders), (&others, &other_loaders)] {
+        // One request per channel floor in use (one, unless installed versions widen it).
+        let mut floors: Vec<MinStability> = Vec::new();
+        for asked in group.iter() {
+            if !floors.contains(&asked.min) {
+                floors.push(asked.min);
+            }
         }
-        let hashes: Vec<String> = group.iter().map(|a| a.file.key.clone()).collect();
-        let filter = VersionFilter {
-            loaders: loaders.clone(),
-            game_versions: vec![input.target.game_version.clone()],
-        };
-        let answers: HashMap<String, ProjectVersion> = input
-            .source
-            .latest_versions_by_hashes(
-                input.source.file_hash(),
-                &hashes,
-                &filter,
-                &channels,
-                input.control,
-            )?
-            .into_iter()
-            .map(|m| (m.hash.to_ascii_lowercase(), m.version))
-            .collect();
-        for asked in group {
-            match answers.get(&asked.file.key) {
-                Some(new)
-                    if is_update(
-                        asked.kind,
-                        asked.current,
-                        new,
-                        input.target,
-                        &loaders,
-                        options.min,
-                    ) =>
-                {
-                    latest.insert(new.id.clone(), new.clone());
-                    if let Some(slot) = outcomes.get_mut(asked.slot) {
-                        slot.1 = Outcome::Update;
+        for min in floors {
+            let batch: Vec<&Asked<'_>> = group.iter().filter(|a| a.min == min).collect();
+            let hashes: Vec<String> = batch.iter().map(|a| a.file.key.clone()).collect();
+            let filter = VersionFilter {
+                loaders: loaders.clone(),
+                game_versions: vec![input.target.game_version.clone()],
+            };
+            let answers: HashMap<String, ProjectVersion> = input
+                .source
+                .latest_versions_by_hashes(
+                    input.source.file_hash(),
+                    &hashes,
+                    &filter,
+                    &channels_for(min),
+                    input.control,
+                )?
+                .into_iter()
+                .map(|m| (m.hash.to_ascii_lowercase(), m.version))
+                .collect();
+            for asked in batch {
+                match answers.get(&asked.file.key) {
+                    Some(new)
+                        if is_update(
+                            asked.kind,
+                            asked.current,
+                            new,
+                            input.target,
+                            loaders,
+                            asked.min,
+                        ) =>
+                    {
+                        latest.insert(new.id.clone(), new.clone());
+                        if let Some(slot) = outcomes.get_mut(asked.slot) {
+                            slot.1 = Outcome::Update;
+                        }
+                        found.push((
+                            asked.slot,
+                            candidate(
+                                input,
+                                &pack_files,
+                                asked.kind,
+                                asked.file,
+                                asked.current,
+                                new,
+                            ),
+                        ));
                     }
-                    found.push((asked, new.clone()));
+                    _ => up_to_date += 1,
                 }
-                _ => up_to_date += 1,
             }
         }
     }
 
-    for (asked, new) in found {
-        report.updates.push(UpdateCandidate {
-            kind: asked.kind,
-            file: asked.file.file.clone(),
-            enabled: asked.file.enabled,
-            name: asked.file.name.clone(),
-            provider: input.source.provider(),
-            project_id: asked.current.project_id.clone(),
-            current: label(asked.current),
-            latest: label(&new),
-            from_pack: pack_files.contains(&(asked.kind, asked.file.file.clone())),
-        });
+    // Files the platform no longer finds by hash: their projects' versions, once per project.
+    let mut listed: HashMap<(bool, String), Vec<ProjectVersion>> = HashMap::new();
+    for orphan in &orphans {
+        let is_mod = orphan.kind == ResourceKind::Mods;
+        let project = orphan.identity.project_id.clone();
+        if let std::collections::hash_map::Entry::Vacant(slot) =
+            listed.entry((is_mod, project.clone()))
+        {
+            let filter = VersionFilter {
+                loaders: if is_mod {
+                    mod_loaders.clone()
+                } else {
+                    Vec::new()
+                },
+                game_versions: vec![input.target.game_version.clone()],
+            };
+            let versions = match input.source.versions(&project, &filter, input.control) {
+                Ok(v) => v,
+                // The project is gone too.
+                Err(e) if e.kind == ErrorKind::NotFound => Vec::new(),
+                Err(e) => return Err(e),
+            };
+            slot.insert(versions);
+        }
+        let versions = listed
+            .get(&(is_mod, project))
+            .map_or(&[][..], Vec::as_slice);
+        let loaders = if is_mod { &mod_loaders[..] } else { &[][..] };
+        match newest_for_orphan(orphan, versions, input.target, loaders, options) {
+            OrphanAnswer::Update(update) => {
+                let OrphanUpdate { current, new } = *update;
+                latest.insert(new.id.clone(), new.clone());
+                if let Some(slot) = outcomes.get_mut(orphan.slot) {
+                    slot.1 = Outcome::Update;
+                }
+                found.push((
+                    orphan.slot,
+                    candidate(input, &pack_files, orphan.kind, orphan.file, &current, &new),
+                ));
+            }
+            OrphanAnswer::UpToDate => up_to_date += 1,
+            OrphanAnswer::Unknown => {
+                let reason = UncheckedReason::UnknownToPlatform;
+                report.unchecked.push(UncheckedFile {
+                    kind: orphan.kind,
+                    file: orphan.file.file.clone(),
+                    reason,
+                });
+                if let Some(slot) = outcomes.get_mut(orphan.slot) {
+                    slot.1 = Outcome::Unchecked(reason);
+                }
+            }
+        }
     }
+
+    found.sort_by_key(|(slot, _)| *slot);
+    report.updates = found.into_iter().map(|(_, c)| c).collect();
     report.up_to_date = up_to_date;
     Ok(Inspection {
         report,
@@ -360,6 +522,96 @@ fn inspect(input: &UpdateInput<'_>, options: UpdateOptions) -> Result<Inspection
         pack_files,
         outcomes,
     })
+}
+
+/// The report line of a file with a newer version.
+fn candidate(
+    input: &UpdateInput<'_>,
+    pack_files: &HashSet<FileKey>,
+    kind: ResourceKind,
+    file: &InstalledFile,
+    current: &ProjectVersion,
+    new: &ProjectVersion,
+) -> UpdateCandidate {
+    UpdateCandidate {
+        kind,
+        file: file.file.clone(),
+        enabled: file.enabled,
+        name: file.name.clone(),
+        provider: input.source.provider(),
+        project_id: current.project_id.clone(),
+        current: label(current),
+        latest: label(new),
+        from_pack: pack_files.contains(&(kind, file.file.clone())),
+    }
+}
+
+/// The update of an orphan.
+struct OrphanUpdate {
+    /// The installed version as far as it is known.
+    current: ProjectVersion,
+    /// The version to update to.
+    new: ProjectVersion,
+}
+
+/// What the project's version list says about a file the platform does not find by hash.
+enum OrphanAnswer {
+    /// A version to update to.
+    Update(Box<OrphanUpdate>),
+    /// The installed version is listed and nothing allowed is newer.
+    UpToDate,
+    /// No version of the project fits the instance (or the project is gone).
+    Unknown,
+}
+
+/// The update of an orphan: the newest version that fits the instance and an allowed channel
+/// (the instance's own loader first). While the installed version is still listed it is
+/// compared as usual, so nothing older is offered; once it is gone its date is unknown, and the
+/// newest fitting version replaces it.
+fn newest_for_orphan(
+    orphan: &Orphan<'_>,
+    versions: &[ProjectVersion],
+    target: &Target,
+    loaders: &[String],
+    options: UpdateOptions,
+) -> OrphanAnswer {
+    let project = &orphan.identity.project_id;
+    let listed_current = versions
+        .iter()
+        .find(|v| v.id == orphan.identity.version_id && v.project_id == *project);
+    let min = options.floor(listed_current.map(|v| v.channel));
+    let primary = loaders.first();
+    let best = versions
+        .iter()
+        .filter(|v| v.project_id == *project && v.id != orphan.identity.version_id)
+        .filter(|v| v.game_versions.contains(&target.game_version))
+        .filter(|v| loaders.is_empty() || v.loaders.iter().any(|l| loaders.contains(l)))
+        .filter(|v| min.rank(v.channel).is_some())
+        .filter(|v| listed_current.is_none_or(|c| v.date_published > c.date_published))
+        .max_by(|a, b| {
+            let native = |v: &ProjectVersion| primary.is_some_and(|l| v.loaders.contains(l));
+            (native(a), &a.date_published).cmp(&(native(b), &b.date_published))
+        });
+    match (best, listed_current) {
+        (Some(new), current) => OrphanAnswer::Update(Box::new(OrphanUpdate {
+            current: current.cloned().unwrap_or_else(|| ProjectVersion {
+                id: orphan.identity.version_id.clone(),
+                project_id: project.clone(),
+                name: String::new(),
+                version_number: orphan.identity.version_number.clone().unwrap_or_default(),
+                channel: ReleaseChannel::Unknown,
+                game_versions: Vec::new(),
+                loaders: Vec::new(),
+                date_published: String::new(),
+                downloads: 0,
+                files: Vec::new(),
+                dependencies: Vec::new(),
+            }),
+            new: new.clone(),
+        })),
+        (None, Some(_)) => OrphanAnswer::UpToDate,
+        (None, None) => OrphanAnswer::Unknown,
+    }
 }
 
 /// Looks for newer versions of the instance's mods, packs and shaders.
@@ -576,6 +828,13 @@ fn inspect_all(inputs: &[UpdateInput<'_>], options: UpdateOptions) -> Result<Com
             Outcome::UpToDate => report.up_to_date += 1,
             Outcome::FromPack => report.from_pack.push(PackFile { kind, file }),
             Outcome::Unchecked(reason) => {
+                if reason == UncheckedReason::SameProject
+                    && let Some(Some(inspection)) = inspections.get(owner)
+                    && let Some(conflict) = conflict_of(&inspection.report.conflicts, kind, &file)
+                    && !report.conflicts.contains(conflict)
+                {
+                    report.conflicts.push(conflict.clone());
+                }
                 report.unchecked.push(UncheckedFile { kind, file, reason });
             }
         }
@@ -672,12 +931,12 @@ pub fn plan_update_all(
     }
     let combined = inspect_all(inputs, options)?;
     let mut warnings = combined.report.warnings.clone();
-    let mut pins: Vec<Vec<(String, String)>> = vec![Vec::new(); inputs.len()];
-    let mut pin = |owner: usize, project: &str, version: &str| {
+    let mut pins: Vec<Vec<(String, String, ResourceKind)>> = vec![Vec::new(); inputs.len()];
+    let mut pin = |owner: usize, project: &str, version: &str, kind: ResourceKind| {
         if let Some(list) = pins.get_mut(owner)
-            && !list.iter().any(|(p, _)| p == project)
+            && !list.iter().any(|(p, _, _)| p == project)
         {
-            list.push((project.to_owned(), version.to_owned()));
+            list.push((project.to_owned(), version.to_owned(), kind));
         }
     };
     let owner_of =
@@ -687,8 +946,15 @@ pub fn plan_update_all(
         Selection::All => {
             for c in &combined.report.updates {
                 if let Some(owner) = owner_of(c.kind, &c.file) {
-                    pin(owner, &c.project_id, &c.latest.id);
+                    pin(owner, &c.project_id, &c.latest.id, c.kind);
                 }
+            }
+            for c in &combined.report.conflicts {
+                warnings.push(format!(
+                    "{} are files of the same project; none of them is updated until one is \
+                     removed",
+                    c.files.join(", ")
+                ));
             }
         }
         Selection::Files(selectors) => {
@@ -743,6 +1009,15 @@ pub fn plan_update_all(
                             ),
                         ));
                     }
+                    if let Some(c) = conflict_of(&inspection.report.conflicts, kind, &file.file) {
+                        return Err(Error::new(
+                            ErrorKind::Conflict,
+                            format!(
+                                "{} are files of the same project; remove all but one first",
+                                c.files.join(", ")
+                            ),
+                        ));
+                    }
                     let Some(identity) = &file.identity else {
                         return Err(Error::unsupported(format!(
                             "{} has no known origin, so its project is unknown",
@@ -753,7 +1028,7 @@ pub fn plan_update_all(
                         if wanted == identity.version_id {
                             warnings.push(format!("{} is already that version", file.file));
                         } else {
-                            pin(owner, &identity.project_id, wanted);
+                            pin(owner, &identity.project_id, wanted, kind);
                         }
                     } else if let Some(c) = inspection
                         .report
@@ -761,7 +1036,7 @@ pub fn plan_update_all(
                         .iter()
                         .find(|c| c.kind == kind && c.file == file.file)
                     {
-                        pin(owner, &c.project_id, &c.latest.id);
+                        pin(owner, &c.project_id, &c.latest.id, kind);
                     } else {
                         warnings.push(format!("{} has no newer version", file.file));
                     }

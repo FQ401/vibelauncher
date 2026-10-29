@@ -306,6 +306,76 @@ fn install_requests_are_checked() {
 }
 
 #[test]
+fn the_update_channel_setting_and_a_project_twice_in_a_folder() {
+    use vl_core::install::{MinStability, UncheckedReason};
+    use vl_core::resources::ResourceCommand;
+    use vl_core::settings::{Settings, SettingsCommand};
+    let facade = mock();
+    let check = UpdateCheckRequest {
+        provider: Some(Provider::Modrinth),
+        ..UpdateCheckRequest::new(id("creative"))
+    };
+    let latest_of = |check: UpdateCheckRequest, file: &str| {
+        let Response::UpdateReport(report) =
+            catalog(&facade, CatalogCommand::CheckUpdates(check)).unwrap()
+        else {
+            panic!("expected a report");
+        };
+        report
+            .updates
+            .iter()
+            .find(|u| u.file == file)
+            .map(|u| u.latest.number.clone())
+    };
+    let weather = "mock-weather-fx-1.1.0.jar";
+    assert_eq!(latest_of(check.clone(), weather).as_deref(), Some("2.0.0"));
+    let mut settings = Settings::default();
+    settings.updates.channel = MinStability::Beta;
+    call(
+        &facade,
+        Command::Settings(SettingsCommand::SetGlobal(settings)),
+    )
+    .unwrap();
+    assert_eq!(
+        latest_of(check.clone(), weather).as_deref(),
+        Some("2.1.0-beta.1"),
+        "the setting allows betas"
+    );
+    let named = UpdateCheckRequest {
+        min_stability: Some(MinStability::Release),
+        ..check.clone()
+    };
+    assert_eq!(latest_of(named, weather).as_deref(), Some("2.0.0"));
+
+    call(
+        &facade,
+        Command::Resources(ResourceCommand::Add {
+            instance: id("creative"),
+            kind: ResourceKind::Mods,
+            source: "/downloads/mock-weather-fx-2.0.0.jar".into(),
+        }),
+    )
+    .unwrap();
+    let Response::UpdateReport(report) =
+        catalog(&facade, CatalogCommand::CheckUpdates(check)).unwrap()
+    else {
+        panic!("expected a report");
+    };
+    assert_eq!(report.conflicts.len(), 1, "{report:?}");
+    assert_eq!(
+        report.conflicts[0].files,
+        ["mock-weather-fx-1.1.0.jar", "mock-weather-fx-2.0.0.jar"]
+    );
+    assert!(
+        report
+            .unchecked
+            .iter()
+            .any(|u| u.file == weather && u.reason == UncheckedReason::SameProject)
+    );
+    assert!(!report.updates.iter().any(|u| u.file == weather));
+}
+
+#[test]
 fn updates_are_checked_planned_and_applied() {
     let facade = mock();
     let events = facade.subscribe();
