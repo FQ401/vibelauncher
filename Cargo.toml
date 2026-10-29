@@ -71,6 +71,11 @@ winsafe = { version = "0.0.29", features = ["shell", "gui", "psapi"] }
 # The tray icon of the desktop app while it watches a running game. On Linux and the BSDs it is
 # a D-Bus StatusNotifierItem (ksni), without GTK.
 tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
+# macOS only: the desktop app's AppKit event pump and Dock presence while it watches a game (the
+# safe Objective-C bindings `tray-icon` uses as well).
+objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder", "NSRunningApplication"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDate", "NSString"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -948,14 +948,21 @@ the console buffer, play time is counted and the exit is noticed. A crash opens 
 Home with the error chip; a normal exit does so when `launcher.on_game_exit` is `show_window`.
 Closing the window while a game runs in this mode also keeps watching. A tray icon (`tray-icon`)
 offers to show the launcher, stop the game (the window comes back and asks first) and quit after
-the game; a left click shows the launcher. On Windows the icon lives on its own thread with a
-hidden `winsafe` window running its message loop; on Linux and the BSDs it is a D-Bus
-StatusNotifierItem (`ksni`, no GTK). macOS has no tray icon yet: the window comes back on an exit
-or a crash by the settings, and without a tray the app shows the window once no game runs. On
+the game. On Windows the icon lives on its own thread with a hidden `winsafe` window running its
+message loop; on Linux and the BSDs it is a D-Bus StatusNotifierItem (`ksni`, no GTK); on both a
+left click shows the launcher. On macOS it is a status item in the menu bar whose menu opens on a
+click: it lives on the main thread, and between windows the watcher hands that thread's AppKit
+events to the shared `NSApplication` (waiting on them at most 100 ms, then folding in the
+launcher's events); while it is shown the app has no Dock icon (the `Accessory` activation
+policy), and the Dock icon comes back, with the app in front, for the next window. These calls
+use the safe `objc2` bindings, so the workspace stays without `unsafe`. Without a tray (no
+StatusNotifierWatcher on the desktop) the app shows the window once no game runs. On
 Windows wgpu uses Direct3D 12 only (every backend when that fails, or what `WGPU_BACKEND` names):
 the Vulkan driver would stay loaded after the device is gone. Ten seconds into watching, Windows
 trims the working set. The measurement is `apps/vibelauncher/tests/watcher_budget.rs` (ignored;
-built with the `dev-game` feature, where `VL_DEV_GAME` replaces the game with a test program). `vl-ui-egui` depends on `egui` only, not on a windowing crate. Its
+built with the `dev-game` feature, where `VL_DEV_GAME` replaces the game with a test program);
+the `watcher-budget` workflow runs it by hand on Linux (Xvfb, Mesa software rendering) and
+macOS. `vl-ui-egui` depends on `egui` only, not on a windowing crate. Its
 layout: a left rail of five sections (Home, Instances, Catalog, Account, Settings), a top bar, a
 tasks panel (Ctrl+J) and the page of the current section; colors, spacing and type scale come from
 the design tokens in `theme.rs`.

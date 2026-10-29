@@ -1,14 +1,21 @@
 //! The tray icon shown while the launcher watches a running game without its window.
 //!
 //! The icon (`tray-icon`) has a menu: show the launcher, stop the game (asked in the window),
-//! quit after the game; a left click shows the launcher. Windows: the icon lives on its own
-//! thread with a hidden window that runs the message loop (`winsafe::gui`), so the main thread
-//! needs none. Linux and the BSDs: a D-Bus StatusNotifierItem (`ksni`), no GTK; the icon is
-//! missing when the desktop has no StatusNotifierWatcher. macOS: no tray icon yet (its status
-//! item needs the main thread's run loop, which belongs to the window between sessions); the
-//! window comes back on an exit or a crash by the settings.
+//! quit after the game. Windows: the icon lives on its own thread with a hidden window that runs
+//! the message loop (`winsafe::gui`), so the main thread needs none; a left click shows the
+//! launcher. Linux and the BSDs: a D-Bus StatusNotifierItem (`ksni`), no GTK; the icon is
+//! missing when the desktop has no StatusNotifierWatcher; a left click shows the launcher.
+//! macOS: a status item in the menu bar, whose menu opens on a click. AppKit allows it on the
+//! main thread only, and its clicks arrive as events of the shared `NSApplication` (the one
+//! winit made for the window); between windows nobody runs that application, so the watcher
+//! hands the main thread's events to it ([`dispatch_app_events`]). While the status item is
+//! shown the app has no Dock icon (the `Accessory` activation policy); the Dock icon comes back,
+//! and the app comes to the front, when the item goes. Everything goes through the safe
+//! bindings of `objc2` (the same ones `tray-icon` uses), so the workspace stays without `unsafe`.
 
 use std::sync::mpsc;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 
 use vl_ui_egui::TrayTexts;
 
@@ -51,8 +58,49 @@ impl Tray {
     }
 }
 
+/// macOS: hands the main thread's AppKit events to the application for up to `timeout` (until
+/// the first event, then everything already queued): the status item's clicks and its menu.
+/// `false` off the main thread, where nothing is done.
+#[cfg(target_os = "macos")]
+pub fn dispatch_app_events(timeout: Duration) -> bool {
+    use objc2::MainThreadMarker;
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::{NSApplication, NSEventMask};
+    use objc2_foundation::{NSDate, NSString};
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    autoreleasepool(|_| {
+        let app = NSApplication::sharedApplication(mtm);
+        // The value of `NSDefaultRunLoopMode`.
+        let mode = NSString::from_str("kCFRunLoopDefaultMode");
+        let mut until = NSDate::dateWithTimeIntervalSinceNow(timeout.as_secs_f64());
+        while let Some(event) = app.nextEventMatchingMask_untilDate_inMode_dequeue(
+            NSEventMask::Any,
+            Some(&until),
+            &mode,
+            true,
+        ) {
+            app.sendEvent(&event);
+            until = NSDate::distantPast();
+        }
+    });
+    true
+}
+
+/// macOS: makes the app the active one, so the window that follows opens in front (picking an
+/// item of the status menu does not activate the app). Elsewhere nothing is needed.
+pub fn bring_to_front() {
+    #[cfg(target_os = "macos")]
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        // `activate` needs macOS 14; the app runs on 11.
+        #[allow(deprecated)]
+        objc2_app_kit::NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+    }
+}
+
 /// A 32x32 RGBA picture of the icon: a rounded square in the accent color with a "V".
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn icon_rgba() -> (Vec<u8>, u32) {
     const SIZE: u32 = 32;
     let accent = [0x7c, 0x5c, 0xff, 0xff];
@@ -84,12 +132,13 @@ fn icon_rgba() -> (Vec<u8>, u32) {
     (rgba, SIZE)
 }
 
-#[cfg(not(target_os = "macos"))]
 mod platform {
     use std::sync::mpsc;
 
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
-    use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+    #[cfg(not(target_os = "macos"))]
+    use tray_icon::{MouseButton, MouseButtonState};
+    use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
     use vl_ui_egui::TrayTexts;
 
     use super::TrayAction;
@@ -112,7 +161,22 @@ mod platform {
             menu.append(&MenuItem::with_id(id, text, true, None))
                 .map_err(|e| e.to_string())?;
         }
-        let menu_tx = tx.clone();
+        // A left click shows the launcher, except on macOS, where a click opens the menu (the
+        // convention of the menu bar) and the menu has the same item.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let click_tx = tx.clone();
+            TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    let _ = click_tx.send(TrayAction::Show);
+                }
+            }));
+        }
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let action = match event.id().as_ref() {
                 SHOW => TrayAction::Show,
@@ -120,29 +184,20 @@ mod platform {
                 QUIT_AFTER => TrayAction::QuitAfterGame,
                 _ => return,
             };
-            let _ = menu_tx.send(action);
-        }));
-        TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let _ = tx.send(TrayAction::Show);
-            }
+            let _ = tx.send(action);
         }));
         let (rgba, size) = super::icon_rgba();
         let icon = tray_icon::Icon::from_rgba(rgba, size, size).map_err(|e| e.to_string())?;
-        TrayIconBuilder::new()
+        let builder = TrayIconBuilder::new()
             .with_id("vibelauncher")
             .with_icon(icon)
             .with_tooltip(&texts.tooltip)
-            .with_title("VibeLauncher")
             .with_menu(Box::new(menu))
-            .with_menu_on_left_click(false)
-            .build()
-            .map_err(|e| e.to_string())
+            .with_menu_on_left_click(cfg!(target_os = "macos"));
+        // On macOS a title is text drawn next to the icon in the menu bar.
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.with_title("VibeLauncher");
+        builder.build().map_err(|e| e.to_string())
     }
 
     /// Stops routing tray events (the handlers hold the sender of a closed tray).
@@ -154,7 +209,10 @@ mod platform {
     #[cfg(windows)]
     pub(super) use windows::Icon;
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    pub(super) use macos::Icon;
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     pub(super) use dbus::Icon;
 
     /// Windows: the icon on its own thread with a hidden window running the message loop.
@@ -237,7 +295,7 @@ mod platform {
     }
 
     /// Linux and the BSDs: a StatusNotifierItem served over D-Bus on ksni's own thread.
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     mod dbus {
         use std::sync::mpsc;
 
@@ -261,21 +319,48 @@ mod platform {
             }
         }
     }
-}
 
-#[cfg(target_os = "macos")]
-mod platform {
-    use std::sync::mpsc;
+    /// macOS: a status item in the menu bar, on the main thread; the app leaves the Dock while
+    /// it is shown.
+    #[cfg(target_os = "macos")]
+    mod macos {
+        use std::sync::mpsc;
 
-    use vl_ui_egui::TrayTexts;
+        use objc2::MainThreadMarker;
+        use objc2::rc::Retained;
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+        use tray_icon::TrayIcon;
+        use vl_ui_egui::TrayTexts;
 
-    use super::TrayAction;
+        use super::super::TrayAction;
 
-    pub struct Icon;
+        pub struct Icon {
+            icon: Option<TrayIcon>,
+            app: Retained<NSApplication>,
+        }
 
-    impl Icon {
-        pub fn show(_texts: &TrayTexts, _tx: mpsc::Sender<TrayAction>) -> Result<Self, String> {
-            Err("not available on macOS yet".into())
+        impl Icon {
+            pub fn show(texts: &TrayTexts, tx: mpsc::Sender<TrayAction>) -> Result<Self, String> {
+                let mtm = MainThreadMarker::new()
+                    .ok_or_else(|| String::from("the status item needs the main thread"))?;
+                let icon = super::build(texts, tx)?;
+                let app = NSApplication::sharedApplication(mtm);
+                // Only the status item while no window is open.
+                app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+                Ok(Self {
+                    icon: Some(icon),
+                    app,
+                })
+            }
+        }
+
+        impl Drop for Icon {
+            fn drop(&mut self) {
+                self.icon.take();
+                super::forget_handlers();
+                self.app
+                    .setActivationPolicy(NSApplicationActivationPolicy::Regular);
+            }
         }
     }
 }
