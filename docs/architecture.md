@@ -1038,7 +1038,7 @@ StatusNotifierWatcher on the desktop) the app shows the window once no game runs
 Windows wgpu uses Direct3D 12 only and on Linux Vulkan only (every backend when that fails, or
 what `WGPU_BACKEND` names): with all backends the extra driver would stay loaded after the device
 is gone. Ten seconds into watching, Windows trims the working set. The budget is 30 MiB of
-private memory while watching: `RssAnon` on Linux and `phys_footprint` on macOS (RSS is reported
+private memory while a silent game is watched (a log flood adds up to 10 MiB of console buffer): `RssAnon` on Linux and `phys_footprint` on macOS (RSS is reported
 for information only, as it counts shared libraries and clean file pages), and Windows private
 bytes as measured (about 3 MiB). The measurement is `apps/vibelauncher/tests/watcher_budget.rs` (ignored;
 built with the `dev-game` feature, where `VL_DEV_GAME` replaces the game with a test program);
