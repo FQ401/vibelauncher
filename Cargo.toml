@@ -64,10 +64,13 @@ fluent-bundle = "0.16.0"
 intl-memoizer = "0.5.3"
 unic-langid = "0.9.6"
 sys-locale = "0.3.2"
-# Windows only: the icon and version resource of the executables (build scripts) and the
-# AppUserModelID of the desktop app.
+# Windows only: the icon and version resource of the executables (build scripts), the
+# AppUserModelID, the tray's message loop and the working set trim of the desktop app.
 winresource = { version = "0.1.34", default-features = false }
-winsafe = { version = "0.0.29", features = ["shell"] }
+winsafe = { version = "0.0.29", features = ["shell", "gui", "psapi"] }
+# The tray icon of the desktop app while it watches a running game. On Linux and the BSDs it is
+# a D-Bus StatusNotifierItem (ksni), without GTK.
+tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

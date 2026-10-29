@@ -263,6 +263,48 @@ impl Default for AdvancedSettings {
     }
 }
 
+/// What the launcher window does once a game is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum AfterLaunch {
+    /// Close the window and keep watching the game from the tray: the game's output still goes
+    /// to its log and console buffer, play time is counted, an exit or a crash is noticed.
+    #[default]
+    HideToTray,
+    /// Keep the window open (for watching the console).
+    KeepOpen,
+    /// Close the launcher; the game runs on without it.
+    CloseLauncher,
+}
+
+/// What the launcher does when a game it watches from the tray exits normally. A crash always
+/// brings the window back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum OnGameExit {
+    /// Show the window again.
+    #[default]
+    ShowWindow,
+    /// Stay in the tray.
+    Nothing,
+}
+
+/// The launcher's own behaviour around a running game. Global only: an instance cannot
+/// override it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LauncherSettings {
+    /// What the window does once a game is running.
+    pub after_launch: AfterLaunch,
+    /// What happens when a game watched from the tray exits normally.
+    pub on_game_exit: OnGameExit,
+    /// Unknown fields, kept on save.
+    #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
+    pub extra: Extra,
+}
+
 impl AdvancedSettings {
     /// Checks the ranges.
     pub fn validate(&self) -> Result<(), Error> {
@@ -413,6 +455,8 @@ pub struct Settings {
     pub updates: UpdateSettings,
     /// Limits of logs and the cache (global only).
     pub advanced: AdvancedSettings,
+    /// The launcher window around a running game (global only).
+    pub launcher: LauncherSettings,
     /// Unknown groups and fields, kept on save.
     #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
     pub extra: Extra,
@@ -455,6 +499,7 @@ impl Settings {
                 Self {
                     $($g: overrides.$g.clone().unwrap_or_else(|| self.$g.clone()),)*
                     advanced: self.advanced.clone(),
+                    launcher: self.launcher.clone(),
                     extra: self.extra.clone(),
                 }
             };
@@ -701,6 +746,27 @@ mod tests {
         assert!(o.validate().is_err());
         assert_eq!(o.sanitize().len(), 1);
         assert!(o.memory.is_none());
+    }
+
+    #[test]
+    fn the_launcher_hides_to_the_tray_and_comes_back_by_default_and_is_global_only() {
+        let l = LauncherSettings::default();
+        assert_eq!(l.after_launch, AfterLaunch::HideToTray);
+        assert_eq!(l.on_game_exit, OnGameExit::ShowWindow);
+        let mut global = Settings::default();
+        global.launcher.after_launch = AfterLaunch::KeepOpen;
+        global.launcher.on_game_exit = OnGameExit::Nothing;
+        let effective = global.with_overrides(&Overrides::default());
+        assert_eq!(effective.launcher, global.launcher);
+        let json = serde_json::to_value(&global.launcher).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"after_launch": "keep_open", "on_game_exit": "nothing"})
+        );
+        let close: LauncherSettings =
+            serde_json::from_value(serde_json::json!({"after_launch": "close_launcher"})).unwrap();
+        assert_eq!(close.after_launch, AfterLaunch::CloseLauncher);
+        assert_eq!(close.on_game_exit, OnGameExit::ShowWindow);
     }
 
     #[test]

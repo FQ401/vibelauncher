@@ -21,8 +21,19 @@ vl-ui-egui.workspace = true
 eframe.workspace = true
 sys-locale.workspace = true
 
+[features]
+# `VL_DEV_GAME` replaces the game with a test program: the watcher budget measurement
+# (`tests/watcher_budget.rs`). Never in a release.
+dev-game = ["vl-backend/dev-game"]
+
+[dev-dependencies]
+sysinfo.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 winsafe.workspace = true
+
+[target.'cfg(any(windows, target_os = "linux", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+tray-icon.workspace = true
 
 [build-dependencies]
 winresource.workspace = true

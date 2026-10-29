@@ -253,7 +253,69 @@ impl Launcher {
 }
 
 fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Result<()> {
-    let id = &plan.request.instance;
+    let command = match dev_game::command(&plan.game_dir)? {
+        Some(command) => command,
+        None => prepare(service, ctx, plan)?,
+    };
+    ctx.check()?;
+    service.log(
+        LogSource::Launcher,
+        LogLevel::Info,
+        command.display_redacted(),
+    );
+    spawn_game(service, plan, &command)
+}
+
+/// The test game of the `dev-game` feature: `VL_DEV_GAME` holds a JSON array with the program
+/// and its arguments, started in the game folder instead of the game. No account, Java or game
+/// files are involved. Without the feature, never.
+#[cfg(feature = "dev-game")]
+mod dev_game {
+    use std::path::Path;
+
+    use vl_core::Error;
+    use vl_launch::CommandLine;
+
+    /// The variable with the command line.
+    pub const VARIABLE: &str = "VL_DEV_GAME";
+
+    pub fn command(game_dir: &Path) -> vl_core::Result<Option<CommandLine>> {
+        let Some(text) = std::env::var_os(VARIABLE) else {
+            return Ok(None);
+        };
+        let parts: Vec<String> = serde_json::from_str(&text.to_string_lossy())
+            .map_err(|e| Error::invalid_input(format!("{VARIABLE}: {e}")))?;
+        let Some((program, args)) = parts.split_first() else {
+            return Err(Error::invalid_input(format!("{VARIABLE}: empty")));
+        };
+        std::fs::create_dir_all(game_dir)
+            .map_err(|e| Error::new(vl_core::ErrorKind::Io, e.to_string()))?;
+        Ok(Some(CommandLine::new(
+            program.into(),
+            args.to_vec(),
+            game_dir.to_path_buf(),
+            Vec::new(),
+        )))
+    }
+}
+
+#[cfg(not(feature = "dev-game"))]
+mod dev_game {
+    use std::path::Path;
+
+    use vl_launch::CommandLine;
+
+    pub fn command(_game_dir: &Path) -> vl_core::Result<Option<CommandLine>> {
+        Ok(None)
+    }
+}
+
+/// Installs what the game needs and builds its command line.
+fn prepare(
+    service: &Service,
+    ctx: &TaskContext,
+    plan: &Plan,
+) -> vl_core::Result<vl_launch::CommandLine> {
     let prepared = with_job(ctx, |job| {
         ctx.set_stage("account");
         let session = plan
@@ -326,8 +388,6 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
         .command
         .args
         .extend(plan.extra_args.iter().cloned());
-    ctx.check()?;
-
     service.log(
         LogSource::Launcher,
         LogLevel::Info,
@@ -336,12 +396,16 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
     for warning in &prepared.warnings {
         service.log(LogSource::Launcher, LogLevel::Warn, warning.clone());
     }
-    service.log(
-        LogSource::Launcher,
-        LogLevel::Info,
-        prepared.command.display_redacted(),
-    );
+    Ok(prepared.command)
+}
 
+/// Starts the game process and follows it to its exit.
+fn spawn_game(
+    service: &Service,
+    plan: &Plan,
+    command: &vl_launch::CommandLine,
+) -> vl_core::Result<()> {
+    let id = &plan.request.instance;
     let started = Instant::now();
     let line_service = service.clone();
     let line_source = LogSource::Game(id.clone());
@@ -354,7 +418,7 @@ fn run_launch(service: &Service, ctx: &TaskContext, plan: &Plan) -> vl_core::Res
     options.log_dir = Some(plan.log_dir.clone());
     options.keep_logs = plan.settings.console.keep_logs as usize;
     let game = process::spawn(
-        &prepared.command,
+        command,
         &options,
         move |batch: GameBatch| {
             line_service.events.publish(&Event::LogBatch(LogBatch {

@@ -18,8 +18,10 @@ mod screens;
 mod strings;
 mod theme;
 mod widgets;
+mod window;
 
 pub use app::Launcher;
 pub use failure::StartupFailure;
 pub use nav::Section;
 pub use theme::ThemeMode;
+pub use window::{TrayTexts, WindowRequest};

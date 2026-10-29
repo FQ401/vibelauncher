@@ -63,6 +63,7 @@ fn start<'a>(
             step_delay: Duration::from_millis(30),
             game_log_lines: 20,
             exit_after_log: true,
+            game_crashes: false,
             curseforge_key: false,
         }))
     } else {

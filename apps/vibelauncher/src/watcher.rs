@@ -1,0 +1,69 @@
+//! The launcher without a window: keeps the facade's events flowing into the launcher's state
+//! while a game runs, with a tray icon to come back.
+//!
+//! Nothing is drawn and no graphics context exists. The thread sleeps on the event stream:
+//! it wakes for an event (game output arrives as at most ten batches a second) or every
+//! [`TICK`] to look at the tray. On Windows the working set is trimmed once the graphics driver
+//! has been unloaded ([`TRIM_AFTER`]), as Windows does for a minimized window: the pages the
+//! window used leave memory, what watching needs comes back on use.
+
+use std::time::{Duration, Instant};
+
+use vl_ui_egui::{Launcher, WindowRequest};
+
+use crate::tray::{Tray, TrayAction};
+
+/// The longest sleep between two looks at the tray.
+const TICK: Duration = Duration::from_millis(250);
+
+/// When the working set is trimmed after the window closed: the Direct3D driver releases its
+/// memory a few seconds after its device is gone.
+const TRIM_AFTER: Duration = Duration::from_secs(10);
+
+/// How watching ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// Open the window again.
+    Show,
+    /// End the process.
+    Quit,
+}
+
+/// Watches until the launcher asks for its window or to quit, or the user picks it in the tray.
+pub fn watch(launcher: &mut Launcher) -> Outcome {
+    let tray = Tray::show(&launcher.tray_texts());
+    let since = Instant::now();
+    let mut trimmed = false;
+    loop {
+        launcher.watch(TICK);
+        while let Some(action) = tray.as_ref().and_then(Tray::next_action) {
+            match action {
+                TrayAction::Show => return Outcome::Show,
+                TrayAction::StopGame => launcher.ask_stop_game(),
+                TrayAction::QuitAfterGame => launcher.quit_after_game(),
+            }
+        }
+        match launcher.take_window_request() {
+            Some(WindowRequest::Show) => return Outcome::Show,
+            Some(WindowRequest::Quit) => return Outcome::Quit,
+            _ => {}
+        }
+        // Without a tray there is no other way back once the game is over.
+        if tray.is_none() && !launcher.game_running() {
+            return Outcome::Show;
+        }
+        if !trimmed && since.elapsed() >= TRIM_AFTER {
+            trimmed = true;
+            trim_working_set();
+        }
+    }
+}
+
+/// Lets the OS take back the pages of the process that are not in use (best effort).
+#[cfg(windows)]
+fn trim_working_set() {
+    let _ = winsafe::HPROCESS::GetCurrentProcess().EmptyWorkingSet();
+}
+
+#[cfg(not(windows))]
+fn trim_working_set() {}

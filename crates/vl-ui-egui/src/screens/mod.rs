@@ -2,11 +2,13 @@
 
 mod home;
 mod instances;
+mod settings;
 mod stub;
 mod tasks;
 
 pub use home::home;
 pub use instances::instances;
+pub use settings::settings;
 pub use stub::stub;
 pub use tasks::tasks_panel;
 

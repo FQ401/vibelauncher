@@ -46,6 +46,9 @@ pub struct MockOptions {
     /// Whether a simulated game exits by itself after its log lines; otherwise it runs until
     /// `LaunchCommand::Stop`.
     pub exit_after_log: bool,
+    /// Whether a simulated game that exits by itself crashes (exit code 1, `crashed`) instead of
+    /// exiting cleanly.
+    pub game_crashes: bool,
     /// Whether the mock starts with a CurseForge API key (`SetApiKey` and `RemoveApiKey` change it).
     /// Without one, every CurseForge request answers
     /// `ErrorKind::NoApiKey`.
@@ -59,6 +62,7 @@ impl Default for MockOptions {
             step_delay: Duration::from_millis(120),
             game_log_lines: 40,
             exit_after_log: false,
+            game_crashes: false,
             curseforge_key: false,
         }
     }
@@ -71,6 +75,7 @@ impl MockOptions {
             step_delay: Duration::ZERO,
             game_log_lines: 5,
             exit_after_log: true,
+            game_crashes: false,
             curseforge_key: false,
         }
     }

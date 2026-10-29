@@ -701,8 +701,11 @@ built-in defaults. An instance overrides a whole group or inherits it (`Option` 
 `Overrides`); `Settings::with_overrides` computes the effective settings. Every group has range
 checks (`validate`) and every type keeps unknown fields (`Extra`).
 
-A tenth group, `advanced`, is global only (`Settings::with_overrides` always takes it from the global
-settings): the limits of launcher logs and the cache.
+Two more groups are global only (`Settings::with_overrides` always takes them from the global
+settings): `advanced`, the limits of launcher logs and the cache, and `launcher`, the desktop
+app's window around a running game: `after_launch` (`hide_to_tray`, the default: the window
+closes and the launcher watches the game from the tray; `keep_open`; `close_launcher`) and
+`on_game_exit` (`show_window`, the default, or `nothing`; a crash always brings the window back).
 
 On disk (`vl-settings`, TOML, written with `vl_store::write_atomic`):
 
@@ -898,7 +901,27 @@ The `vibelauncher` app (`apps/vibelauncher`, package `vl-app`) is an eframe wind
 cannot start (the data folder is locked by another launcher or cannot be created), the window
 shows `vl_ui_egui::StartupFailure` with the reason instead of the interface. A failed command or
 task appears as a danger chip in the top bar; its tooltip holds the error and a click dismisses
-it. `--light` starts the light theme, `--section <name>` opens a section. `vl-ui-egui` depends on `egui` only, not on a windowing crate. Its
+it. `--light` starts the light theme, `--section <name>` opens a section, `--launch <instance>`
+starts an instance; with `--mock`, `--mock-game run|exit|crash` sets how a simulated game ends.
+
+**Watching a game.** The window is one eframe run (`run_native`, which returns when the window
+closes; eframe keeps its winit event loop for the next run); the launcher and its facade outlive
+it. When a game runs and `launcher.after_launch` is `hide_to_tray`, the launcher asks to close the
+window (`vl_ui_egui::WindowRequest::Hide`): the wgpu device, surface and textures are dropped with
+the eframe run, and the app keeps the launcher working without drawing (`Launcher::watch`, which
+sleeps on the event stream at most 250 ms at a time). Game output still goes to the log file and
+the console buffer, play time is counted and the exit is noticed. A crash opens a new window on
+Home with the error chip; a normal exit does so when `launcher.on_game_exit` is `show_window`.
+Closing the window while a game runs in this mode also keeps watching. A tray icon (`tray-icon`)
+offers to show the launcher, stop the game (the window comes back and asks first) and quit after
+the game; a left click shows the launcher. On Windows the icon lives on its own thread with a
+hidden `winsafe` window running its message loop; on Linux and the BSDs it is a D-Bus
+StatusNotifierItem (`ksni`, no GTK). macOS has no tray icon yet: the window comes back on an exit
+or a crash by the settings, and without a tray the app shows the window once no game runs. On
+Windows wgpu uses Direct3D 12 only (every backend when that fails, or what `WGPU_BACKEND` names):
+the Vulkan driver would stay loaded after the device is gone. Ten seconds into watching, Windows
+trims the working set. The measurement is `apps/vibelauncher/tests/watcher_budget.rs` (ignored;
+built with the `dev-game` feature, where `VL_DEV_GAME` replaces the game with a test program). `vl-ui-egui` depends on `egui` only, not on a windowing crate. Its
 layout: a left rail of five sections (Home, Instances, Catalog, Account, Settings), a top bar, a
 tasks panel (Ctrl+J) and the page of the current section; colors, spacing and type scale come from
 the design tokens in `theme.rs`.
@@ -931,7 +954,8 @@ setting the same way (widened to a file's installed channel, a requested channel
 and report two files of one project in a folder as a conflict. A bisection narrows the mods of an instance
 down by the user's reports, or runs as a task that finds a fixed culprit. Without a CurseForge
 key (`MockOptions::curseforge_key`) every CurseForge request answers `NoApiKey`.
-`MockOptions` sets the pacing; `MockOptions::instant()` makes tests run without delays.
+`MockOptions` sets the pacing and how a simulated game ends (runs until stopped, exits, or
+crashes with `game_crashes`); `MockOptions::instant()` makes tests run without delays.
 
 ## Extension points
 

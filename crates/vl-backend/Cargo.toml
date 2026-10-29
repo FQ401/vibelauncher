@@ -31,6 +31,10 @@ vl-update.workspace = true
 vl-updater.workspace = true
 serde_json.workspace = true
 
+[features]
+# `VL_DEV_GAME` replaces the game with a test program (measurements, see the desktop app).
+dev-game = []
+
 [dev-dependencies]
 minisign.workspace = true
 vl-curseforge.workspace = true

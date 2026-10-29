@@ -35,3 +35,19 @@ pub const SOON: &str = "soon";
 pub const STUB_CATALOG: &str = "stub-catalog";
 pub const STUB_ACCOUNT: &str = "stub-account";
 pub const STUB_SETTINGS: &str = "stub-settings";
+
+pub const STOP_CONFIRM: &str = "stop-confirm";
+pub const STOP_CONFIRM_YES: &str = "stop-confirm-yes";
+
+pub const SETTINGS_AFTER_LAUNCH: &str = "settings-after-launch";
+pub const SETTINGS_AFTER_LAUNCH_TRAY: &str = "settings-after-launch-tray";
+pub const SETTINGS_AFTER_LAUNCH_KEEP: &str = "settings-after-launch-keep";
+pub const SETTINGS_AFTER_LAUNCH_CLOSE: &str = "settings-after-launch-close";
+pub const SETTINGS_ON_EXIT: &str = "settings-on-exit";
+pub const SETTINGS_ON_EXIT_SHOW: &str = "settings-on-exit-show";
+pub const SETTINGS_ON_EXIT_NOTHING: &str = "settings-on-exit-nothing";
+
+pub const TRAY_TOOLTIP: &str = "tray-tooltip";
+pub const TRAY_SHOW: &str = "tray-show";
+pub const TRAY_STOP: &str = "tray-stop";
+pub const TRAY_QUIT_AFTER: &str = "tray-quit-after";
