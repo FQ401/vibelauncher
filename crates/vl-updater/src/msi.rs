@@ -149,14 +149,16 @@ mod tests {
         let dir = Dir::new();
         let package = dir.path().join("update.msi");
         let args = dir.path().join("args.txt");
-        let err = run_msiexec(fake(&args, 1603), &package).unwrap_err();
+        // Exit codes above 255 survive only on Windows; elsewhere the stand-in exits with 3.
+        let (code, restart) = if cfg!(windows) { (1603, 3010) } else { (3, 0) };
+        let err = run_msiexec(fake(&args, code), &package).unwrap_err();
         let UpdaterError::Io(message) = err else {
             panic!("{err:?}");
         };
-        assert!(message.contains("exit code 1603"), "{message}");
+        assert!(message.contains(&format!("exit code {code}")), "{message}");
         assert!(message.contains("update.msi.log"), "{message}");
         // A restart Windows asks for is still a success.
-        run_msiexec(fake(&args, 3010), &package).unwrap();
+        run_msiexec(fake(&args, restart), &package).unwrap();
     }
 
     #[test]
