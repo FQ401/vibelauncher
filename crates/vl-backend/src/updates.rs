@@ -17,10 +17,12 @@ use std::sync::Arc;
 use std::thread;
 
 use vl_core::catalog::Provider;
-use vl_core::install::{InstallPlan, UpdateCheckRequest, UpdateReport, UpdateRequest};
+use vl_core::install::{
+    IdentifyReport, InstallPlan, UpdateCheckRequest, UpdateReport, UpdateRequest,
+};
 use vl_core::log::{LogLevel, LogLine, LogSource};
 use vl_core::task::TaskKind;
-use vl_core::{Error, Event, InstanceId, Replier, Response, Result};
+use vl_core::{Error, ErrorKind, Event, InstanceId, Replier, Response, Result};
 use vl_install::{ApplyInput, Selection, UpdateInput, UpdateOptions};
 use vl_net::Control;
 use vl_tasks::TaskSpec;
@@ -204,7 +206,7 @@ pub(crate) fn update(backend: &Backend, request: UpdateRequest) -> Result<Respon
 pub(crate) fn identify(
     backend: &Backend,
     instance: &InstanceId,
-    provider: Provider,
+    provider: Option<Provider>,
     world: Option<&str>,
     replier: Replier,
 ) {
@@ -214,9 +216,60 @@ pub(crate) fn identify(
     };
     spawn_reply("catalog-identify", replier, move || {
         let control = Control::default();
-        let input = input(&job, provider, &control)?;
-        vl_install::identify(&input).map(Response::Identified)
+        identify_on(&job, provider, &control).map(Response::Identified)
     });
+}
+
+/// Identifies on the platform named, else on Modrinth and then on CurseForge for the files
+/// Modrinth did not identify (a file both know is recorded as Modrinth's). CurseForge is left
+/// out with a warning while no key is set, so no file is fingerprinted for nothing, and when it
+/// cannot be reached; what Modrinth identified stays recorded.
+fn identify_on(job: &Job, provider: Option<Provider>, control: &Control) -> Result<IdentifyReport> {
+    if let Some(provider) = provider {
+        return vl_install::identify(&input(job, provider, control)?);
+    }
+    let modrinth = vl_install::identify(&input(job, Provider::Modrinth, control)?)?;
+    let skipped = |why: &str| {
+        let mut report = modrinth.clone();
+        report
+            .warnings
+            .push(format!("CurseForge was not checked: {why}"));
+        Ok(report)
+    };
+    if !job.platforms.curseforge().has_key()? {
+        return skipped("no CurseForge API key is set");
+    }
+    let curseforge = match vl_install::identify(&input(job, Provider::CurseForge, control)?) {
+        Ok(report) => report,
+        Err(e)
+            if matches!(
+                e.kind,
+                ErrorKind::NoApiKey | ErrorKind::Auth | ErrorKind::Network
+            ) =>
+        {
+            return skipped(&e.message);
+        }
+        Err(e) => return Err(e),
+    };
+    // The second pass counts what the first one recorded as already known and repeats its
+    // damaged-records warning.
+    let found = modrinth.identified.len();
+    let mut warnings = modrinth.warnings;
+    for w in curseforge.warnings {
+        if !warnings.contains(&w) {
+            warnings.push(w);
+        }
+    }
+    let mut identified = modrinth.identified;
+    identified.extend(curseforge.identified);
+    Ok(IdentifyReport {
+        identified,
+        already_known: curseforge
+            .already_known
+            .saturating_sub(u32::try_from(found).unwrap_or(u32::MAX)),
+        unknown: curseforge.unknown,
+        warnings,
+    })
 }
 
 #[cfg(test)]

@@ -456,10 +456,6 @@ pub struct UpdateCheckRequest {
     pub world: Option<String>,
 }
 
-fn default_update_stability() -> MinStability {
-    MinStability::Release
-}
-
 impl UpdateCheckRequest {
     /// A check of `instance` with the defaults.
     pub fn new(instance: InstanceId) -> Self {
@@ -606,9 +602,11 @@ pub struct UpdateRequest {
 pub struct PackUpdateRequest {
     /// The instance.
     pub instance: InstanceId,
-    /// The least stable channel the new pack version may come from. Releases only by default.
-    #[serde(default = "default_update_stability")]
-    pub min_stability: MinStability,
+    /// The least stable channel the new pack version may come from. `None` (the default) takes
+    /// the instance's update channel setting (`updates.channel`, an instance override else the
+    /// global value, releases only by default).
+    #[serde(default)]
+    pub min_stability: Option<MinStability>,
     /// Switch to this version id of the pack project instead of the newest one (it may be older).
     #[serde(default)]
     pub version: Option<String>,
@@ -626,7 +624,7 @@ impl PackUpdateRequest {
     pub fn new(instance: InstanceId) -> Self {
         Self {
             instance,
-            min_stability: MinStability::Release,
+            min_stability: None,
             version: None,
             file: None,
             reset: false,

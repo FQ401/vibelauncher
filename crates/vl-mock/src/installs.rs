@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use vl_core::catalog::{ProjectType, VersionFile};
+use vl_core::catalog::{ProjectType, Provider, VersionFile};
 use vl_core::install::{
     IdentifyReport, InstallPlan, InstallRequest, MatchedBy, MinStability, PackFile, PlanAction,
     PlanItem, PlanRole, Recommendation, Satisfied, UncheckedFile, UncheckedReason, UpdateCandidate,
@@ -483,13 +483,22 @@ pub(crate) fn update(inner: &Arc<Inner>, request: &UpdateRequest) -> Result<Resp
 pub(crate) fn identify(
     state: &State,
     instance: &InstanceId,
+    provider: Option<Provider>,
     world: Option<&str>,
 ) -> Result<IdentifyReport> {
+    if let Some(provider) = provider {
+        catalog::check_key(state, provider)?;
+    }
     resources::usable(state, instance)?;
     if let Some(world) = world {
         resources::check_world(instance, world)?;
     }
     let mut report = IdentifyReport::default();
+    if provider.is_none() && !state.curseforge_key {
+        report
+            .warnings
+            .push("CurseForge was not checked: no API key is set".into());
+    }
     for (kind, area) in checked_areas(world) {
         for file in resources::snapshot(state, instance, &area) {
             if catalog::find_by_file(&file.file).is_some() {

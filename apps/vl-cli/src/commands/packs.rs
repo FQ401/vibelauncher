@@ -238,8 +238,10 @@ fn parse_update(instance: &str, flags: &[&str]) -> Result<(PackUpdateRequest, bo
                         request.file = Some(path.to_string_lossy().into_owned());
                     }
                     _ => {
-                        request.min_stability = MinStability::parse(value)
-                            .ok_or_else(|| CliError::from("channel is release, beta or alpha"))?;
+                        request.min_stability =
+                            Some(MinStability::parse(value).ok_or_else(|| {
+                                CliError::from("channel is release, beta or alpha")
+                            })?);
                     }
                 }
             }
@@ -463,7 +465,7 @@ mod tests {
         assert_eq!(r.version.as_deref(), Some("v2"));
         let (r, _) = parse_update("inst", &["--file", "p.mrpack", "--channel", "beta"]).unwrap();
         assert!(r.file.is_some());
-        assert_eq!(r.min_stability, MinStability::Beta);
+        assert_eq!(r.min_stability, Some(MinStability::Beta));
         assert!(parse_update("inst", &["--version"]).is_err());
         assert!(parse_update("inst", &["--nope"]).is_err());
     }

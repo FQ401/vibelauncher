@@ -298,12 +298,21 @@ fn blocked_warning(origin: &Origin) -> Vec<String> {
 
 /// The version an update goes to, if it is another than the installed one.
 fn target(state: &State, origin: &Origin, request: &PackUpdateRequest) -> Result<Option<usize>> {
+    // The request's channel, else the instance's `updates.channel` setting.
+    let min = request.min_stability.unwrap_or_else(|| {
+        let overrides = state
+            .overrides
+            .get(&request.instance)
+            .cloned()
+            .unwrap_or_default();
+        state.settings.with_overrides(&overrides).updates.channel
+    });
     let v = match origin.project {
         Some(idx) => {
             catalog::check_key(state, ENTRIES[idx].provider)?;
-            catalog::pick_version(idx, request.version.as_deref(), request.min_stability)?
+            catalog::pick_version(idx, request.version.as_deref(), min)?
         }
-        None => catalog::newest(request.min_stability),
+        None => catalog::newest(min),
     };
     // A newer version has a smaller index; an explicit version may also be an older one.
     let wanted = v < origin.version || (request.version.is_some() && v != origin.version);

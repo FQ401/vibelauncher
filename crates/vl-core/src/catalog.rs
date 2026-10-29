@@ -576,9 +576,11 @@ pub enum CatalogCommand {
     IdentifyMods {
         /// The instance.
         instance: InstanceId,
-        /// The platform.
+        /// The platform. `None` (the default) asks Modrinth first and CurseForge second for the
+        /// files Modrinth did not identify, so a file both know is recorded as Modrinth's;
+        /// CurseForge is skipped with a warning while no key is set.
         #[serde(default)]
-        provider: Provider,
+        provider: Option<Provider>,
         /// Look at the data packs of this world instead of the instance's folders.
         #[serde(default)]
         world: Option<String>,

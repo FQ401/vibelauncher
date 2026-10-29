@@ -183,7 +183,8 @@ header line and the lines that continue it (message lines, a stack trace); conti
 carry the level of their record and its first line's `seq` in `record`, per stream.
 
 `ConsoleCommand` reads the buffer of an instance's current or last run (kept after the exit until
-the next launch; the backend keeps at most four ended runs):
+the next launch; the backend keeps at most four ended runs; the launch logs kept in the instance's log folder
+are limited by `console.keep_logs`, 10 by default):
 
 | Command | Answers |
 |---|---|
@@ -459,7 +460,11 @@ The data folder and its sections hold:
   while the file's SHA-1 matches, a damaged file or entry is skipped and the damaged file is kept
   as `resources.json.bad`;
 - updates and origin discovery (`vl-install::updates`): `CatalogCommand::IdentifyMods` looks
-  files without an origin record up by SHA-1 (`version_files`) and writes their records.
+  files without an origin record up by SHA-1 (`version_files`) and writes their records. With no
+  provider it asks Modrinth first and CurseForge second for the files Modrinth did not
+  identify, so a file both know is recorded as Modrinth's; without a CurseForge key (or when
+  CurseForge cannot be reached) that step is skipped with a warning and nothing is fingerprinted
+  for it.
   `CheckUpdates` hashes every file of mods, resource packs, shader packs, data packs and global
   data packs (`global_packs/required_data`), asks `version_files` once for all of them, then
   `POST /version_files/update` for the mods (loaders of the instance, its game version,
@@ -511,8 +516,7 @@ The data folder and its sections hold:
   plan and swap, with the size and SHA-1 CurseForge gives. A file whose origin record names
   another platform is left to that platform: a check lists it as `unchecked`
   (`OtherPlatform`) and origin discovery keeps its record. `vl-cli instances mods identify`
-  asks Modrinth first and CurseForge second, so a file both know is recorded as Modrinth's;
-  without a CurseForge key that step is skipped with a note. Without a key, every CurseForge
+  uses the facade's combined identify. Without a key, every CurseForge
   lookup is `NoApiKey` before anything is sent;
 - the CurseForge key (`vl-backend::api_keys`): `CatalogCommand::SetApiKey` (the key as a
   `vl_core::secret::Secret`, whose `Debug` is masked; checked for shape, stored in the keyring),
@@ -577,7 +581,8 @@ The data folder and its sections hold:
   is sent;
 - modpack updates (`vl-install::mrpack_update`): `CheckPackUpdate` lists the pack project's
   versions and reports the first one newer than the installed version in an allowed channel
-  (releases only by default); a pack installed from a file has no source and is updated with
+  (the request's `min_stability` when it names one, else the `updates.channel` setting: an
+  instance override, else the global value, releases by default); a pack installed from a file has no source and is updated with
   `PackUpdateRequest::file`. `PlanPackUpdate` downloads the new pack and compares three states:
   the baseline in `pack.json` (files with hashes, and since updates exist the SHA-1 of every
   override file), the new index and overrides, and the folder as it is. A file the pack changes
