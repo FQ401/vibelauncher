@@ -27,6 +27,7 @@ mod self_update;
 mod settings;
 mod storage;
 mod tasks;
+mod trash;
 mod updates;
 mod versions;
 
@@ -69,6 +70,7 @@ pub struct Backend {
     config: BackendConfig,
     store: Store,
     instances: vl_instance::Instances,
+    trash: vl_instance::Trash,
     settings: SettingsStore,
     events: Arc<EventBus>,
     java: java::JavaService,
@@ -89,6 +91,7 @@ impl Backend {
     pub fn new(config: BackendConfig) -> vl_core::Result<Self> {
         let store = Store::open(&config.store_options())?;
         let instances = open_instances(&store)?;
+        let trash = vl_instance::Trash::new(&store.trash_dir(), instances.clone());
         let settings = SettingsStore::new(store.data_dir());
         let events = Arc::new(EventBus::default());
         // The log first, so the limits of the logs folder count its file.
@@ -100,7 +103,7 @@ impl Backend {
         let catalog = catalog::Service::new(&store.cache_dir())?;
         let self_update = self_update::Service::new(&store)?;
         let uploads = log_upload::Uploads::new()?;
-        Ok(Self {
+        let backend = Self {
             java: java::JavaService::new(
                 store.java_dir(),
                 store.data_dir(),
@@ -121,7 +124,10 @@ impl Backend {
             accounts,
             launch,
             catalog,
-        })
+            trash,
+        };
+        trash::on_start(&backend);
+        Ok(backend)
     }
 
     /// The opened data directory.

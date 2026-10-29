@@ -16,6 +16,7 @@ mod packs;
 mod resources;
 mod self_update;
 mod sim;
+mod trash;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -117,6 +118,10 @@ struct State {
     bisects: HashMap<InstanceId, bisect::Session>,
     /// The report of the last automatic bisection of each instance.
     bisect_reports: HashMap<InstanceId, AutoBisectReport>,
+    /// Deleted instances.
+    trash: Vec<trash::Entry>,
+    /// The synthetic time of the last deletion.
+    trash_clock: i64,
 }
 
 impl MockFacade {
@@ -137,6 +142,8 @@ impl MockFacade {
             packs: packs::initial().into_iter().collect(),
             bisects: HashMap::new(),
             bisect_reports: HashMap::new(),
+            trash: Vec::new(),
+            trash_clock: 0,
         };
         Self {
             inner: Arc::new(Inner {
@@ -214,22 +221,14 @@ impl MockFacade {
                 inner.publish(Event::Instance(InstanceEvent::Changed(summary.clone())));
                 Ok(Response::Instance(summary))
             }
-            InstanceCommand::Delete { id } => {
-                {
-                    let mut state = inner.lock();
-                    if find_instance(&mut state, &id)?.state != InstanceState::Stopped {
-                        return Err(Error::conflict(format!("instance {id} is running")));
-                    }
-                    state.instances.retain(|i| i.id != id);
-                    state.overrides.remove(&id);
-                    state.resources.retain(|(owner, _), _| owner != &id);
-                    state.packs.remove(&id);
-                    state.bisects.remove(&id);
-                    state.bisect_reports.remove(&id);
-                }
-                inner.publish(Event::Instance(InstanceEvent::Removed(id)));
-                Ok(Response::Done)
-            }
+            InstanceCommand::Delete {
+                id,
+                comment,
+                permanent,
+            } => trash::delete(inner, id, &comment, permanent),
+            InstanceCommand::ListTrash => Ok(trash::list(inner)),
+            InstanceCommand::Restore { item } => trash::restore(inner, &item),
+            InstanceCommand::Purge(target) => trash::purge(inner, target),
             other => Err(unsupported(&other)),
         }
     }

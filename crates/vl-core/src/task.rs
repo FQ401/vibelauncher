@@ -41,6 +41,9 @@ pub enum TaskKind {
     Bisect,
     /// Downloading a launcher update.
     DownloadUpdate,
+    /// Erasing deleted instances beyond the limits of the trash, and finishing trash work a
+    /// crash interrupted.
+    CleanTrash,
 }
 
 /// A task as announced when it starts.

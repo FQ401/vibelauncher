@@ -9,10 +9,12 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use vl_core::instance::InstanceEvent;
 use vl_core::log::{LogLevel, LogLine, LogSource};
 use vl_core::storage::{CleanupReport, MoveRequest, Section, StorageCommand};
 use vl_core::task::TaskKind;
 use vl_core::{Command, Error, Event, Replier, Response};
+use vl_instance::Trash;
 use vl_settings::SettingsStore;
 use vl_store::retention::Policy;
 use vl_store::suggest::SystemDisks;
@@ -148,10 +150,13 @@ pub(crate) fn handle(backend: &Backend, command: StorageCommand, replier: Replie
             let view = backend.store.view();
             let instances = backend.store.instances_dir();
             let policy = retention_policy(backend.settings());
+            let instance_trash = backend.trash.clone();
+            let events = Arc::clone(&backend.events);
             spawn_reply("storage-cleanup", replier, move || {
                 let mut report = view.cleanup(&policy).map_err(Error::from)?;
                 if trash {
-                    empty_trash(&instances, &mut report);
+                    empty_trash(&instance_trash, &instances, &mut report);
+                    events.publish(&Event::Instance(InstanceEvent::TrashChanged));
                 }
                 Ok(Response::StorageCleaned(report))
             });
@@ -180,6 +185,11 @@ fn start_move(backend: &Backend, request: MoveRequest) -> vl_core::Result<Respon
     }
     if backend.launch.any_active() {
         return Err(Error::conflict("a game is running; close it first"));
+    }
+    if backend.trash.is_busy() {
+        return Err(Error::conflict(
+            "the trash of deleted instances is busy; try again when it is done",
+        ));
     }
     let (plan, _) = backend.store.plan_move(&request)?;
     *state = State::Moving;
@@ -234,8 +244,30 @@ fn start_move(backend: &Backend, request: MoveRequest) -> vl_core::Result<Respon
     Ok(Response::Task(handle.id()))
 }
 
-/// Empties the trash of the instances folder and of every instance.
-fn empty_trash(instances: &Path, report: &mut CleanupReport) {
+/// Erases every deleted instance in the launcher's trash, and empties the resource trash of every
+/// instance (`<instance>/.trash`) and the instance trash of earlier launcher versions
+/// (`instances/.trash`).
+fn empty_trash(instance_trash: &Trash, instances: &Path, report: &mut CleanupReport) {
+    match instance_trash.purge_all() {
+        Ok(purged) => {
+            report.freed += purged.freed;
+            report.removed.extend(
+                purged
+                    .removed
+                    .iter()
+                    .map(|item| instance_trash.root().join(item)),
+            );
+            report.failed.extend(
+                purged
+                    .failed
+                    .into_iter()
+                    .map(|(item, why)| (instance_trash.root().join(item), why)),
+            );
+        }
+        Err(e) => report
+            .failed
+            .push((instance_trash.root().to_path_buf(), e.message)),
+    }
     let mut trashes = vec![instances.join(".trash")];
     if let Ok(entries) = fs::read_dir(instances) {
         trashes.extend(

@@ -5,16 +5,20 @@
 //! - `<id>/instance.json` — the config ([`InstanceConfig`]: name, icon, group, notes, play time,
 //!   components); the id is the directory name;
 //! - `<id>/minecraft/` — the game directory;
-//! - `.trash/` — deleted instances, recoverable by moving a directory back;
-//! - `.creating-*` — an instance being created (removed by the next create).
+//! - `.creating-*` — an instance being created (removed by the next create);
+//! - `.deleting-*`, `.restoring-*`, `.removing-*` — an instance on its way into or out of the
+//!   trash, or being erased (see [`Trash`]);
+//! - `.trash/` — deleted instances of earlier launcher versions, moved into [`Trash`] by
+//!   [`Trash::adopt_legacy`].
 //!
 //! Creation builds the instance in a hidden directory and renames it into place, so a crash never
 //! leaves a half-made instance in the list. Configs are written atomically. A directory whose
-//! config is missing or damaged is listed with a problem and never breaks the list. Delete moves
-//! the directory into `.trash/` (never removes data); [`Instances::purge_trash`] empties it.
+//! config is missing or damaged is listed with a problem and never breaks the list. Deleting,
+//! restoring and erasing are the job of [`Trash`], the launcher's own trash of deleted instances.
 
 mod config;
 mod naming;
+mod trash;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,11 +32,12 @@ use vl_core::instance::{InstanceState, InstanceSummary, Loader, NewInstance};
 use vl_core::{Error, ErrorKind, InstanceId};
 use vl_store::write_atomic;
 
+pub use trash::{Clock, Deleted, Trash};
+
 /// File name of the instance config.
 pub const CONFIG_FILE: &str = "instance.json";
 /// Name of the game directory inside an instance.
 pub const GAME_DIR: &str = "minecraft";
-const TRASH_DIR: &str = ".trash";
 const CREATING_PREFIX: &str = ".creating-";
 
 /// The instances under one root directory.
@@ -212,40 +217,6 @@ impl Instances {
         cfg.set_loader(loader)?;
         write_config(&self.dir(id)?.join(CONFIG_FILE), &cfg)?;
         Ok(summary(id, &cfg))
-    }
-
-    /// Moves an instance into `.trash/`; nothing is erased. Returns where it went.
-    pub fn delete(&self, id: &InstanceId) -> vl_core::Result<PathBuf> {
-        let dir = self.dir(id)?;
-        if !dir.is_dir() {
-            return Err(Error::not_found(format!("instance {id}")));
-        }
-        let trash = self.root.join(TRASH_DIR);
-        fs::create_dir_all(&trash).map_err(|e| io_err(&trash, e))?;
-        let stamp = now();
-        let mut n = 0u32;
-        loop {
-            let name = if n == 0 {
-                format!("{id}-{stamp}")
-            } else {
-                format!("{id}-{stamp}-{n}")
-            };
-            let target = trash.join(name);
-            if !target.exists() {
-                fs::rename(&dir, &target).map_err(|e| io_err(&target, e))?;
-                return Ok(target);
-            }
-            n += 1;
-        }
-    }
-
-    /// Permanently erases everything in `.trash/`.
-    pub fn purge_trash(&self) -> vl_core::Result<()> {
-        let trash = self.root.join(TRASH_DIR);
-        if trash.exists() {
-            fs::remove_dir_all(&trash).map_err(|e| io_err(&trash, e))?;
-        }
-        Ok(())
     }
 
     /// Records a play session: adds to the play time and sets the last played / last active
