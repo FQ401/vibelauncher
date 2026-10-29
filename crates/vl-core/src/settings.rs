@@ -305,6 +305,9 @@ pub struct LauncherSettings {
     pub after_launch: AfterLaunch,
     /// What happens when a game watched from the tray exits normally.
     pub on_game_exit: OnGameExit,
+    /// The window has the operating system's frame and title bar instead of the launcher's own
+    /// title bar. Off by default.
+    pub system_frame: bool,
     /// Unknown fields, kept on save.
     #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
     pub extra: Extra,
@@ -758,6 +761,10 @@ mod tests {
         let l = LauncherSettings::default();
         assert_eq!(l.after_launch, AfterLaunch::HideToTray);
         assert_eq!(l.on_game_exit, OnGameExit::ShowWindow);
+        assert!(
+            !l.system_frame,
+            "the launcher draws its own title bar by default"
+        );
         let mut global = Settings::default();
         global.launcher.after_launch = AfterLaunch::KeepOpen;
         global.launcher.on_game_exit = OnGameExit::Nothing;
@@ -766,12 +773,20 @@ mod tests {
         let json = serde_json::to_value(&global.launcher).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({"after_launch": "keep_open", "on_game_exit": "nothing"})
+            serde_json::json!({
+                "after_launch": "keep_open",
+                "on_game_exit": "nothing",
+                "system_frame": false
+            })
         );
         let close: LauncherSettings =
             serde_json::from_value(serde_json::json!({"after_launch": "close_launcher"})).unwrap();
         assert_eq!(close.after_launch, AfterLaunch::CloseLauncher);
         assert_eq!(close.on_game_exit, OnGameExit::ShowWindow);
+        assert!(!close.system_frame);
+        let framed: LauncherSettings =
+            serde_json::from_value(serde_json::json!({"system_frame": true})).unwrap();
+        assert!(framed.system_frame);
     }
 
     #[test]

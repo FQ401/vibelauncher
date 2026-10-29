@@ -1,11 +1,12 @@
-//! The settings section: the launcher's behaviour around a running game. The rest of the
-//! settings come later.
+//! The settings section: the launcher's behaviour around a running game and the window frame.
+//! The rest of the settings come later.
 
-use egui::Ui;
+use egui::{RichText, Ui};
 use vl_core::settings::{AfterLaunch, OnGameExit};
 
 use crate::screens::{Ctx, stub};
 use crate::strings;
+use crate::window::WindowChrome;
 
 /// Draws the settings page.
 pub fn settings(ui: &mut Ui, cx: &mut Ctx<'_>) {
@@ -32,6 +33,22 @@ pub fn settings(ui: &mut Ui, cx: &mut Ctx<'_>) {
             (OnGameExit::Nothing, strings::SETTINGS_ON_EXIT_NOTHING),
         ] {
             ui.radio_value(&mut next.on_game_exit, value, i18n.t(id));
+        }
+        ui.add_space(12.0);
+        ui.label(i18n.t(strings::SETTINGS_WINDOW));
+        ui.checkbox(
+            &mut next.system_frame,
+            i18n.t(strings::SETTINGS_SYSTEM_FRAME),
+        );
+        // The app switches the frame of an open window where it can; elsewhere the next window
+        // gets it.
+        let framed = cx.chrome == WindowChrome::System;
+        if ready && current.system_frame != framed {
+            ui.label(
+                RichText::new(i18n.t(strings::SETTINGS_SYSTEM_FRAME_PENDING))
+                    .small()
+                    .color(cx.palette.text_muted),
+            );
         }
     });
     if next != current {

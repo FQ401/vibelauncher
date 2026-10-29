@@ -434,10 +434,13 @@ log_max_files = 0
         let mut v = Settings::default();
         v.launcher.after_launch = AfterLaunch::KeepOpen;
         v.launcher.on_game_exit = OnGameExit::Nothing;
+        v.launcher.system_frame = true;
         s.set_global(&v).unwrap();
         let text = fs::read_to_string(s.global_path()).unwrap();
         assert!(
-            text.contains("[launcher]") && text.contains("after_launch = \"keep_open\""),
+            text.contains("[launcher]")
+                && text.contains("after_launch = \"keep_open\"")
+                && text.contains("system_frame = true"),
             "{text}"
         );
         assert_eq!(s.global().value.launcher, v.launcher);

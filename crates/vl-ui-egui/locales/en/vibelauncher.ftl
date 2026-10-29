@@ -53,11 +53,21 @@ settings-after-launch-close = Close the launcher
 settings-on-exit = When the game exits
 settings-on-exit-show = Show the launcher window
 settings-on-exit-nothing = Do nothing
+settings-window = Window
+settings-system-frame = Use the system window frame
+settings-system-frame-pending = Takes effect the next time the window opens.
 
 tray-tooltip = VibeLauncher: the game is running
 tray-show = Show the launcher
 tray-stop = Stop the game…
 tray-quit-after = Quit after the game
+
+search = Search
+
+window-minimize = Minimize
+window-maximize = Maximize
+window-restore = Restore
+window-close = Close
 
 task-launch = Launching the game
 task-install-version = Installing a version

@@ -28,6 +28,12 @@
 //! Started as `vibelauncher --vl-update-helper <job file>`, the process is the self-update
 //! helper: it applies the update and exits without opening a window.
 //!
+//! **Window frame.** On Windows and Linux the window has no system decorations: the launcher's
+//! title bar moves, maximizes, minimizes and closes it, and its edges resize it. On macOS the
+//! native window buttons sit over a transparent title bar with the content under it. The setting
+//! `launcher.system_frame` brings the operating system's frame back: at once on Windows and
+//! Linux, with the next window on macOS. The settings are read before the first window opens.
+//!
 //! The window's application ID (Wayland app ID, X11 class) is `me.vibefork.VibeLauncher`
 //! (`APP_ID`), the name of the desktop entry and icon of the Linux packages.
 //!
@@ -44,13 +50,18 @@ mod tray;
 mod watcher;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use eframe::egui;
 use vl_backend::{Backend, BackendConfig};
-use vl_core::Facade;
 use vl_core::log::LogLevel;
+use vl_core::settings::SettingsCommand;
+use vl_core::{Command, Facade, Response};
 use vl_mock::{MockFacade, MockOptions};
-use vl_ui_egui::{Launcher, Section, StartupFailure, ThemeMode, WindowRequest};
+use vl_ui_egui::{Launcher, Section, StartupFailure, ThemeMode, WindowChrome, WindowRequest};
+
+/// How long the first window waits for the settings to choose its frame.
+const SETTINGS_WAIT: Duration = Duration::from_secs(2);
 
 /// The Windows AppUserModelID of the desktop app (`Company.Product`, no spaces). Shortcuts made by
 /// an installer carry the same value.
@@ -167,6 +178,28 @@ fn start_facade(options: &Options) -> Result<Box<dyn Facade>, String> {
     }
 }
 
+/// The setting `launcher.system_frame`, read before the first window opens; `false` (the
+/// default) when the settings do not arrive in time.
+fn read_system_frame(facade: &dyn Facade) -> bool {
+    let reply = facade.call(Command::Settings(SettingsCommand::GetGlobal));
+    match reply.wait_timeout(SETTINGS_WAIT) {
+        Some(Ok(Response::Settings(settings))) => settings.launcher.system_frame,
+        _ => false,
+    }
+}
+
+/// The frame of a window: the system's when the user asks for it, otherwise the launcher's own
+/// title bar (on macOS over a transparent system title bar with the native buttons).
+fn window_chrome(system_frame: bool) -> WindowChrome {
+    if system_frame {
+        WindowChrome::System
+    } else if cfg!(target_os = "macos") {
+        WindowChrome::Transparent
+    } else {
+        WindowChrome::Custom
+    }
+}
+
 /// What the window shows: the launcher, or why it could not start.
 enum Shell {
     Launcher(Box<Launcher>),
@@ -174,14 +207,19 @@ enum Shell {
 }
 
 impl Shell {
-    /// Starts the facade and builds the interface around it.
-    fn new(ctx: &egui::Context, options: &Options, translation: Option<&(String, String)>) -> Self {
+    /// Builds the interface around the started facade, or the reason it did not start.
+    fn new(
+        ctx: &egui::Context,
+        started: Result<Box<dyn Facade>, String>,
+        options: &Options,
+        translation: Option<&(String, String)>,
+    ) -> Self {
         let theme = if options.light {
             ThemeMode::Light
         } else {
             ThemeMode::Dark
         };
-        match start_facade(options) {
+        match started {
             Ok(facade) => {
                 let mut launcher = Launcher::new(ctx, facade);
                 if let Some((lang, ftl)) = translation {
@@ -212,6 +250,15 @@ impl Shell {
         match self {
             Shell::Launcher(launcher) => launcher.attach(ctx),
             // A failed start never gets a second window.
+            Shell::Failure(_) => {}
+        }
+    }
+
+    /// Tells the interface how its window is framed.
+    fn set_window_chrome(&mut self, chrome: WindowChrome) {
+        match self {
+            Shell::Launcher(launcher) => launcher.set_window_chrome(chrome),
+            // The failure screen always has the system frame.
             Shell::Failure(_) => {}
         }
     }
@@ -273,6 +320,7 @@ impl eframe::App for App<'_> {
         let Shell::Launcher(launcher) = &mut *self.shell else {
             return;
         };
+        switch_frame(&ctx, launcher);
         if !self.closing && ctx.input(|i| i.viewport().close_requested()) {
             // The user closed the window: keep watching a running game from the tray when the
             // settings say so, otherwise quit.
@@ -293,6 +341,23 @@ impl eframe::App for App<'_> {
     }
 }
 
+/// Follows the setting `launcher.system_frame` in the open window: on Windows and Linux the
+/// system frame is switched on or off at once. On macOS the transparent title bar is chosen when
+/// the window is built, so the next window follows the setting.
+fn switch_frame(ctx: &egui::Context, launcher: &mut Launcher) {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+    let Some(system_frame) = launcher.wants_system_frame() else {
+        return;
+    };
+    let wanted = window_chrome(system_frame);
+    if launcher.window_chrome() != wanted {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(system_frame));
+        launcher.set_window_chrome(wanted);
+    }
+}
+
 /// The window icon: the 256 px logo (`assets/icons/png/256.png`).
 fn window_icon() -> egui::IconData {
     eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icons/png/256.png"))
@@ -305,7 +370,15 @@ fn window_icon() -> egui::IconData {
 /// allowed, wgpu also opens a Vulkan (Windows) or OpenGL (Linux) instance, whose driver stays
 /// loaded (and keeps tens of MiB) after the window and its device are gone; the Direct3D driver
 /// is unloaded with the device, and Vulkan alone keeps less than Vulkan and OpenGL together.
-fn native_options(geometry: &Geometry, one_backend: bool) -> eframe::NativeOptions {
+///
+/// `chrome` frames the window: [`WindowChrome::Custom`] has no system decorations,
+/// [`WindowChrome::Transparent`] (macOS) keeps the native buttons over a transparent title bar
+/// with the content under it.
+fn native_options(
+    geometry: &Geometry,
+    one_backend: bool,
+    chrome: WindowChrome,
+) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("VibeLauncher")
         .with_app_id(APP_ID)
@@ -313,6 +386,14 @@ fn native_options(geometry: &Geometry, one_backend: bool) -> eframe::NativeOptio
         .with_min_inner_size([960.0, 600.0])
         .with_icon(window_icon())
         .with_maximized(geometry.maximized);
+    viewport = match chrome {
+        WindowChrome::Custom => viewport.with_decorations(false),
+        WindowChrome::Transparent => viewport
+            .with_fullsize_content_view(true)
+            .with_title_shown(false)
+            .with_titlebar_shown(false),
+        WindowChrome::System => viewport,
+    };
     if let Some(position) = geometry.position {
         viewport = viewport.with_position(position);
     }
@@ -368,24 +449,37 @@ fn main() -> eframe::Result {
     // The shell (and the facade in it) lives for the whole process; each window is one eframe
     // run around it. eframe keeps its winit event loop between runs.
     let mut shell: Option<Shell> = None;
+    // The facade starts before the first window, whose frame follows the settings.
+    let mut started = Some(start_facade(&options));
+    let mut chrome = match &started {
+        Some(Ok(facade)) => window_chrome(read_system_frame(facade.as_ref())),
+        _ => WindowChrome::System,
+    };
     let mut geometry = Geometry::default();
     // Direct3D 12 only on Windows and Vulkan only on Linux unless `WGPU_BACKEND` picks; every
     // backend when that fails.
     let mut one_backend =
         cfg!(any(windows, target_os = "linux")) && std::env::var_os("WGPU_BACKEND").is_none();
     loop {
+        if let Some(Shell::Launcher(launcher)) = &shell
+            && let Some(system_frame) = launcher.wants_system_frame()
+        {
+            chrome = window_chrome(system_frame);
+        }
         let mut after = AfterWindow::Quit;
         let session = eframe::run_native(
             "VibeLauncher",
-            native_options(&geometry, one_backend),
+            native_options(&geometry, one_backend, chrome),
             Box::new(|cc| {
                 let fresh = shell.is_none();
                 let shell = shell.get_or_insert_with(|| {
-                    Shell::new(&cc.egui_ctx, &options, translation.as_ref())
+                    let facade = started.take().unwrap_or_else(|| start_facade(&options));
+                    Shell::new(&cc.egui_ctx, facade, &options, translation.as_ref())
                 });
                 if !fresh {
                     shell.attach(&cc.egui_ctx);
                 }
+                shell.set_window_chrome(chrome);
                 Ok(Box::new(App {
                     shell,
                     after: &mut after,
@@ -425,6 +519,10 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("vl-app-test-{name}-{}", std::process::id()))
+    }
+
+    fn open_shell(ctx: &egui::Context, options: &Options) -> Shell {
+        Shell::new(ctx, start_facade(options), options, None)
     }
 
     fn frame(ctx: &egui::Context, shell: &mut Shell) {
@@ -493,8 +591,45 @@ mod tests {
     fn starts_on_the_mock_when_asked() {
         let ctx = egui::Context::default();
         let options = Options::parse(&args(&["--mock", "--light"]));
-        let mut shell = Shell::new(&ctx, &options, None);
+        let mut shell = open_shell(&ctx, &options);
         assert!(draw_every_section(&ctx, &mut shell).mock);
+    }
+
+    #[test]
+    fn the_window_has_the_launchers_own_title_bar_by_default() {
+        let options = Options::parse(&args(&["--mock"]));
+        let facade = start_facade(&options).expect("the mock starts");
+        assert!(!read_system_frame(facade.as_ref()));
+        assert_eq!(window_chrome(true), WindowChrome::System);
+        let own = if cfg!(target_os = "macos") {
+            WindowChrome::Transparent
+        } else {
+            WindowChrome::Custom
+        };
+        assert_eq!(window_chrome(false), own);
+        let viewport = native_options(&Geometry::default(), false, WindowChrome::Custom).viewport;
+        assert_eq!(viewport.decorations, Some(false));
+        let viewport = native_options(&Geometry::default(), false, WindowChrome::System).viewport;
+        assert_eq!(viewport.decorations, None);
+        let viewport =
+            native_options(&Geometry::default(), false, WindowChrome::Transparent).viewport;
+        assert_eq!(viewport.fullsize_content_view, Some(true));
+        assert_eq!(viewport.titlebar_shown, Some(false));
+    }
+
+    #[test]
+    fn every_section_draws_in_every_frame() {
+        let ctx = egui::Context::default();
+        let options = Options::parse(&args(&["--mock"]));
+        let mut shell = open_shell(&ctx, &options);
+        for chrome in [
+            WindowChrome::Custom,
+            WindowChrome::Transparent,
+            WindowChrome::System,
+        ] {
+            shell.set_window_chrome(chrome);
+            draw_every_section(&ctx, &mut shell);
+        }
     }
 
     #[test]
@@ -503,7 +638,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let ctx = egui::Context::default();
         let options = Options::parse(&args(&["--dir", &dir.display().to_string()]));
-        let mut shell = Shell::new(&ctx, &options, None);
+        let mut shell = open_shell(&ctx, &options);
         let info = draw_every_section(&ctx, &mut shell);
         assert!(!info.mock);
         assert_eq!(info.name, "vl-backend");
@@ -519,9 +654,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let ctx = egui::Context::default();
         let options = Options::parse(&args(&["--dir", &dir.display().to_string()]));
-        let first = Shell::new(&ctx, &options, None);
+        let first = open_shell(&ctx, &options);
         assert!(matches!(first, Shell::Launcher(_)));
-        let mut second = Shell::new(&ctx, &options, None);
+        let mut second = open_shell(&ctx, &options);
         match &second {
             Shell::Failure(failure) => assert!(!failure.message().is_empty()),
             Shell::Launcher(_) => panic!("a second launcher on the same folder must not start"),

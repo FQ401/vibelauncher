@@ -17,6 +17,7 @@ mod nav;
 mod screens;
 mod strings;
 mod theme;
+mod title_bar;
 mod widgets;
 mod window;
 
@@ -24,4 +25,4 @@ pub use app::Launcher;
 pub use failure::StartupFailure;
 pub use nav::Section;
 pub use theme::ThemeMode;
-pub use window::{TrayTexts, WindowRequest};
+pub use window::{TrayTexts, WindowChrome, WindowRequest};
