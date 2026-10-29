@@ -105,10 +105,12 @@ pub fn verify_file(path: &Path, size: u64, sha256: &str) -> Result<(), UpdaterEr
     Ok(())
 }
 
-/// Unpacks the zip `archive` over the portable folder `dir` and returns the replaced top-level
-/// names.
+/// Unpacks the portable `archive` over the portable folder `dir` and returns the replaced
+/// top-level names.
 ///
-/// The archive's root is the folder's content; a portable marker file at its root is skipped.
+/// A zip archive's root is the folder's content (Windows); a gzip-compressed tar archive holds
+/// the folder as its one top-level folder (Linux). A portable marker file at the folder's root is
+/// skipped.
 /// Everything is unpacked into `dir/.vl-update-new` first (entry names checked, no links, entry
 /// count and unpacked size capped); then each top-level item of the archive moves the old item
 /// of that name to `dir/.vl-update-old` and takes its place. Items the archive does not have — the user's `data` folder among them —
@@ -142,17 +144,40 @@ fn remove_dir_if_exists(path: &Path) -> Result<(), UpdaterError> {
     }
 }
 
-/// Unpacks `archive` into `into` and returns its top-level names, sorted.
+/// Unpacks `archive` (a zip archive, or a gzip-compressed tar archive) into `into` and returns
+/// its top-level names, sorted.
 fn unpack(archive: &Path, into: &Path) -> Result<Vec<String>, UpdaterError> {
+    let mut magic = [0u8; 2];
+    let mut file = File::open(archive).map_err(|e| UpdaterError::io(archive, &e))?;
+    let read = file
+        .read(&mut magic)
+        .map_err(|e| UpdaterError::io(archive, &e))?;
+    drop(file);
+    fs::create_dir_all(into).map_err(|e| UpdaterError::io(into, &e))?;
+    let mut unpacker = Unpacker {
+        into,
+        budget: MAX_UNPACKED_BYTES,
+        top: std::collections::BTreeSet::new(),
+    };
+    if read == 2 && magic == [0x1f, 0x8b] {
+        unpack_tar_gz(archive, &mut unpacker)?;
+    } else {
+        unpack_zip(archive, &mut unpacker)?;
+    }
+    if unpacker.top.is_empty() {
+        return Err(UpdaterError::Integrity("the archive is empty".into()));
+    }
+    Ok(unpacker.top.into_iter().collect())
+}
+
+/// The zip archive's root is the launcher folder's content.
+fn unpack_zip(archive: &Path, unpacker: &mut Unpacker<'_>) -> Result<(), UpdaterError> {
     let bad = UpdaterError::Integrity;
     let file = File::open(archive).map_err(|e| UpdaterError::io(archive, &e))?;
     let mut zip = ZipArchive::new(file).map_err(|e| bad(format!("not a zip archive: {e}")))?;
     if zip.len() > MAX_ARCHIVE_ENTRIES {
         return Err(bad(format!("more than {MAX_ARCHIVE_ENTRIES} entries")));
     }
-    fs::create_dir_all(into).map_err(|e| UpdaterError::io(into, &e))?;
-    let mut budget = MAX_UNPACKED_BYTES;
-    let mut top = std::collections::BTreeSet::new();
     for i in 0..zip.len() {
         let mut entry = zip
             .by_index(i)
@@ -162,46 +187,121 @@ fn unpack(archive: &Path, into: &Path) -> Result<Vec<String>, UpdaterError> {
             .map_err(|e| bad(format!("entry {i}: {e}")))?
             .into_owned();
         let is_dir = entry.is_dir();
-        let rel = safe_path(name.trim_end_matches('/'))
-            .ok_or_else(|| bad(format!("unsafe path {name:?}")))?;
-        let first = rel.first().cloned().unwrap_or_default();
-        // The release archive is the one users download, so it carries the portable marker as a
-        // top-level file: it is skipped and the folder keeps its own (or none).
-        if !is_dir && rel.len() == 1 && first.eq_ignore_ascii_case(vl_store::PORTABLE_MARKER) {
-            continue;
-        }
-        if PROTECTED.iter().any(|p| first.eq_ignore_ascii_case(p)) {
-            return Err(bad(format!("the archive must not contain {first:?}")));
-        }
         let mode = entry.unix_mode();
         if mode.is_some_and(|m| m & 0o170_000 == 0o120_000) {
             return Err(bad(format!("{name:?} is a symbolic link")));
         }
-        top.insert(first);
-        let path = rel.iter().fold(into.to_path_buf(), |p, part| p.join(part));
-        if is_dir {
-            fs::create_dir_all(&path).map_err(|e| UpdaterError::io(&path, &e))?;
+        let rel = safe_path(name.trim_end_matches('/'))
+            .ok_or_else(|| bad(format!("unsafe path {name:?}")))?;
+        unpacker.entry(&name, rel, is_dir, mode, &mut entry)?;
+    }
+    Ok(())
+}
+
+/// The gzip-compressed tar archive holds the launcher folder as its one top-level folder (as the
+/// Linux `.tar.gz` package does); that folder's content is unpacked. Only files and folders are
+/// taken: links and special files make the archive invalid.
+fn unpack_tar_gz(archive: &Path, unpacker: &mut Unpacker<'_>) -> Result<(), UpdaterError> {
+    let bad = UpdaterError::Integrity;
+    let one_folder = || bad("the tar archive must hold exactly one top-level folder".into());
+    let file = File::open(archive).map_err(|e| UpdaterError::io(archive, &e))?;
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(io::BufReader::new(file)));
+    let entries = tar
+        .entries()
+        .map_err(|e| bad(format!("not a tar archive: {e}")))?;
+    let mut root: Option<String> = None;
+    for (i, entry) in entries.enumerate() {
+        if i >= MAX_ARCHIVE_ENTRIES {
+            return Err(bad(format!("more than {MAX_ARCHIVE_ENTRIES} entries")));
+        }
+        let mut entry = entry.map_err(|e| bad(format!("entry {i}: {e}")))?;
+        let kind = entry.header().entry_type();
+        let is_dir = match kind {
+            tar::EntryType::Regular | tar::EntryType::Continuous => false,
+            tar::EntryType::Directory => true,
+            // Archive-wide pax metadata, not a file.
+            tar::EntryType::XGlobalHeader => continue,
+            _ => {
+                return Err(bad(format!(
+                    "entry {i} is not a file or a folder ({kind:?})"
+                )));
+            }
+        };
+        let name = String::from_utf8(entry.path_bytes().into_owned())
+            .map_err(|_| bad(format!("entry {i}: the name is not UTF-8")))?;
+        let trimmed = name
+            .strip_prefix("./")
+            .unwrap_or(&name)
+            .trim_end_matches('/');
+        let mut parts = safe_path(trimmed).ok_or_else(|| bad(format!("unsafe path {name:?}")))?;
+        let first = parts.remove(0);
+        match &root {
+            None => root = Some(first),
+            Some(r) if *r == first => {}
+            Some(_) => return Err(one_folder()),
+        }
+        if parts.is_empty() {
+            if !is_dir {
+                return Err(one_folder());
+            }
             continue;
+        }
+        let mode = entry.header().mode().ok();
+        unpacker.entry(&name, parts, is_dir, mode, &mut entry)?;
+    }
+    Ok(())
+}
+
+/// Writes the entries of an archive below `into`, within the size budget, and collects the
+/// top-level names.
+struct Unpacker<'a> {
+    into: &'a Path,
+    budget: u64,
+    top: std::collections::BTreeSet<String>,
+}
+
+impl Unpacker<'_> {
+    /// One entry named `name` in the archive, at the checked path `rel` below the folder.
+    fn entry(
+        &mut self,
+        name: &str,
+        rel: Vec<String>,
+        is_dir: bool,
+        mode: Option<u32>,
+        content: &mut dyn Read,
+    ) -> Result<(), UpdaterError> {
+        let bad = UpdaterError::Integrity;
+        let first = rel.first().cloned().unwrap_or_default();
+        // The release archive is the one users download, so it carries the portable marker as a
+        // top-level file: it is skipped and the folder keeps its own (or none).
+        if !is_dir && rel.len() == 1 && first.eq_ignore_ascii_case(vl_store::PORTABLE_MARKER) {
+            return Ok(());
+        }
+        if PROTECTED.iter().any(|p| first.eq_ignore_ascii_case(p)) {
+            return Err(bad(format!("the archive must not contain {first:?}")));
+        }
+        self.top.insert(first);
+        let path = rel
+            .iter()
+            .fold(self.into.to_path_buf(), |p, part| p.join(part));
+        if is_dir {
+            return fs::create_dir_all(&path).map_err(|e| UpdaterError::io(&path, &e));
         }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| UpdaterError::io(parent, &e))?;
         }
         let mut out = File::create(&path).map_err(|e| UpdaterError::io(&path, &e))?;
-        let written = io::copy(&mut (&mut entry).take(budget + 1), &mut out)
+        let written = io::copy(&mut content.take(self.budget + 1), &mut out)
             .map_err(|e| bad(format!("{name}: {e}")))?;
-        if written > budget {
+        if written > self.budget {
             return Err(bad(format!(
                 "the archive unpacks to more than {MAX_UNPACKED_BYTES} bytes"
             )));
         }
-        budget -= written;
+        self.budget -= written;
         out.flush().map_err(|e| UpdaterError::io(&path, &e))?;
-        set_mode(&path, mode)?;
+        set_mode(&path, mode)
     }
-    if top.is_empty() {
-        return Err(bad("the archive is empty".into()));
-    }
-    Ok(top.into_iter().collect())
 }
 
 /// The parts of a relative archive path, `None` when it could leave its folder or is not a

@@ -19,7 +19,9 @@ serde_json.workspace = true
 sha2.workspace = true
 sysinfo.workspace = true
 zip.workspace = true
-# Selects the pure-Rust deflate backend that `zip` needs.
+# The Linux portable archive (`.tar.gz`).
+tar.workspace = true
+# Selects the pure-Rust deflate backend that `zip` needs; also gunzips the tar archive.
 flate2.workspace = true
 
 [dev-dependencies]

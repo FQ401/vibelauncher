@@ -113,6 +113,68 @@ pub(crate) fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
     w.finish().unwrap().into_inner()
 }
 
+/// A tar entry: its raw name, type, mode and content (a link's target for links).
+pub(crate) struct TarEntry<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) kind: tar::EntryType,
+    pub(crate) mode: u32,
+    pub(crate) content: &'a [u8],
+}
+
+impl<'a> TarEntry<'a> {
+    pub(crate) fn file(name: &'a str, content: &'a [u8]) -> Self {
+        Self {
+            name,
+            kind: tar::EntryType::Regular,
+            mode: 0o644,
+            content,
+        }
+    }
+
+    pub(crate) fn exe(name: &'a str, content: &'a [u8]) -> Self {
+        Self {
+            mode: 0o755,
+            ..Self::file(name, content)
+        }
+    }
+
+    pub(crate) fn dir(name: &'a str) -> Self {
+        Self {
+            name,
+            kind: tar::EntryType::Directory,
+            mode: 0o755,
+            content: b"",
+        }
+    }
+}
+
+/// A gzip-compressed tar archive of `entries`. Names are written as they are, unchecked, so
+/// tests can build unsafe archives.
+pub(crate) fn tar_gz_of(entries: &[TarEntry<'_>]) -> Vec<u8> {
+    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    let mut tar = tar::Builder::new(gz);
+    for entry in entries {
+        let mut header = tar::Header::new_gnu();
+        let name = entry.name.as_bytes();
+        header.as_old_mut().name[..name.len()].copy_from_slice(name);
+        header.set_entry_type(entry.kind);
+        header.set_mode(entry.mode);
+        header.set_mtime(0);
+        let link = matches!(entry.kind, tar::EntryType::Symlink | tar::EntryType::Link);
+        if link {
+            let target = entry.content;
+            header.as_old_mut().linkname[..target.len()].copy_from_slice(target);
+            header.set_size(0);
+        } else {
+            header.set_size(entry.content.len() as u64);
+        }
+        header.set_cksum();
+        let data: &[u8] = if link { b"" } else { entry.content };
+        tar.append(&header, data).unwrap();
+    }
+    tar.into_inner().unwrap().finish().unwrap()
+}
+
 /// The lowercase hex SHA-256 of `data`.
 pub(crate) fn sha256(data: &[u8]) -> String {
     vl_net::sha256_hex(data)
