@@ -90,16 +90,19 @@ fn fake_launcher_process(exe: &Path, ms: u64, data: Option<&Path>) -> Child {
     command.spawn().unwrap()
 }
 
-/// A process id that has just exited.
+/// A launcher that has just exited, with the start time it had while it ran.
+///
+/// The start time is what keeps this deterministic: Windows reuses process ids at once, so
+/// another process started by a parallel test may already own the id of one that has exited.
+/// Without a start time such a process would be taken for the launcher.
 fn exited_parent() -> ParentProcess {
-    let mut child = test_process(&std::env::current_exe().unwrap(), "no-such-test")
-        .spawn()
-        .unwrap();
+    let mut child = fake_launcher_process(&std::env::current_exe().unwrap(), 60_000, None);
+    // Taken while the child is alive, so the start time is always known.
+    let parent = ParentProcess::of(child.id());
+    assert!(parent.start_time.is_some());
+    child.kill().unwrap();
     child.wait().unwrap();
-    ParentProcess {
-        pid: child.id(),
-        start_time: None,
-    }
+    parent
 }
 
 /// An uncompressed zip with `(name, content)` entries.
