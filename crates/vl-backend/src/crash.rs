@@ -25,7 +25,7 @@ use crate::Backend;
 const MAX_LOG_BYTES: u64 = 512 * 1024;
 /// The most bytes read from the start of a crash report or JVM error log.
 const MAX_REPORT_BYTES: u64 = 256 * 1024;
-const RUN_LOG_PREFIX: &str = "vl-game-";
+pub(crate) const RUN_LOG_PREFIX: &str = "vl-game-";
 
 /// Where the logs of an instance are.
 #[derive(Debug, Clone)]
@@ -241,7 +241,7 @@ fn file_name(path: &Path) -> String {
 }
 
 /// The most recently modified file in `dir` whose name satisfies `accept`.
-fn newest_in(dir: &Path, accept: impl Fn(&str) -> bool) -> Option<PathBuf> {
+pub(crate) fn newest_in(dir: &Path, accept: impl Fn(&str) -> bool) -> Option<PathBuf> {
     let mut best: Option<(SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(dir).ok()?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();

@@ -48,6 +48,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use vl_backend::{Backend, BackendConfig};
 use vl_core::Facade;
+use vl_core::log::LogLevel;
 use vl_mock::{MockFacade, MockOptions};
 use vl_ui_egui::{Launcher, Section, StartupFailure, ThemeMode, WindowRequest};
 
@@ -157,7 +158,11 @@ fn start_facade(options: &Options) -> Result<Box<dyn Facade>, String> {
         data_dir: options.dir.clone(),
     };
     match Backend::new(config) {
-        Ok(backend) => Ok(Box::new(backend)),
+        Ok(backend) => {
+            backend.log_panics();
+            backend.log(LogLevel::Info, "app", "desktop app started");
+            Ok(Box::new(backend))
+        }
         Err(e) => Err(e.to_string()),
     }
 }

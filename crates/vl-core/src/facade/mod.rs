@@ -14,14 +14,16 @@ mod channel;
 
 use serde::{Deserialize, Serialize};
 
-pub use channel::{EventBus, EventStream, Replier, Reply, reply_channel};
+pub use channel::{EventBus, EventStream, Observer, Replier, Reply, reply_channel};
 
 use crate::account::{Account, AccountCommand, AccountEvent};
 use crate::bisect::{AutoBisectReport, BisectCommand, BisectEvent, BisectStatus};
 use crate::catalog::{
     ApiKeyStatus, CatalogCommand, HashMatch, Project, ProjectVersion, SearchPage,
 };
-use crate::console::{ConsoleCommand, ConsoleMatches, ConsolePage, ConsoleStatus};
+use crate::console::{
+    ConsoleCommand, ConsoleMatches, ConsolePage, ConsoleStatus, LogUploadPreview, UploadedLog,
+};
 use crate::crash::CrashDiagnosis;
 use crate::ids::TaskId;
 use crate::install::{
@@ -170,6 +172,10 @@ pub enum Response {
     ConsolePage(ConsolePage),
     /// Lines of a game's console buffer that match a search.
     ConsoleMatches(ConsoleMatches),
+    /// What a log upload would send.
+    LogUploadPreview(LogUploadPreview),
+    /// A log was uploaded.
+    LogUploaded(UploadedLog),
 }
 
 /// Something that happened in the launcher.

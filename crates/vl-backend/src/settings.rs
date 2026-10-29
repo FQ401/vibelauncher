@@ -20,6 +20,7 @@ fn run(backend: &Backend, command: SettingsCommand) -> vl_core::Result<Response>
         }
         SettingsCommand::SetGlobal(settings) => {
             store.set_global(&settings)?;
+            backend.settings_changed();
             changed(backend, SettingsEvent::GlobalChanged);
             Ok(Response::Done)
         }

@@ -14,6 +14,7 @@ vl-core.workspace = true
 vl-meta.workspace = true
 vl-store.workspace = true
 vl-net.workspace = true
+vl-logs.workspace = true
 vl-tasks.workspace = true
 vl-settings.workspace = true
 vl-auth.workspace = true

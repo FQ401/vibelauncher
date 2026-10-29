@@ -19,6 +19,7 @@ vl-crash = { path = "crates/vl-crash" }
 vl-bisect = { path = "crates/vl-bisect" }
 vl-store = { path = "crates/vl-store" }
 vl-net = { path = "crates/vl-net" }
+vl-logs = { path = "crates/vl-logs" }
 vl-tasks = { path = "crates/vl-tasks" }
 vl-settings = { path = "crates/vl-settings" }
 vl-auth = { path = "crates/vl-auth" }

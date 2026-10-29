@@ -11,6 +11,7 @@ mod info;
 mod instances;
 mod java;
 mod launch;
+mod log;
 mod mods;
 mod packs;
 mod storage;
@@ -99,6 +100,13 @@ commands:
   java install <major>                download a Java runtime (8, 17, 21...)
   java pick <major> [heap_mib]        show the Java a launch would choose (heap default 4096)
   launch <instance> [--offline]       launch and follow the game log
+  log upload <instance> [--file <path>] [--yes]
+                                      share a game log on mclo.gs and print the link: the
+                                      newest run log, or --file (relative to the instance's
+                                      game folder, e.g. logs/latest.log, or absolute). Tokens,
+                                      keys and the home folder are masked, a log longer than
+                                      mclo.gs accepts keeps its start and end; prints what
+                                      would be sent and asks first, --yes skips the question
   catalog search <query> [--type <mod|modpack|resourcepack|shader|datapack>] [--version <v>]
                          [--loader <l>] [--category <c>] [--sort <relevance|downloads|follows|newest|updated>]
                          [--offset <n>] [--limit <n>]
@@ -205,6 +213,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         ["accounts", rest @ ..] => accounts::run(facade, rest, out),
         ["java", rest @ ..] => java::run(facade, rest, out),
         ["launch", rest @ ..] => launch::run(facade, rest, out),
+        ["log", rest @ ..] => log::run(facade, rest, out),
         ["catalog", rest @ ..] => catalog::run(facade, rest, out),
         ["packs", rest @ ..] => packs::run(facade, rest, out),
         ["storage", rest @ ..] => storage::run(facade, rest, out),
