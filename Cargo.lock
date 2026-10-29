@@ -4539,6 +4539,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "sysinfo",
+ "tar",
  "vl-core",
  "vl-net",
  "vl-store",

@@ -740,7 +740,7 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   | Install method | Artifact | Replacement | Started afterwards |
   |---|---|---|---|
   | MSI | `msi` | run the new package (not implemented yet) | the executable |
-  | portable | `portable` (zip) | unpack over the folder | the executable |
+  | portable | `portable` (zip; tar.gz on Linux) | unpack over the folder | the executable |
   | macOS app | `dmg` | copy the bundle from the disk image | the bundle |
   | AppImage | `app_image` | rename the new file over the old one | the AppImage |
   | deb, rpm, unknown | — | none: the release page is shown | — |
@@ -750,9 +750,14 @@ The launcher trusts its own signed manifest, not the operating system's code sig
   `<data>/updates/staging/<version>/` with its size and SHA-256 checked before the file appears
   (progress and cancellation from the task); downloads of other versions are removed. The
   replacement is never started while a game runs, and checks the file's size and SHA-256 again
-  first. A portable archive is unpacked into `<folder>/.vl-update-new/` (entry names checked, no
-  links, at most 10 000 entries and 2 GiB, no `data` folder or install marker at its top level;
-  a portable marker file at its top level is skipped, so the folder keeps its own or none); then each of its top-level items moves the old item into
+  first. A portable archive is a zip archive whose root is the folder's content (Windows) or a
+  gzip-compressed tar archive holding the folder as its one top-level folder, whose content is
+  taken (Linux; told apart by the gzip signature). It is unpacked into
+  `<folder>/.vl-update-new/` (entry names checked, only files and folders, no links or special
+  files, at most 10 000 entries and 2 GiB, no `data` folder or install marker at the folder's
+  top level; a portable marker file there is skipped, so the folder keeps its own or none; the
+  files keep their Unix mode without write bits for group and others); then each of its
+  top-level items moves the old item into
   `<folder>/.vl-update-old/` and takes its place, and a failure moves everything back. Items
   the archive does not have, such as the user's `data` folder, are not touched. An AppImage is
   copied next to the old one, made executable and renamed over it. A disk image is attached
@@ -822,7 +827,7 @@ The launcher trusts its own signed manifest, not the operating system's code sig
 
   | Package | Content | Install method |
   |---|---|---|
-  | `.tar.gz` | a folder `vibelauncher-<version>-linux-<arch>` with both executables, the portable marker and `LICENSE.txt`; entries owned by root with a fixed time | portable (data in `data/` next to the executables) |
+  | `.tar.gz` | a folder `vibelauncher-<version>-linux-<arch>` with both executables, the portable marker and `LICENSE.txt`; entries owned by root with a fixed time; the `portable` artifact of the self-update | portable (data in `data/` next to the executables) |
   | `.AppImage` | `AppRun`, the desktop entry and icon, the executables in `usr/bin`, the shared files below `usr/share`; the type 2 runtime is the file named by `APPIMAGETOOL_RUNTIME_FILE` (pinned), and the update information is `gh-releases-zsync\|FQ401\|vibelauncher\|latest\|vibelauncher-*-linux-<arch>.AppImage.zsync` | AppImage (`APPIMAGE`) |
   | `.AppImage.zsync` | the zsync control file of the AppImage, for delta downloads | — |
   | `.deb`, `.rpm` | the executables and the install marker (`deb`, `rpm`) in `/usr/lib/vibelauncher`, links to them in `/usr/bin`, the shared files below `/usr/share`, the license (`/usr/share/doc/vibelauncher/copyright`, `/usr/share/licenses/vibelauncher/LICENSE`); depends on glibc 2.35 or newer and recommends the Vulkan, EGL, Wayland, xkbcommon and X11 libraries the window loads at run time | deb, rpm (marker) |

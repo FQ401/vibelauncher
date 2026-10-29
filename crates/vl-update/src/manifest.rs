@@ -67,7 +67,7 @@ pub enum Channel {
 pub enum ArtifactKind {
     /// A Windows Installer package.
     Msi,
-    /// A zip archive of the launcher folder.
+    /// An archive of the launcher folder: zip (Windows) or tar.gz (Linux).
     Portable,
     /// A macOS disk image holding `VibeLauncher.app`.
     Dmg,

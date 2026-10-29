@@ -11,7 +11,7 @@ use vl_update::{
     ArtifactKind, InstallMethod, Offer, RELEASE_PUBLIC_KEY, Replacement, UpdateError, Version, plan,
 };
 
-use crate::testkit::{Dir, Files, TestSigner, sha256, zip_of};
+use crate::testkit::{Dir, Files, TarEntry, TestSigner, sha256, tar_gz_of, zip_of};
 use crate::{
     NEW_DIR, OLD_DIR, UpdateDir, Updater, UpdaterError, apply, clean_portable, replace_appimage,
 };
@@ -352,6 +352,174 @@ fn the_portable_marker_in_the_archive_is_skipped() {
         if has_marker {
             assert_eq!(read(&marker), b"");
         }
+    }
+}
+
+/// A Linux portable folder: the executables, the marker and the user's data.
+fn linux_portable_install(dir: &Path) {
+    fs::create_dir_all(dir.join("data/instances")).unwrap();
+    fs::write(dir.join("vibelauncher"), b"old gui").unwrap();
+    fs::write(dir.join("vl-cli"), b"old cli").unwrap();
+    fs::write(dir.join("data/instances/world.txt"), b"user data").unwrap();
+    fs::write(dir.join(vl_store::PORTABLE_MARKER), b"").unwrap();
+}
+
+/// The Linux `.tar.gz` package holds the launcher folder; its content replaces a portable folder
+/// end to end, and the executables keep their mode.
+#[test]
+fn linux_tar_gz_update_end_to_end() {
+    let w = World::new();
+    let app = w.dir.path().join("vibelauncher-1.3.0-linux-x86_64");
+    linux_portable_install(&app);
+    let archive = tar_gz_of(&[
+        TarEntry::dir("vibelauncher-1.4.0-linux-x86_64/"),
+        TarEntry::exe("vibelauncher-1.4.0-linux-x86_64/vibelauncher", b"new gui"),
+        TarEntry::exe("vibelauncher-1.4.0-linux-x86_64/vl-cli", b"new cli"),
+        TarEntry::file("vibelauncher-1.4.0-linux-x86_64/vibelauncher.portable", b""),
+        TarEntry::file("vibelauncher-1.4.0-linux-x86_64/LICENSE.txt", b"license"),
+        TarEntry::dir("vibelauncher-1.4.0-linux-x86_64/share/"),
+        TarEntry::file("vibelauncher-1.4.0-linux-x86_64/share/a.txt", b"a"),
+    ]);
+    w.publish("1.4.0", &archive);
+    let Offer::Update {
+        version, artifact, ..
+    } = w.check("1.3.0").unwrap()
+    else {
+        panic!()
+    };
+    let staged = w
+        .updater
+        .stage(&version, &artifact, &Control::default())
+        .unwrap();
+    let exe = app.join("vibelauncher");
+    let plan = plan(
+        &InstallMethod::Portable { dir: app.clone() },
+        &exe,
+        &version,
+        &artifact,
+        &staged,
+    );
+    apply(&plan, &|| false).unwrap();
+    assert_eq!(read(&exe), b"new gui");
+    assert_eq!(read(app.join("vl-cli")), b"new cli");
+    assert_eq!(read(app.join("LICENSE.txt")), b"license");
+    assert_eq!(read(app.join("share/a.txt")), b"a");
+    assert_eq!(read(app.join("data/instances/world.txt")), b"user data");
+    assert_eq!(read(app.join(vl_store::PORTABLE_MARKER)), b"");
+    assert!(!app.join("vibelauncher-1.4.0-linux-x86_64").exists());
+    assert_eq!(read(app.join(OLD_DIR).join("vibelauncher")), b"old gui");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&exe), 0o755);
+        assert_eq!(mode(&app.join("LICENSE.txt")), 0o644);
+    }
+}
+
+#[test]
+fn unsafe_tar_gz_archives_change_nothing() {
+    use tar::EntryType;
+    let root = "vibelauncher-1.4.0-linux-x86_64/";
+    let exe = "vibelauncher-1.4.0-linux-x86_64/vibelauncher";
+    let link = |name, target| TarEntry {
+        name,
+        kind: EntryType::Symlink,
+        mode: 0o777,
+        content: target,
+    };
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        (
+            "two folders",
+            tar_gz_of(&[
+                TarEntry::exe(exe, b"x"),
+                TarEntry::file("other/vibelauncher", b"x"),
+            ]),
+        ),
+        (
+            "a top-level file",
+            tar_gz_of(&[TarEntry::file("vibelauncher", b"x")]),
+        ),
+        (
+            "a file beside the folder",
+            tar_gz_of(&[TarEntry::exe(exe, b"x"), TarEntry::file("evil", b"x")]),
+        ),
+        (
+            "a parent path",
+            tar_gz_of(&[
+                TarEntry::exe(exe, b"x"),
+                TarEntry::file("vibelauncher-1.4.0-linux-x86_64/../evil", b"x"),
+            ]),
+        ),
+        (
+            "an absolute path",
+            tar_gz_of(&[TarEntry::file("/tmp/evil", b"x")]),
+        ),
+        (
+            "a symbolic link",
+            tar_gz_of(&[
+                TarEntry::exe(exe, b"x"),
+                link("vibelauncher-1.4.0-linux-x86_64/lib", b"/etc"),
+            ]),
+        ),
+        (
+            "a hard link",
+            tar_gz_of(&[
+                TarEntry::exe(exe, b"x"),
+                TarEntry {
+                    kind: EntryType::Link,
+                    ..link("vibelauncher-1.4.0-linux-x86_64/l", b"/etc/passwd")
+                },
+            ]),
+        ),
+        (
+            "a device",
+            tar_gz_of(&[TarEntry {
+                kind: EntryType::Char,
+                ..TarEntry::file("vibelauncher-1.4.0-linux-x86_64/dev", b"")
+            }]),
+        ),
+        (
+            "the data folder",
+            tar_gz_of(&[
+                TarEntry::exe(exe, b"x"),
+                TarEntry::file(
+                    "vibelauncher-1.4.0-linux-x86_64/data/instances/world.txt",
+                    b"x",
+                ),
+            ]),
+        ),
+        (
+            "the install marker",
+            tar_gz_of(&[TarEntry::file(
+                "vibelauncher-1.4.0-linux-x86_64/vibelauncher.install",
+                b"deb",
+            )]),
+        ),
+        ("only the folder", tar_gz_of(&[TarEntry::dir(root)])),
+        ("damaged", {
+            let mut bytes = tar_gz_of(&[TarEntry::exe(exe, b"new gui")]);
+            bytes.truncate(bytes.len() / 2);
+            bytes
+        }),
+        ("not gzip", b"\x1f\x8bnot gzip".to_vec()),
+    ];
+    for (case, archive_bytes) in cases {
+        let dir = Dir::new();
+        let app = dir.path().join("app");
+        linux_portable_install(&app);
+        let archive = dir.path().join("new.tar.gz");
+        fs::write(&archive, &archive_bytes).unwrap();
+        let result = crate::replace_portable(&archive, &app);
+        assert!(
+            matches!(result, Err(UpdaterError::Integrity(_))),
+            "{case}: {result:?}"
+        );
+        assert_eq!(read(app.join("vibelauncher")), b"old gui", "{case}");
+        assert_eq!(read(app.join("data/instances/world.txt")), b"user data");
+        assert!(!app.join(NEW_DIR).exists(), "{case}");
+        assert!(!app.join("evil").exists() && !dir.path().join("evil").exists());
+        assert!(!app.join("lib").exists() && !app.join("l").exists());
     }
 }
 
