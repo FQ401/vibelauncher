@@ -44,7 +44,8 @@ fn list(facade: &dyn Facade, flags: &[&str], out: Out<'_>) -> Result<(), CliErro
 }
 
 /// Prints the versions of a loader for a game version with their marks: `recommended` and
-/// `latest`, and `stable` for the loaders that divide their versions into stable and not.
+/// `latest`, `stable` for the loaders that divide their versions into stable and not, and
+/// `(unstable)` for a build for a snapshot, pre-release or April Fools' game version.
 fn loaders(facade: &dyn Facade, loader: &str, game: &str, out: Out<'_>) -> Result<(), CliError> {
     let loader = parse_loader(loader)?;
     let command = Command::Versions(VersionCommand::LoaderVersions {
@@ -63,6 +64,9 @@ fn loaders(facade: &dyn Facade, loader: &str, game: &str, out: Out<'_>) -> Resul
                 }
                 if v.stable && loader != ComponentKind::Forge {
                     marks.push("stable");
+                }
+                if v.unstable_game {
+                    marks.push("(unstable)");
                 }
                 writeln!(out, "{:<24} {}", v.version, marks.join(" "))?;
             }

@@ -7,6 +7,8 @@
 //! - A version is installed from its installer jar, `forge-<maven version>-installer.jar`; its
 //!   files live in `<profiles dir>/forge/<game>-<forge>/`. Some builds before Minecraft 1.13
 //!   carry a branch in their Maven version (`1.7.10-10.13.4.1614-1.7.10`), found in the list.
+//!   The builds for the pre-release `1.7.10-pre4` are published under Forge's name for it,
+//!   `1.7.10_pre4-<forge>-prerelease`.
 //! - An installer with processors goes through [`crate::installer`]; a legacy one (most builds
 //!   before Minecraft 1.13) through `crate::forge_legacy`. Which one it is shows in its
 //!   `install_profile.json`.

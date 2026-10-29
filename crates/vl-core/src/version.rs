@@ -119,6 +119,11 @@ pub struct LoaderVersionInfo {
     /// Whether it is the newest version for the game version.
     #[serde(default)]
     pub latest: bool,
+    /// Whether it is a build for a game version that is not a release (a snapshot, a
+    /// pre-release, a release candidate or an April Fools' version). Such builds are offered
+    /// only for that game version, are never stable and are shown as unstable.
+    #[serde(default)]
+    pub unstable_game: bool,
 }
 
 /// Changes to the version list.

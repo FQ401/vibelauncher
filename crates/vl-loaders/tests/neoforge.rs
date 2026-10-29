@@ -627,3 +627,75 @@ fn minecraft_1_20_1_uses_the_forge_artifact_of_neoforge() {
         assert_eq!(p.inherits_from, LEGACY);
     }
 }
+
+#[test]
+fn a_game_snapshot_lists_and_reads_its_own_builds() {
+    const SNAPSHOT: &str = "26.1-pre-3";
+    const BUILD: &str = "26.1.0.0-alpha.15+pre-3";
+    let s = setup(&sha1_hex(PATCHED_BYTES));
+    s.server.add(
+        &format!("{MAVEN}/net/neoforged/neoforge/maven-metadata.xml"),
+        format!(
+            "<metadata><versioning><versions><version>{BUILD}</version>\
+             <version>26.1.0.1-beta</version></versions></versioning></metadata>"
+        )
+        .into_bytes(),
+    );
+    let list = s.loaders.versions(NeoForge, SNAPSHOT, &control()).unwrap();
+    let marked: Vec<_> = list
+        .versions
+        .iter()
+        .map(|v| (v.version.as_str(), v.stable, v.unstable_game))
+        .collect();
+    assert_eq!(marked, [(BUILD, false, true)]);
+    assert_eq!(
+        s.loaders
+            .pick(NeoForge, SNAPSHOT, None, &control())
+            .unwrap()
+            .version,
+        BUILD
+    );
+    let release = s.loaders.versions(NeoForge, "26.1", &control()).unwrap();
+    let names: Vec<_> = release
+        .versions
+        .iter()
+        .map(|v| v.version.as_str())
+        .collect();
+    assert_eq!(names, ["26.1.0.1-beta"]);
+
+    let profile = serde_json::to_vec(&json!({
+        "spec": 1,
+        "version": format!("neoforge-{BUILD}"),
+        "minecraft": SNAPSHOT,
+        "json": "/version.json",
+        "data": {},
+        "processors": [],
+        "libraries": []
+    }))
+    .unwrap();
+    let version = serde_json::to_vec(&json!({
+        "id": format!("neoforge-{BUILD}"),
+        "inheritsFrom": SNAPSHOT,
+        "type": "release",
+        "releaseTime": "2026-03-17T17:57:20",
+        "mainClass": "net.neoforged.fml.startup.Client",
+        "arguments": {"game": [], "jvm": []},
+        "libraries": []
+    }))
+    .unwrap();
+    let jar = zip(&[
+        ("install_profile.json", &profile),
+        ("version.json", &version),
+    ]);
+    // The `+` of the version stays in the path, as the repository lays it out.
+    let url = format!("{MAVEN}/net/neoforged/neoforge/{BUILD}/neoforge-{BUILD}-installer.jar");
+    s.server
+        .add(&format!("{url}.sha1"), sha1_hex(&jar).into_bytes());
+    s.server.add(&url, jar);
+    let p = s
+        .loaders
+        .profile(NeoForge, SNAPSHOT, BUILD, &control())
+        .unwrap();
+    assert_eq!(p.loader_version, BUILD);
+    assert_eq!(p.inherits_from, SNAPSHOT);
+}

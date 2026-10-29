@@ -4,12 +4,17 @@
 //! Forge publishes every version as `net.minecraftforge:forge` in its Maven repository. A Maven
 //! version is `<game>-<forge>` (`1.20.1-47.3.0`, `26.3-66.1.0`), for some builds before 1.13
 //! with a branch suffix (`1.7.10-10.13.4.1614-1.7.10`, `1.12.2-14.23.4.2720-4627`). The game
-//! part is the Mojang id, except Forge's `1.7.10_pre4` for `1.7.10-pre4`, which is not mapped.
-//! The launcher calls the version by its Forge part (`47.3.0`,
-//! `10.13.4.1614`) and accepts the Maven form without a branch as input too. The Forge part is
-//! unique per game version, so [`find_maven_version`] finds the Maven version with its branch.
+//! part is the Mojang id, except for a pre-release: Forge's `1.7.10_pre4` (branch
+//! `-prerelease`) is Mojang's `1.7.10-pre4` ([`maven_game`]). The launcher calls the version by
+//! its Forge part (`47.3.0`, `10.13.4.1614`) and accepts the Maven form without a branch as
+//! input too. The Forge part is unique per game version, so [`find_maven_version`] finds the
+//! Maven version with its branch.
 //!
-//! Forge versions are not divided into stable and unstable ones: every version counts as stable.
+//! Forge versions are not divided into stable and unstable ones: every version counts as stable,
+//! except the builds for a pre-release game version, which are marked
+//! [`LoaderVersion::unstable_game`] and listed only for that game version. Their legacy
+//! installer names the Mojang id (`"minecraft": "1.7.10-pre4"`, checked on 2026-10-29 for
+//! `1.7.10_pre4-10.12.2.1149-prerelease`).
 //! The promotions document (`promotions_slim.json`) names a `<game>-recommended` build, which
 //! gets the `recommended` flag; the newest version of a game version gets the `latest` flag. The
 //! default choice ([`LoaderVersions::recommended`]) is the recommended build, else the latest.
@@ -21,6 +26,7 @@
 //! `install` + `versionInfo` profile, handled by [`crate::forge_legacy`]. Game versions before
 //! 1.5.2 have no installer (Forge is a jar mod there) and are `Unsupported` ([`check_game`]).
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
@@ -101,8 +107,31 @@ fn safe_name(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_')
 }
 
+/// The game version as Forge names it in its Maven versions: the Mojang id, except a
+/// pre-release `<release>-pre<k>` (`1.7.10-pre4`), which Forge spells `<release>_pre<k>`
+/// (`1.7.10_pre4`). Any other text is returned as it is.
+pub fn maven_game(game: &str) -> Cow<'_, str> {
+    match game.split_once("-pre") {
+        Some((release, k))
+            if release.starts_with("1.")
+                && !k.is_empty()
+                && k.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            Cow::Owned(format!("{release}_pre{k}"))
+        }
+        _ => Cow::Borrowed(game),
+    }
+}
+
+/// Whether `game` is a pre-release (`1.7.10-pre4`, or Forge's `1.7.10_pre4`): its Forge builds
+/// are builds for a game version that is not a release.
+pub fn is_prerelease_game(game: &str) -> bool {
+    maven_game(game).contains("_pre")
+}
+
 /// Splits a Maven version (`1.20.1-47.3.0`, `1.7.10-10.13.4.1614-1.7.10`) into the game version
-/// and the Forge version; a branch suffix is dropped. `None` when it is not of that form.
+/// as Forge names it ([`maven_game`]) and the Forge version; a branch suffix is dropped. `None`
+/// when it is not of that form.
 pub fn split_maven_version(maven: &str) -> Option<(&str, &str)> {
     let (game, rest) = maven.split_once('-')?;
     let (forge, branch) = match rest.split_once('-') {
@@ -117,32 +146,37 @@ pub fn split_maven_version(maven: &str) -> Option<(&str, &str)> {
 /// Maven list, with its branch suffix if it has one.
 pub fn find_maven_version<'a>(game: &str, forge: &str, all: &'a [String]) -> Option<&'a str> {
     let short = short_version(game, forge);
+    let maven = maven_game(game);
     all.iter()
         .map(String::as_str)
-        .find(|v| split_maven_version(v) == Some((game, short)))
+        .find(|v| split_maven_version(v) == Some((&*maven, short)))
 }
 
-/// The Maven version of Forge `forge` for `game`. `forge` may already be the full form.
+/// The Maven version of Forge `forge` for `game`, without a branch. `forge` may already be the
+/// full form.
 ///
 /// # Errors
 ///
 /// `InvalidInput` for a version that is not `<numbers>` or `<game>-<numbers>`.
 pub fn maven_version(game: &str, forge: &str) -> Result<String> {
     let short = short_version(game, forge);
-    let full = format!("{game}-{short}");
+    let maven = maven_game(game);
+    let full = format!("{maven}-{short}");
     match split_maven_version(&full) {
-        Some((g, f)) if g == game && f == short => Ok(full),
+        Some((g, f)) if g == maven && f == short => Ok(full),
         _ => Err(Error::invalid_input(format!(
             "invalid Forge version {forge:?} for Minecraft {game}"
         ))),
     }
 }
 
-/// The Forge part of `version`: `1.20.1-47.3.0` → `47.3.0`; a short version is returned as is.
+/// The Forge part of `version`: `1.20.1-47.3.0` → `47.3.0` (and `1.7.10_pre4-10.12.2.1149` →
+/// `10.12.2.1149` for `1.7.10-pre4`); a short version is returned as is.
 pub fn short_version<'a>(game: &str, version: &'a str) -> &'a str {
-    version
-        .strip_prefix(game)
-        .and_then(|rest| rest.strip_prefix('-'))
+    let maven = maven_game(game);
+    [game, &*maven]
+        .into_iter()
+        .find_map(|prefix| version.strip_prefix(prefix)?.strip_prefix('-'))
         .unwrap_or(version)
 }
 
@@ -229,10 +263,12 @@ pub fn versions_for_game(
     promotions: Option<&Promotions>,
 ) -> Result<LoaderVersions> {
     check_game(game)?;
+    let maven = maven_game(game);
+    let unstable_game = is_prerelease_game(game);
     let mut found: Vec<(Vec<u64>, &str)> = all
         .iter()
         .filter_map(|v| split_maven_version(v))
-        .filter(|(g, _)| *g == game)
+        .filter(|(g, _)| *g == maven)
         .filter_map(|(_, forge)| numbers(forge).map(|n| (n, forge)))
         .collect();
     found.sort_by(|a, b| b.0.cmp(&a.0));
@@ -241,11 +277,12 @@ pub fn versions_for_game(
         .into_iter()
         .map(|(n, forge)| LoaderVersion {
             version: forge.to_owned(),
-            stable: true,
+            stable: !unstable_game,
             recommended: recommended
                 .as_ref()
                 .is_some_and(|r| n.cmp(r) == Ordering::Equal),
             latest: false,
+            unstable_game,
         })
         .collect();
     LoaderVersions::new(ComponentKind::Forge, game, versions)
@@ -325,5 +362,37 @@ mod tests {
             installer_path("1.20.1", "47.3.0").unwrap(),
             "net/minecraftforge/forge/1.20.1-47.3.0/forge-1.20.1-47.3.0-installer.jar"
         );
+    }
+
+    #[test]
+    fn names_pre_releases_as_forge_does() {
+        assert_eq!(maven_game("1.7.10-pre4"), "1.7.10_pre4");
+        assert_eq!(maven_game("1.7.10_pre4"), "1.7.10_pre4");
+        for same in [
+            "1.7.10",
+            "26.1-pre-3",
+            "26.1-snapshot-1",
+            "1.7.10-pre",
+            "1.7-prex",
+        ] {
+            assert_eq!(maven_game(same), same);
+        }
+        assert!(is_prerelease_game("1.7.10-pre4"));
+        assert!(is_prerelease_game("1.7.10_pre4"));
+        assert!(!is_prerelease_game("1.7.10"));
+        assert_eq!(
+            maven_version("1.7.10-pre4", "10.12.2.1149").unwrap(),
+            "1.7.10_pre4-10.12.2.1149"
+        );
+        assert_eq!(
+            short_version("1.7.10-pre4", "1.7.10-pre4-10.12.2.1149"),
+            "10.12.2.1149"
+        );
+        assert_eq!(
+            short_version("1.7.10-pre4", "1.7.10_pre4-10.12.2.1149"),
+            "10.12.2.1149"
+        );
+        assert!(is_legacy_game("1.7.10-pre4"));
+        assert!(check_game("1.7.10-pre4").is_ok());
     }
 }

@@ -5,7 +5,13 @@
   <versioning>
     <versions>
       <version>26.1.0.0-alpha.1+snapshot-1</version>
+      <version>26.1.0.0-alpha.10+snapshot-6</version>
+      <version>26.1.0.0-alpha.2+snapshot-1</version>
+      <version>26.1.0.0-alpha.4+snapshot-1</version>
+      <version>26.1.0.0-alpha.9+snapshot-6</version>
       <version>26.1.0.0-alpha.15+pre-3</version>
+      <version>0.25w14craftmine.3-beta</version>
+      <version>0.25w14craftmine.4-beta</version>
       <version>0.25w14craftmine.5-beta</version>
       <version>20.2.3-beta</version>
       <version>20.2.93</version>
