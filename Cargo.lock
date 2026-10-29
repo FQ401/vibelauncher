@@ -4344,6 +4344,9 @@ name = "vl-app"
 version = "0.0.0"
 dependencies = [
  "eframe",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "sys-locale",
  "sysinfo",
  "tray-icon",
