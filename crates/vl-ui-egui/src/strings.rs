@@ -51,3 +51,14 @@ pub const TRAY_TOOLTIP: &str = "tray-tooltip";
 pub const TRAY_SHOW: &str = "tray-show";
 pub const TRAY_STOP: &str = "tray-stop";
 pub const TRAY_QUIT_AFTER: &str = "tray-quit-after";
+
+pub const SEARCH: &str = "search";
+
+pub const WINDOW_MINIMIZE: &str = "window-minimize";
+pub const WINDOW_MAXIMIZE: &str = "window-maximize";
+pub const WINDOW_RESTORE: &str = "window-restore";
+pub const WINDOW_CLOSE: &str = "window-close";
+
+pub const SETTINGS_WINDOW: &str = "settings-window";
+pub const SETTINGS_SYSTEM_FRAME: &str = "settings-system-frame";
+pub const SETTINGS_SYSTEM_FRAME_PENDING: &str = "settings-system-frame-pending";

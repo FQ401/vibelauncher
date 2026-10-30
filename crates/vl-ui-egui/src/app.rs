@@ -1,10 +1,10 @@
-//! The window shell: left rail, top bar, tasks panel and the page of the current section.
+//! The window shell: the title bar, left rail, tasks panel and the page of the current section.
 
 use std::time::Duration;
 
 use egui::{
-    Align, Align2, CentralPanel, Context, CornerRadius, Frame, Key, Layout, Margin, Modifiers,
-    Panel, RichText, Sense, Ui, vec2,
+    Align, Align2, CentralPanel, Context, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout,
+    Margin, Modifiers, Panel, Rect, RichText, Sense, Ui, UiBuilder, pos2, vec2,
 };
 use vl_core::instance::InstanceState;
 use vl_core::launch::GameExit;
@@ -18,11 +18,21 @@ use crate::nav::Section;
 use crate::screens::{self, Action, Ctx};
 use crate::strings;
 use crate::theme::{self, Palette, ThemeMode};
+use crate::title_bar::{self, BAR_HEIGHT, ButtonColors, ButtonLabels, MAC_BUTTONS_INSET};
 use crate::widgets::{chip, gradient_rect, text_at};
-use crate::window::{TrayTexts, WindowRequest};
+use crate::window::{TrayTexts, WindowChrome, WindowRequest};
 
 const RAIL_WIDTH: f32 = 72.0;
 const TASKS_WIDTH: f32 = 360.0;
+/// The widest the search field of the title bar grows.
+const SEARCH_MAX_WIDTH: f32 = 400.0;
+/// Ctrl+K (Cmd+K on macOS) focuses the search field.
+const SEARCH_SHORTCUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
+
+/// The id of the search field of the title bar.
+fn search_id() -> Id {
+    Id::unique("vl-title-search")
+}
 
 /// The launcher interface. Create it once and call [`Launcher::ui`] every frame.
 pub struct Launcher {
@@ -37,6 +47,10 @@ pub struct Launcher {
     quit_after_game: bool,
     /// The "stop the game?" question is open.
     confirm_stop: bool,
+    /// How the window is framed.
+    chrome: WindowChrome,
+    /// The text of the search field.
+    search: String,
 }
 
 impl Launcher {
@@ -53,7 +67,28 @@ impl Launcher {
             request: None,
             quit_after_game: false,
             confirm_stop: false,
+            chrome: WindowChrome::default(),
+            search: String::new(),
         }
+    }
+
+    /// Tells the launcher how its window is framed; the title bar draws to match.
+    pub fn set_window_chrome(&mut self, chrome: WindowChrome) {
+        self.chrome = chrome;
+    }
+
+    /// How the launcher believes its window is framed.
+    pub fn window_chrome(&self) -> WindowChrome {
+        self.chrome
+    }
+
+    /// Whether the user wants the operating system's window frame (`launcher.system_frame`);
+    /// `None` until the settings are read.
+    pub fn wants_system_frame(&self) -> Option<bool> {
+        self.model
+            .settings
+            .as_ref()
+            .map(|s| s.launcher.system_frame)
     }
 
     /// Launches an instance (by its id) with the default account. Returns `false` for an
@@ -254,8 +289,8 @@ impl Launcher {
             ThemeMode::Dark => Palette::DARK,
             ThemeMode::Light => Palette::LIGHT,
         };
+        self.title_bar(ui, &palette);
         self.rail(ui, &palette);
-        self.top_bar(ui, &palette);
         if self.tasks_open {
             Panel::right("tasks")
                 .exact_size(TASKS_WIDTH)
@@ -269,6 +304,7 @@ impl Launcher {
                         model: &mut self.model,
                         palette,
                         i18n: &self.i18n,
+                        chrome: self.chrome,
                     };
                     screens::tasks_panel(ui, &mut cx);
                 });
@@ -281,6 +317,7 @@ impl Launcher {
                     model: &mut self.model,
                     palette,
                     i18n: &self.i18n,
+                    chrome: self.chrome,
                 };
                 action = match self.section {
                     Section::Home => screens::home(ui, &mut cx),
@@ -306,9 +343,13 @@ impl Launcher {
             self.section = Section::Instances;
         }
         self.stop_question(ui);
+        if self.chrome == WindowChrome::Custom {
+            title_bar::handle_resize(&ctx, title_bar::frame_of(&ctx, self.chrome));
+        }
     }
 
-    /// Ctrl+1 Home, Ctrl+2 Instances, Ctrl+3 Account, Ctrl+, Settings, Ctrl+J Tasks.
+    /// Ctrl+1 Home, Ctrl+2 Instances, Ctrl+3 Account, Ctrl+, Settings, Ctrl+J Tasks, Ctrl+K
+    /// search.
     fn shortcuts(&mut self, ctx: &Context) {
         let pressed = |key: Key| ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, key));
         if pressed(Key::Num1) {
@@ -326,7 +367,10 @@ impl Launcher {
         if pressed(Key::J) {
             self.tasks_open = !self.tasks_open;
         }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) && self.tasks_open {
+        if ctx.input_mut(|i| i.consume_shortcut(&SEARCH_SHORTCUT)) {
+            ctx.memory_mut(|m| m.request_focus(search_id()));
+        }
+        if self.tasks_open && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             self.tasks_open = false;
         }
     }
@@ -344,17 +388,6 @@ impl Launcher {
             )
             .show(ui, |ui| {
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                    let (logo, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                    gradient_rect(ui, logo, 12, p.accent, p.accent_hover);
-                    text_at(
-                        ui,
-                        logo.center(),
-                        Align2::CENTER_CENTER,
-                        "V",
-                        20.0,
-                        p.on_accent,
-                    );
-                    ui.add_space(12.0);
                     for section in Section::ALL {
                         if rail_button(
                             ui,
@@ -370,30 +403,6 @@ impl Launcher {
                     }
                 });
                 ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
-                    let fraction = self
-                        .model
-                        .tasks
-                        .iter()
-                        .find_map(|t| t.progress.as_ref().and_then(|pr| pr.fraction()));
-                    let active = !self.model.tasks.is_empty();
-                    if rail_button(
-                        ui,
-                        p,
-                        &i18n.t(strings::NAV_TASKS),
-                        self.tasks_open,
-                        |painter, rect, color| {
-                            icons::paint_ring(painter, rect.center(), fraction, color, p.border);
-                            if active {
-                                painter.circle_filled(
-                                    rect.center() + vec2(14.0, -14.0),
-                                    4.0,
-                                    p.accent,
-                                );
-                            }
-                        },
-                    ) {
-                        self.tasks_open = !self.tasks_open;
-                    }
                     let dark = self.theme == ThemeMode::Dark;
                     let label = if dark {
                         i18n.t(strings::THEME_LIGHT)
@@ -412,60 +421,186 @@ impl Launcher {
         }
     }
 
-    fn top_bar(&mut self, ui: &mut Ui, p: &Palette) {
-        let i18n = &self.i18n;
+    /// The title bar: the logo, the section, the search field, the status chips, the tasks
+    /// indicator and, without the system frame, the window buttons. Its empty parts move the
+    /// window unless the system frame does.
+    fn title_bar(&mut self, ui: &mut Ui, p: &Palette) {
+        let ctx = ui.ctx().clone();
+        let chrome = self.chrome;
+        let frame = title_bar::frame_of(&ctx, chrome);
         let mut dismiss = false;
-        Panel::top("top_bar")
-            .exact_size(56.0)
+        let mut toggle_tasks = false;
+        Panel::top("title_bar")
+            .exact_size(BAR_HEIGHT)
             .resizable(false)
-            .frame(
-                Frame::new()
-                    .fill(p.bg)
-                    .inner_margin(Margin::symmetric(24, 10)),
-            )
+            .frame(Frame::new().fill(p.bg))
             .show(ui, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.label(
-                        RichText::new(i18n.t(self.section.label_id()))
-                            .heading()
-                            .color(p.text),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if let Some(error) = &self.model.last_error {
-                            dismiss = error_chip(ui, p, &i18n.t(strings::LAST_ERROR))
-                                .on_hover_text(format!(
-                                    "{error}
+                let bar = ui.max_rect();
+                let background = ui.interact(
+                    bar,
+                    ui.scope_id().with("background"),
+                    Sense::click_and_drag(),
+                );
+                if chrome != WindowChrome::System {
+                    title_bar::handle_bar(&ctx, &background, frame);
+                }
+                // The rail's column goes on up through the bar.
+                let column = Rect::from_min_size(bar.min, vec2(RAIL_WIDTH, bar.height()));
+                ui.painter()
+                    .rect_filled(column, CornerRadius::ZERO, p.surface);
+                let logo_slot = if chrome == WindowChrome::Transparent {
+                    Rect::from_min_size(
+                        pos2(bar.left() + MAC_BUTTONS_INSET, bar.top()),
+                        vec2(48.0, bar.height()),
+                    )
+                } else {
+                    column
+                };
+                let logo = Rect::from_center_size(logo_slot.center(), vec2(40.0, 40.0));
+                gradient_rect(ui, logo, 12, p.accent, p.accent_hover);
+                text_at(
+                    ui,
+                    logo.center(),
+                    Align2::CENTER_CENTER,
+                    "V",
+                    20.0,
+                    p.on_accent,
+                );
 
-{}",
-                                    i18n.t(strings::DISMISS_HINT)
-                                ))
-                                .clicked();
-                        }
-                        if self.model.backend.is_none() {
-                            chip(
-                                ui,
-                                &i18n.t(strings::BACKEND_LOST),
-                                p.danger,
-                                p.surface_sunken,
-                            );
-                        }
-                        if self.model.backend.as_ref().is_some_and(|b| b.mock) {
-                            chip(ui, &i18n.t(strings::MOCK_DATA), p.accent_subtle, p.accent);
-                        }
-                        let playing = self
-                            .model
-                            .instances
-                            .iter()
-                            .any(|i| matches!(i.state, InstanceState::Running { .. }));
-                        if playing {
-                            chip(ui, &i18n.t(strings::PLAYING), p.success, p.surface_sunken);
-                        }
-                    });
-                });
+                if chrome == WindowChrome::Custom {
+                    let colors = ButtonColors {
+                        glyph: p.text,
+                        hover: p.surface_hover,
+                        pressed: p.border,
+                    };
+                    let labels = ButtonLabels {
+                        minimize: self.i18n.t(strings::WINDOW_MINIMIZE),
+                        maximize: self.i18n.t(strings::WINDOW_MAXIMIZE),
+                        restore: self.i18n.t(strings::WINDOW_RESTORE),
+                        close: self.i18n.t(strings::WINDOW_CLOSE),
+                    };
+                    title_bar::window_buttons(ui, frame, &colors, &labels);
+                }
+
+                let middle = Rect::from_min_max(
+                    pos2(logo_slot.right() + 24.0, bar.top()),
+                    pos2(
+                        bar.right() - title_bar::buttons_width(chrome) - 12.0,
+                        bar.bottom(),
+                    ),
+                );
+                let right = ui
+                    .scope_builder(
+                        UiBuilder::new()
+                            .max_rect(middle)
+                            .layout(Layout::right_to_left(Align::Center)),
+                        |ui| {
+                            toggle_tasks = self.tasks_indicator(ui, p);
+                            dismiss = self.status_chips(ui, p);
+                        },
+                    )
+                    .response
+                    .rect;
+                let left = Rect::from_min_max(
+                    middle.min,
+                    pos2((right.left() - 16.0).max(middle.left()), middle.bottom()),
+                );
+                ui.scope_builder(
+                    UiBuilder::new()
+                        .max_rect(left)
+                        .layout(Layout::left_to_right(Align::Center)),
+                    |ui| {
+                        ui.label(
+                            RichText::new(self.i18n.t(self.section.label_id()))
+                                .heading()
+                                .color(p.text),
+                        );
+                        ui.add_space(16.0);
+                        self.search_field(ui, &ctx);
+                    },
+                );
             });
         if dismiss {
             self.model.last_error = None;
         }
+        if toggle_tasks {
+            self.tasks_open = !self.tasks_open;
+        }
+    }
+
+    /// The search field (Ctrl+K). It narrows with the window.
+    fn search_field(&mut self, ui: &mut Ui, ctx: &Context) {
+        let width = ui.available_width().min(SEARCH_MAX_WIDTH);
+        if width < 48.0 {
+            return;
+        }
+        let hint = format!(
+            "{}  {}",
+            self.i18n.t(strings::SEARCH),
+            ctx.format_shortcut(&SEARCH_SHORTCUT)
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut self.search)
+                .id(search_id())
+                .hint_text(hint)
+                .desired_width(width)
+                .margin(Margin::symmetric(12, 8)),
+        );
+    }
+
+    /// The tasks (downloads) indicator: a ring of the first task's progress. Returns whether it
+    /// was clicked.
+    fn tasks_indicator(&self, ui: &mut Ui, p: &Palette) -> bool {
+        let fraction = self
+            .model
+            .tasks
+            .iter()
+            .find_map(|t| t.progress.as_ref().and_then(|pr| pr.fraction()));
+        let active = !self.model.tasks.is_empty();
+        rail_button(
+            ui,
+            p,
+            &self.i18n.t(strings::NAV_TASKS),
+            self.tasks_open,
+            |painter, rect, color| {
+                icons::paint_ring(painter, rect.center(), fraction, color, p.border);
+                if active {
+                    painter.circle_filled(rect.center() + vec2(14.0, -14.0), 4.0, p.accent);
+                }
+            },
+        )
+    }
+
+    /// The chips of the bar, right to left: playing, test data, core lost, the latest error.
+    /// Returns whether the error chip was clicked.
+    fn status_chips(&self, ui: &mut Ui, p: &Palette) -> bool {
+        let i18n = &self.i18n;
+        let playing = self
+            .model
+            .instances
+            .iter()
+            .any(|i| matches!(i.state, InstanceState::Running { .. }));
+        if playing {
+            chip(ui, &i18n.t(strings::PLAYING), p.success, p.surface_sunken);
+        }
+        if self.model.backend.as_ref().is_some_and(|b| b.mock) {
+            chip(ui, &i18n.t(strings::MOCK_DATA), p.accent_subtle, p.accent);
+        }
+        if self.model.backend.is_none() {
+            chip(
+                ui,
+                &i18n.t(strings::BACKEND_LOST),
+                p.danger,
+                p.surface_sunken,
+            );
+        }
+        let mut dismiss = false;
+        if let Some(error) = &self.model.last_error {
+            dismiss = error_chip(ui, p, &i18n.t(strings::LAST_ERROR))
+                .on_hover_text(format!("{error}\n\n{}", i18n.t(strings::DISMISS_HINT)))
+                .clicked();
+        }
+        dismiss
     }
 }
 
@@ -668,5 +803,149 @@ mod tests {
                 frame(&ctx, &mut launcher);
             }
         }
+    }
+
+    /// A window of 1280x800 points around the launcher, driven by synthetic input.
+    struct Window {
+        ctx: Context,
+        launcher: Launcher,
+        time: f64,
+    }
+
+    impl Window {
+        fn new(chrome: WindowChrome) -> Self {
+            let ctx = Context::default();
+            let mut launcher =
+                Launcher::new(&ctx, Box::new(MockFacade::new(MockOptions::instant())));
+            launcher.set_window_chrome(chrome);
+            let mut window = Self {
+                ctx,
+                launcher,
+                time: 0.0,
+            };
+            window.frame(Vec::new());
+            window
+        }
+
+        /// Draws one frame with `events` and returns the viewport commands it sent.
+        fn frame(&mut self, events: Vec<egui::Event>) -> Vec<egui::ViewportCommand> {
+            self.time += 0.05;
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            };
+            let launcher = &mut self.launcher;
+            let mut output = self.ctx.run_ui(input, |ui| launcher.ui(ui));
+            output.textures_delta.clear();
+            output
+                .viewport_output
+                .remove(&egui::ViewportId::ROOT)
+                .map(|v| v.commands)
+                .unwrap_or_default()
+        }
+
+        fn button(pos: egui::Pos2, pressed: bool) -> egui::Event {
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            }
+        }
+
+        /// Clicks at `pos` and returns the commands of the press and the release frames.
+        fn click(&mut self, x: f32, y: f32) -> Vec<egui::ViewportCommand> {
+            let pos = pos2(x, y);
+            self.frame(vec![egui::Event::PointerMoved(pos)]);
+            let mut commands = self.frame(vec![Self::button(pos, true)]);
+            commands.extend(self.frame(vec![Self::button(pos, false)]));
+            commands
+        }
+    }
+
+    #[test]
+    fn the_window_buttons_minimize_maximize_and_close() {
+        use egui::ViewportCommand::{Close, Maximized, Minimized};
+        let mut window = Window::new(WindowChrome::Custom);
+        let close = 1280.0 - title_bar::BUTTON_WIDTH / 2.0;
+        let maximize = close - title_bar::BUTTON_WIDTH;
+        let minimize = maximize - title_bar::BUTTON_WIDTH;
+        assert!(window.click(close, 30.0).contains(&Close));
+        assert!(window.click(maximize, 30.0).contains(&Maximized(true)));
+        assert!(window.click(minimize, 30.0).contains(&Minimized(true)));
+        // The same place with the system frame is part of the bar.
+        let mut window = Window::new(WindowChrome::System);
+        assert!(!window.click(close, 30.0).contains(&Close));
+        let mut window = Window::new(WindowChrome::Transparent);
+        assert!(!window.click(close, 30.0).contains(&Close));
+    }
+
+    #[test]
+    fn the_bar_moves_the_window_and_a_double_click_maximizes_it() {
+        use egui::ViewportCommand::{Maximized, StartDrag};
+        for chrome in [WindowChrome::Custom, WindowChrome::Transparent] {
+            let mut window = Window::new(chrome);
+            let start = pos2(36.0, 30.0);
+            window.frame(vec![egui::Event::PointerMoved(start)]);
+            let mut commands = window.frame(vec![Window::button(start, true)]);
+            commands.extend(window.frame(vec![egui::Event::PointerMoved(start + vec2(30.0, 4.0))]));
+            commands.extend(window.frame(vec![Window::button(start + vec2(30.0, 4.0), false)]));
+            assert!(commands.contains(&StartDrag), "{chrome:?}: {commands:?}");
+
+            let mut commands = window.click(36.0, 30.0);
+            commands.extend(window.click(36.0, 30.0));
+            assert!(
+                commands.contains(&Maximized(true)),
+                "{chrome:?}: {commands:?}"
+            );
+        }
+        let mut window = Window::new(WindowChrome::System);
+        let mut commands = window.click(36.0, 30.0);
+        commands.extend(window.click(36.0, 30.0));
+        assert!(
+            commands.is_empty(),
+            "the system frame moves the window: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn the_edges_resize_a_window_without_the_system_frame() {
+        use egui::ViewportCommand::BeginResize;
+        use egui::viewport::ResizeDirection;
+        let mut window = Window::new(WindowChrome::Custom);
+        assert!(
+            window
+                .click(640.0, 1.0)
+                .contains(&BeginResize(ResizeDirection::North))
+        );
+        assert!(
+            window
+                .click(1279.0, 799.0)
+                .contains(&BeginResize(ResizeDirection::SouthEast))
+        );
+        assert!(
+            window
+                .click(0.0, 400.0)
+                .contains(&BeginResize(ResizeDirection::West))
+        );
+        let mut window = Window::new(WindowChrome::System);
+        assert!(window.click(0.0, 400.0).is_empty());
+    }
+
+    #[test]
+    fn ctrl_k_focuses_the_search_field() {
+        let mut window = Window::new(WindowChrome::Custom);
+        assert_ne!(window.ctx.memory(|m| m.focused()), Some(search_id()));
+        window.frame(vec![egui::Event::Key {
+            key: Key::K,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        }]);
+        window.frame(Vec::new());
+        assert_eq!(window.ctx.memory(|m| m.focused()), Some(search_id()));
     }
 }

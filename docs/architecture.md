@@ -803,7 +803,9 @@ Launcher log); `storage`, the limits of the trash of deleted instances (`trash_d
 default, 1 to 3650; `trash_max_gib`, 20 by default, 1 to 65536); and `launcher`, the desktop
 app's window around a running game: `after_launch` (`hide_to_tray`, the default: the window
 closes and the launcher watches the game from the tray; `keep_open`; `close_launcher`) and
-`on_game_exit` (`show_window`, the default, or `nothing`; a crash always brings the window back).
+`on_game_exit` (`show_window`, the default, or `nothing`; a crash always brings the window back)
+and `system_frame` (`false`, the default: the window has the launcher's own title bar; `true`:
+the operating system's frame).
 
 On disk (`vl-settings`, TOML, written with `vl_store::write_atomic`):
 
@@ -1101,9 +1103,31 @@ bytes as measured (about 3 MiB). The measurement is `apps/vibelauncher/tests/wat
 built with the `dev-game` feature, where `VL_DEV_GAME` replaces the game with a test program);
 the `watcher-budget` workflow runs it by hand on Linux (Xvfb, Mesa software rendering) and
 macOS. `vl-ui-egui` depends on `egui` only, not on a windowing crate. Its
-layout: a left rail of five sections (Home, Instances, Catalog, Account, Settings), a top bar, a
+layout: a title bar, a left rail of five sections (Home, Instances, Catalog, Account, Settings), a
 tasks panel (Ctrl+J) and the page of the current section; colors, spacing and type scale come from
 the design tokens in `theme.rs`.
+
+**Window frame.** The title bar is the top row of the interface, 60 points tall: the logo, the
+section, the search field (Ctrl+K, Cmd+K on macOS, focuses it; it narrows with the window), the
+status chips, the tasks indicator and the window buttons. The app chooses the frame when it opens
+a window (`vl_ui_egui::WindowChrome`) from the setting `launcher.system_frame`, read from the
+facade before the first window (2 s at most, then the default):
+
+- Windows and Linux (`Custom`): no system decorations. An empty part of the bar moves the window
+  (`ViewportCommand::StartDrag`) and a double click maximizes or restores it; minimize, maximize
+  and close are 46 points wide at the right end (close turns red under the pointer) and carry
+  AccessKit names; a 5-point invisible border along the edges, with 16-point grips at the
+  corners, resizes the window (`ViewportCommand::BeginResize`) and shows the resize cursor. A
+  maximized window has no border. The geometry is a pure function (`title_bar::hit_test`).
+  Windows keeps snapping to the screen edges and Win+arrows; the Snap Layouts menu of the
+  maximize button needs the system frame.
+- macOS (`Transparent`): the native window buttons over a transparent title bar, with the
+  content under it (`fullsize_content_view`, `title_shown(false)`, `titlebar_shown(false)`); the
+  bar's content starts 80 points in, to the right of the buttons, and the bar moves the window.
+- `system_frame = true` (`System`): the operating system's frame; the bar has no window buttons
+  and does not move the window. On Windows and Linux a change of the setting switches the open
+  window (`ViewportCommand::Decorations`); on macOS the next window follows it. The startup
+  failure screen always has the system frame.
 
 **`vl-cli`.** Parses arguments, starts a backend (`--mock` selects `vl-mock`, `--dir` selects the
 data folder), sends commands and blocks on replies. Long commands (`launch`) subscribe

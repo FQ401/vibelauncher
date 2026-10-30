@@ -17,6 +17,7 @@ use vl_core::instance::{InstanceSummary, Loader};
 use crate::i18n::I18n;
 use crate::model::Model;
 use crate::theme::Palette;
+use crate::window::WindowChrome;
 
 /// Something a screen asks the shell to do.
 pub enum Action {
@@ -29,6 +30,8 @@ pub struct Ctx<'a> {
     pub model: &'a mut Model,
     pub palette: Palette,
     pub i18n: &'a I18n,
+    /// How the window is framed.
+    pub chrome: WindowChrome,
 }
 
 /// "Fabric 0.20.1", "Vanilla".

@@ -30,3 +30,21 @@ pub struct TrayTexts {
     /// Quit the launcher once no game runs.
     pub quit_after_game: String,
 }
+
+/// How the window around the launcher is framed. The app chooses it when it opens the window
+/// (from the platform and the setting `launcher.system_frame`) and tells the launcher, which
+/// draws its title bar to match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowChrome {
+    /// The operating system's frame and title bar. The launcher's bar draws no window buttons
+    /// and does not move the window.
+    #[default]
+    System,
+    /// No system frame (Windows, Linux): the launcher's bar moves the window, a double click on
+    /// it maximizes, it has the minimize, maximize and close buttons, and the window edges
+    /// resize the window.
+    Custom,
+    /// macOS: a transparent title bar with the native window buttons over the launcher's bar,
+    /// whose content starts to their right.
+    Transparent,
+}
