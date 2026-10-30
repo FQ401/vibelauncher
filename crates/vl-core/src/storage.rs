@@ -133,6 +133,16 @@ pub struct Leftover {
     pub size: Option<u64>,
 }
 
+/// The launcher's trash of deleted instances (`<data>/trash`); its size is not counted in the
+/// data folder's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrashFolder {
+    /// The folder.
+    pub path: PathBuf,
+    /// Bytes used, when sizes were asked for.
+    pub size: Option<u64>,
+}
+
 /// The storage layout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageInfo {
@@ -142,6 +152,8 @@ pub struct StorageInfo {
     pub source: RootSource,
     /// Every section, the data folder first.
     pub sections: Vec<SectionInfo>,
+    /// The trash of deleted instances.
+    pub trash: TrashFolder,
     /// Old copies that a cleanup would remove.
     pub leftovers: Vec<Leftover>,
     /// A section was moved; the launcher uses the new place after a restart and refuses other

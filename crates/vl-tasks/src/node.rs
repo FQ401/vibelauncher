@@ -428,10 +428,29 @@ impl TaskContext {
         self.report(done, Some(total), ProgressUnit::Items);
     }
 
-    /// Names the current stage (English technical text, e.g. `libraries`).
+    /// Names the current stage (English technical text, e.g. `libraries`). A new stage starts
+    /// without counters: those of the previous stage are dropped, not shown under the new name.
     pub fn set_stage(&self, stage: &str) {
-        self.node
-            .update(|state| state.stage = Some(stage.to_owned()));
+        self.node.update(|state| {
+            if state.stage.as_deref() != Some(stage) {
+                state.own = None;
+                state.stage = Some(stage.to_owned());
+            }
+        });
+    }
+
+    /// Enters `stage` and reports its progress as one event, so the counters always belong to
+    /// the stage they are shown with.
+    pub fn report_stage(&self, stage: &str, done: u64, total: Option<u64>, unit: ProgressUnit) {
+        self.node.update(|state| {
+            state.stage = Some(stage.to_owned());
+            state.own = Some(Progress {
+                done,
+                total,
+                unit,
+                stage: Some(stage.to_owned()),
+            });
+        });
     }
 
     /// The weight of this task's own reported progress next to its subtasks (default 0, so only

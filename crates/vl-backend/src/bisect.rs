@@ -32,7 +32,8 @@ const REPORT_FILE: &str = "bisect-report.json";
 pub(crate) struct Running(Arc<Mutex<HashSet<InstanceId>>>);
 
 impl Running {
-    fn contains(&self, id: &InstanceId) -> bool {
+    /// Whether an automatic search runs on the instance.
+    pub(crate) fn contains(&self, id: &InstanceId) -> bool {
         self.lock().contains(id)
     }
 

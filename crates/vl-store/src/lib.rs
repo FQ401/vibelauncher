@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 
 use vl_core::storage::{
     CleanupReport, Leftover, MoveRequest, PathCheck, RootSource, Section, SectionInfo, StorageInfo,
-    StorageSuggestion,
+    StorageSuggestion, TrashFolder,
 };
 
 pub use atomic::{write_atomic, write_atomic_with};
@@ -160,6 +160,11 @@ impl Store {
         self.dir(Section::Logs)
     }
 
+    /// The trash of deleted instances (`<data>/trash`).
+    pub fn trash_dir(&self) -> PathBuf {
+        self.layout.trash_dir()
+    }
+
     /// What chose the data folder.
     pub fn source(&self) -> RootSource {
         self.layout.source()
@@ -238,12 +243,13 @@ impl StoreView {
             .map(|section| {
                 let path = self.layout.path(section);
                 let size = if section == Section::Data {
-                    // The data folder without the default sections inside it.
+                    // The data folder without the default sections and the trash inside it.
                     sizes.then(|| {
                         let inner: u64 = Section::ALL
                             .into_iter()
                             .filter(|s| *s != Section::Data && self.layout.is_default(*s))
                             .flat_map(|s| self.layout.owned(s))
+                            .chain([self.layout.trash_dir()])
                             .map(|p| retention::size_of(&p))
                             .sum();
                         retention::size_of(&path).saturating_sub(inner)
@@ -287,6 +293,10 @@ impl StoreView {
             root: self.layout.root().to_path_buf(),
             source: self.layout.source(),
             sections,
+            trash: TrashFolder {
+                size: measure(&[self.layout.trash_dir()]),
+                path: self.layout.trash_dir(),
+            },
             leftovers,
             restart_required: false,
         }

@@ -268,6 +268,63 @@ impl Default for AdvancedSettings {
     }
 }
 
+/// Smallest allowed number of days a deleted instance is kept.
+pub const TRASH_DAYS_MIN: u32 = 1;
+/// Largest allowed number of days a deleted instance is kept (ten years).
+pub const TRASH_DAYS_MAX: u32 = 3650;
+/// Smallest allowed size limit of the trash, GiB.
+pub const TRASH_GIB_MIN: u32 = 1;
+/// Largest allowed size limit of the trash, GiB (64 TiB).
+pub const TRASH_GIB_MAX: u32 = 1 << 16;
+
+/// Limits of the trash of deleted instances. Global only: an instance cannot override them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageSettings {
+    /// Days a deleted instance is kept before it is erased.
+    pub trash_days: u32,
+    /// Size limit of the trash, GiB; beyond it the oldest deleted instances are erased.
+    pub trash_max_gib: u32,
+    /// Unknown fields, kept on save.
+    #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
+    pub extra: Extra,
+}
+
+impl Default for StorageSettings {
+    fn default() -> Self {
+        Self {
+            trash_days: crate::trash::DEFAULT_KEEP_DAYS,
+            trash_max_gib: crate::trash::DEFAULT_MAX_GIB,
+            extra: Extra::default(),
+        }
+    }
+}
+
+impl StorageSettings {
+    /// Checks the ranges.
+    pub fn validate(&self) -> Result<(), Error> {
+        check_range(
+            "storage",
+            "trash_days",
+            self.trash_days,
+            TRASH_DAYS_MIN,
+            TRASH_DAYS_MAX,
+        )?;
+        check_range(
+            "storage",
+            "trash_max_gib",
+            self.trash_max_gib,
+            TRASH_GIB_MIN,
+            TRASH_GIB_MAX,
+        )
+    }
+
+    /// The size limit of the trash in bytes.
+    pub fn trash_max_bytes(&self) -> u64 {
+        u64::from(self.trash_max_gib) << 30
+    }
+}
+
 /// What the launcher window does once a game is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -465,6 +522,8 @@ pub struct Settings {
     pub advanced: AdvancedSettings,
     /// The launcher window around a running game (global only).
     pub launcher: LauncherSettings,
+    /// Limits of the trash of deleted instances (global only).
+    pub storage: StorageSettings,
     /// Unknown groups and fields, kept on save.
     #[serde(flatten, skip_serializing_if = "Extra::is_empty")]
     pub extra: Extra,
@@ -508,6 +567,7 @@ impl Settings {
                     $($g: overrides.$g.clone().unwrap_or_else(|| self.$g.clone()),)*
                     advanced: self.advanced.clone(),
                     launcher: self.launcher.clone(),
+                    storage: self.storage.clone(),
                     extra: self.extra.clone(),
                 }
             };
@@ -531,7 +591,8 @@ impl Settings {
         self.window.validate()?;
         self.console.validate()?;
         self.env.validate()?;
-        self.advanced.validate()
+        self.advanced.validate()?;
+        self.storage.validate()
     }
 
     /// Replaces every invalid group with its default; returns a message for each one replaced.
@@ -545,7 +606,7 @@ impl Settings {
                 }
             )*};
         }
-        fix!(memory, window, console, env, advanced);
+        fix!(memory, window, console, env, advanced, storage);
         problems
     }
 }

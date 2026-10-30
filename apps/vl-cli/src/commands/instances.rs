@@ -14,6 +14,7 @@ pub(crate) fn run(facade: &dyn Facade, args: &[&str], out: Out<'_>) -> Result<()
         ["worlds", rest @ ..] => datapacks::run_worlds(facade, rest, out),
         ["datapacks", rest @ ..] => datapacks::run(facade, rest, out),
         ["verify", instance] => super::verify::run(facade, instance, out),
+        ["delete", rest @ ..] => super::trash::delete(facade, rest, out),
         ["list"] => match call(facade, Command::Instances(InstanceCommand::List))? {
             Response::Instances(instances) => {
                 for i in instances {

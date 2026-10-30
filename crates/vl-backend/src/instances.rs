@@ -1,7 +1,6 @@
 //! Instance commands, served by `vl-instance`.
 //!
-//! Delete moves the instance into the launcher's own trash inside the instances directory (see
-//! `vl_instance::Instances::delete`); no command erases data.
+//! Delete and the trash of deleted instances are served by the `trash` module.
 
 use std::thread;
 
@@ -42,12 +41,14 @@ pub(crate) fn handle(backend: &Backend, command: InstanceCommand, replier: Repli
             }
             Response::Instance(i)
         }),
-        InstanceCommand::Delete { id } => service.delete(&id).map(|_| {
-            backend
-                .events
-                .publish(&Event::Instance(InstanceEvent::Removed(id)));
-            Response::Done
-        }),
+        InstanceCommand::Delete {
+            id,
+            comment,
+            permanent,
+        } => return crate::trash::delete(backend, id, comment, permanent, replier),
+        InstanceCommand::ListTrash => return crate::trash::list(backend, replier),
+        InstanceCommand::Restore { item } => return crate::trash::restore(backend, item, replier),
+        InstanceCommand::Purge(target) => return crate::trash::purge(backend, target, replier),
         other => {
             return crate::not_yet(replier, "instances", &other);
         }
@@ -163,11 +164,16 @@ mod tests {
             panic!("rename failed");
         };
         assert!(matches!(
-            call(InstanceCommand::Delete { id: b.id }),
+            call(InstanceCommand::Delete {
+                id: b.id,
+                comment: String::new(),
+                permanent: false,
+            }),
             Ok(Response::Done)
         ));
         assert!(matches!(call(InstanceCommand::List), Ok(Response::Instances(i)) if i.is_empty()));
-        assert_eq!(events.drain().count(), 4);
+        // Added, Removed + Added, Removed, TrashChanged.
+        assert_eq!(events.drain().count(), 5);
         drop(events);
         drop(backend);
         let _ = std::fs::remove_dir_all(dir);

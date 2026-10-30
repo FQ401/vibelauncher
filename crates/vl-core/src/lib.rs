@@ -30,6 +30,7 @@ pub mod self_update;
 pub mod settings;
 pub mod storage;
 pub mod task;
+pub mod trash;
 pub mod version;
 
 pub use error::{Error, ErrorKind, Result};

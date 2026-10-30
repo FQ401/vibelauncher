@@ -87,7 +87,7 @@ core      vl-core · vl-meta · vl-mods · vl-crash · vl-bisect · vl-modrinth 
 | `vl-settings` | native | Settings files: global settings and per-instance overrides as TOML, range checks, defaults on damage. |
 | `vl-auth` | native | Accounts: Microsoft sign-in (device code, Xbox Live, XSTS, Minecraft services), token refresh, offline accounts, secrets in the OS keyring. |
 | `vl-java` | native | Java runtimes: discovery on each OS, probing with a timeout, managed downloads, choosing a runtime for a game version. |
-| `vl-instance` | native | Instances on disk: format, create, list, rename, delete; damaged instances are listed with a problem. |
+| `vl-instance` | native | Instances on disk: format, create, list, rename; damaged instances are listed with a problem. `Trash`: the launcher's own trash of deleted instances (delete with a comment, delete permanently, list, restore, purge by item, all or the limits, recovery after a crash). |
 | `vl-loaders` | native | Mod loader sources: version lists per game version and launch profiles of Fabric, Quilt, NeoForge and Forge through `vl-net`, the on-disk store of the profiles in use, and the installation of NeoForge and Forge (installer, its libraries, processors run with Java behind the `ProcessorRunner` trait; for legacy Forge installers the carried Forge jar, the stripped game jar and the FML files). |
 | `vl-resources` | native | Instance resource folders (`mods`, `resourcepacks`, `shaderpacks`, `datapacks`, `global_packs/required_data`): listing with mod metadata read from jars (capped entries and sizes, bundled jars listed not opened, damaged jars reported as a problem) and `pack.mcmeta` of packs (formats and description, capped), the worlds of `saves/` (`level.dat` read for name, version and time) with `Resources::world` opening one world's `datapacks` as a resource view (names are plain folder names; a missing world is `NotFound`, "create a world first"), enable and disable by renaming to `<name>.disabled`, add by copy without replacing, remove into `<instance>/.trash/`, and the `ClassIndex` of `vl-crash` built from the packages of the enabled jars. The metadata read from jars and packs (mods, bundled jars, packages, `pack.mcmeta`) is cached per folder in `<instance>/.vibelauncher/cache-<folder>.json` (a world's data packs in `saves/<world>/.vibelauncher/`), keyed by file name without `.disabled`, size and modification time to the nanosecond: an unchanged file is not opened again, by `list` and by the class index alike, and enabling or disabling keeps the entry. The digests of a file (SHA-1, SHA-512, size, CurseForge fingerprint) are kept in the same file under the same key and stamp (`Resources::digests`: the caller computes only what is missing), so a repeated update check, origin discovery or fingerprint lookup reads no unchanged file; a listing keeps the digests of every file it lists. The cache file has a format version and a 32 MiB limit; a missing, damaged, oversized or foreign-version file is ignored and rebuilt, entries of deleted or renamed files are pruned by the next listing, `add` and `remove` drop the entry, and it is written with `write_atomic` and never makes a listing fail. `Bisect` runs a `vl-bisect` session on the mods folder: the session file `<instance>/.vibelauncher/bisect.json` is saved before any file is renamed, and ending the session in any way (finish, stop, a failed step) re-enables every file it started with. A jar provides its own mod ids and those of the jars bundled in it (one level, capped), so a mod that requires a Fabric API module keeps the Fabric API jar. `apply_set` enables an arbitrary set of the session's files for a check outside the steps; ending the session restores them as well. |
 | `vl-launch` | native | Preparing game files, building the command line, running and stopping the game process, streaming its log, detecting crashes. |
@@ -141,7 +141,7 @@ pub trait Facade: Send + Sync {
 | `Task(TaskEvent)` | `Started(TaskInfo)`, `Progress { id, progress }`, `Finished { id, outcome }` |
 | `Log(LogLine)` | a launcher log line with its source and level |
 | `LogBatch(LogBatch)` | a group of game output lines (`LogEntry`: level, time, text, line number, record, stream, thread, logger, the game's own time) with a count of lines left out |
-| `Instance(InstanceEvent)` | `Added`, `Changed`, `Removed` |
+| `Instance(InstanceEvent)` | `Added`, `Changed`, `Removed`, `TrashChanged` (read the trash again with `ListTrash`) |
 | `Launch(LaunchEvent)` | `StateChanged { instance, state }`, `Exited { instance, exit }`, `Diagnosed { instance, diagnosis }` |
 | `Bisect(BisectEvent)` | `Run { instance, run, steps_done, steps_estimate }` after each run of an automatic search, `Finished { instance, report }` |
 | `Account(AccountEvent)` | `DeviceCode(prompt)` for sign-in, `ListChanged` |
@@ -348,6 +348,10 @@ the sections with an explicit folder and the old copies left by moves:
 | `backups` | `<data>/snapshots` | snapshots taken before format migrations |
 | `logs` | `<data>/logs` | launcher logs |
 
+The trash of deleted instances is `<data>/trash`, part of the data folder; `Show { sizes }`
+reports it on a line of its own (`StorageInfo::trash`) and leaves it out of the data folder's
+size.
+
 Paths are explicit; the launcher creates no links. An explicit folder that does not exist when
 the store opens is not created again (its drive may be disconnected): the section is listed as
 unavailable, and while the folder of instances, shared game files, Java or the cache is
@@ -395,8 +399,10 @@ sections existed.
 - The old copy is recorded as a leftover with the top-level names it consists of and stays until
   `Cleanup { trash }`, which removes exactly those names (never a path that is or contains a
   folder in use), the cache and log folders of earlier launcher versions outside the data folder
-  (OS convention only), prunes logs and the cache, and with `trash` empties `instances/.trash/`
-  and the trash of every instance.
+  (OS convention only), prunes logs and the cache, and with `trash` erases every deleted
+  instance in `<data>/trash`, empties the resource trash of every instance
+  (`<instance>/.trash/`) and the instance trash of earlier versions (`instances/.trash/`).
+  A move is refused while a trash operation runs.
 
 **Growth.** When the store opens and on cleanup, the oldest files are removed until launcher logs
 and the cache fit their limits. The limits are the global `advanced` settings group
@@ -455,8 +461,49 @@ The data folder and its sections hold:
   id is the directory name. Configs are written atomically; creation is staged in a hidden
   directory and renamed into place; rename moves the directory and rolls back if the config
   cannot be written. A directory with a missing, damaged or newer config is listed with a
-  problem and does not affect the others. Delete moves the instance into `instances/.trash/`
-  (recoverable, nothing is erased); only an explicit purge empties it;
+  problem and does not affect the others;
+- `trash/` — deleted instances (`vl_instance::Trash`, `vl_core::trash`), see below;
+- the trash of deleted instances. `InstanceCommand::Delete { id, comment, permanent }` is
+  refused while the instance's game runs, an automatic mod search runs on it or a task works on
+  it (launch, install, pack update, file check, bisection). Without `permanent` the instance
+  folder moves to `<data>/trash/<item>/` and its record `<item>.json` is written next to it first
+  (format, instance id, name, group, game version, loader, deletion time, size, the comment of
+  at most 1000 characters); the item id is the instance id, with `-2`, `-3`… when taken.
+  `permanent` renames the folder to a hidden `.removing-*` name next to it and erases it, never
+  through the trash. `ListTrash` answers `TrashList` (items newest first, total size, the
+  limits); `Restore { item }` moves the folder back as the old id, or the old id with a suffix
+  when it is taken, and a display name another instance has becomes `<name> (2)`; `Purge` takes
+  one item, `All`, or `Limits`. Every change publishes `InstanceEvent::TrashChanged`.
+
+  **Limits.** Items older than `storage.trash_days` are erased, then the oldest while the trash
+  is over `storage.trash_max_gib`; the most recently deleted item is never erased for size, so a
+  deletion never erases at once what was just deleted. A `CleanTrash` task does this when the
+  backend starts and after each deletion into the trash, and only when something is due.
+
+  **Other volumes.** When the trash and the instances are on different volumes (the instances
+  section moved with `storage move`), a rename fails with "crosses devices" and the folder moves
+  by copy: the source is first renamed to `.deleting-<item>` next to itself (it leaves the list
+  at once), copied to `.incoming-<item>` in the trash with every file flushed to disk, the copy
+  is compared with the source (the same folders and files with the same sizes), renamed to
+  `<item>` (the commit), and only then is the source erased. A failure before the commit removes
+  the copy and renames the source back. A restore works the same way in the other direction
+  (`.restoring-<item>` in the trash, `.restoring-<id>` in the instances folder, the target id
+  recorded in the record before the copy). When the backend starts, `Trash::recover` finishes
+  what a crash interrupted with renames only: a parked source whose destination exists was
+  committed and is erased; any other parked source goes back; a staging copy is never the only
+  copy and is erased; a record without its folder is removed. The `CleanTrash` task erases the
+  `.removing-*` leftovers. A copy leaves out links inside the instance (each is reported as a
+  launcher log line); an instance folder that is itself a link is never copied: across volumes
+  only a permanent delete removes it.
+
+  **Safety.** Links are never followed: sizes do not count what they point to, erasing removes
+  the link and not its target. Item ids and the instance id in a record are used as paths only
+  when they are plain folder names (no separator, no leading dot); a record larger than 64 KiB,
+  damaged, of a newer format or missing makes the item listed with a problem (name, group and
+  game version then come from the instance's own config), and such an item can still be
+  restored under its item id or purged. Deleted instances of earlier versions in
+  `instances/.trash/<id>-<unix time>` are moved into the trash by the `CleanTrash` task, with the
+  time from the name;
 - loader profiles in the metadata cache: `vl_core::component` models an instance as the game plus
   at most one loader (`ComponentSet`); `vl_meta::loader` normalizes every loader source into one
   `LoaderProfile` (main class, libraries with hashes, arguments, the game it inherits from),
@@ -750,9 +797,10 @@ built-in defaults. An instance overrides a whole group or inherits it (`Option` 
 `Overrides`); `Settings::with_overrides` computes the effective settings. Every group has range
 checks (`validate`) and every type keeps unknown fields (`Extra`).
 
-Two more groups are global only (`Settings::with_overrides` always takes them from the global
+Three more groups are global only (`Settings::with_overrides` always takes them from the global
 settings): `advanced`, the limits of launcher logs and the cache and `log_mask_home` (see
-Launcher log), and `launcher`, the desktop
+Launcher log); `storage`, the limits of the trash of deleted instances (`trash_days`, 30 by
+default, 1 to 3650; `trash_max_gib`, 20 by default, 1 to 65536); and `launcher`, the desktop
 app's window around a running game: `after_launch` (`hide_to_tray`, the default: the window
 closes and the launcher watches the game from the tray; `keep_open`; `close_launcher`) and
 `on_game_exit` (`show_window`, the default, or `nothing`; a crash always brings the window back)

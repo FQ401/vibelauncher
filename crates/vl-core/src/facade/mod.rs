@@ -38,6 +38,7 @@ use crate::self_update::{SelfUpdateCommand, SelfUpdateStatus};
 use crate::settings::{Overrides, Settings, SettingsCommand, SettingsEvent};
 use crate::storage::{CleanupReport, PathCheck, StorageCommand, StorageInfo, StorageSuggestion};
 use crate::task::{TaskCommand, TaskEvent, TaskSnapshot};
+use crate::trash::{PurgeReport, TrashList};
 use crate::version::{GameVersion, LoaderVersionInfo, VersionCommand, VersionEvent};
 
 /// The launcher behind a front end: the real backend or the mock.
@@ -103,6 +104,10 @@ pub enum Response {
     Instances(Vec<InstanceSummary>),
     /// One instance.
     Instance(InstanceSummary),
+    /// The deleted instances.
+    Trash(TrashList),
+    /// What a purge of the trash did.
+    TrashPurged(PurgeReport),
     /// Game versions.
     Versions(Vec<GameVersion>),
     /// Versions of a mod loader for a game version, newest first.
