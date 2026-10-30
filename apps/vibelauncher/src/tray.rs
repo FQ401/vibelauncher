@@ -170,13 +170,14 @@ mod platform {
         let icon = tray_icon::Icon::from_rgba(rgba, width, height).map_err(|e| e.to_string())?;
         let builder = TrayIconBuilder::new()
             .with_id("vibelauncher")
-            .with_icon(icon)
             .with_tooltip(&texts.tooltip)
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(cfg!(target_os = "macos"));
         // On macOS the icon is a template image: the menu bar tints it for light and dark.
         #[cfg(target_os = "macos")]
-        let builder = builder.with_icon_as_template(true);
+        let builder = builder.with_icon_templated(icon);
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.with_icon(icon);
         // On macOS a title is text drawn next to the icon in the menu bar.
         #[cfg(not(target_os = "macos"))]
         let builder = builder.with_title("VibeLauncher");
