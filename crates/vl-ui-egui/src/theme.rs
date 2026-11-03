@@ -13,13 +13,6 @@ pub enum ThemeMode {
 }
 
 impl ThemeMode {
-    pub fn toggled(self) -> Self {
-        match self {
-            ThemeMode::Dark => ThemeMode::Light,
-            ThemeMode::Light => ThemeMode::Dark,
-        }
-    }
-
     fn theme(self) -> Theme {
         match self {
             ThemeMode::Dark => Theme::Dark,
@@ -55,42 +48,44 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// The dark theme: an inversion of the light one (`#1B1B1D` … `#F2F2F2`).
     pub const DARK: Palette = Palette {
-        bg: hex(0x0E0B16),
-        surface: hex(0x15111F),
-        surface_raised: hex(0x1C1728),
-        surface_sunken: hex(0x0A0810),
-        surface_hover: hex(0x261F36),
-        border: hex(0x2E2640),
-        border_strong: hex(0x7A708F),
-        text: hex(0xEDEAF5),
-        text_muted: hex(0xB0A9C2),
-        accent: hex(0xA78BFA),
-        accent_solid: hex(0x7C3AED),
-        accent_hover: hex(0x6D28D9),
-        on_accent: hex(0xFFFFFF),
-        accent_subtle: hex(0x2A2145),
-        selection: hex(0x4C3A8A),
+        bg: hex(0x1B1B1D),
+        surface: hex(0x242426),
+        surface_raised: hex(0x242426),
+        surface_sunken: hex(0x323234),
+        surface_hover: hex(0x323234),
+        border: hex(0x4C4C4F),
+        border_strong: hex(0xF2F2F2),
+        text: hex(0xF2F2F2),
+        text_muted: hex(0xA3A3A3),
+        accent: hex(0xF2F2F2),
+        accent_solid: hex(0xF2F2F2),
+        accent_hover: hex(0xFFFFFF),
+        on_accent: hex(0x1B1B1D),
+        accent_subtle: hex(0x323234),
+        selection: hex(0x48484B),
         success: hex(0x4ADE80),
         danger: hex(0xF87171),
     };
 
+    /// The light theme: a monochrome scale (`#F2F2F2` … `#222222`), no hue.
     pub const LIGHT: Palette = Palette {
-        bg: hex(0xF7F5FB),
+        bg: hex(0xF2F2F2),
         surface: hex(0xFFFFFF),
         surface_raised: hex(0xFFFFFF),
-        surface_sunken: hex(0xEEEBF5),
-        surface_hover: hex(0xF0ECF8),
-        border: hex(0xDAD4E6),
-        border_strong: hex(0x7C7390),
-        text: hex(0x1A1426),
-        text_muted: hex(0x4A4360),
-        accent: hex(0x6D28D9),
-        accent_solid: hex(0x6D28D9),
-        accent_hover: hex(0x5B21B6),
+        surface_sunken: hex(0xE6E6E6),
+        surface_hover: hex(0xE6E6E6),
+        border: hex(0xBDBDBD),
+        border_strong: hex(0x222222),
+        text: hex(0x222222),
+        text_muted: hex(0x6B6B6B),
+        accent: hex(0x222222),
+        accent_solid: hex(0x222222),
+        accent_hover: hex(0x000000),
         on_accent: hex(0xFFFFFF),
-        accent_subtle: hex(0xEDE7FB),
-        selection: hex(0xD9CCF7),
+        accent_subtle: hex(0xE6E6E6),
+        selection: hex(0xE6E6E6),
         success: hex(0x166534),
         danger: hex(0xB91C1C),
     };

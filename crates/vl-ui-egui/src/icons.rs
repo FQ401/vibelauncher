@@ -63,24 +63,6 @@ pub fn paint_ring(
     }
 }
 
-/// Sun (light theme active) or moon-like filled disc (dark theme active).
-pub fn paint_theme(painter: &Painter, center: Pos2, dark: bool, color: Color32, bg: Color32) {
-    if dark {
-        painter.circle_filled(center, 8.0, color);
-        painter.circle_filled(center + vec2(4.0, -3.0), 7.0, bg);
-    } else {
-        painter.circle_stroke(center, 5.0, Stroke::new(1.8, color));
-        for i in 0..8 {
-            let a = (i as f32 * 45.0).to_radians();
-            let dir = vec2(a.cos(), a.sin());
-            painter.line_segment(
-                [center + dir * 8.0, center + dir * 11.0],
-                Stroke::new(1.8, color),
-            );
-        }
-    }
-}
-
 fn arc(center: Pos2, radius: f32, from_deg: f32, to_deg: f32) -> Vec<Pos2> {
     const STEPS: usize = 24;
     (0..=STEPS)

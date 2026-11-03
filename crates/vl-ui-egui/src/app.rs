@@ -22,8 +22,15 @@ use crate::title_bar::{self, BAR_HEIGHT, ButtonColors, ButtonLabels, MAC_BUTTONS
 use crate::widgets::{chip, gradient_rect, text_at};
 use crate::window::{TrayTexts, WindowChrome, WindowRequest};
 
-const RAIL_WIDTH: f32 = 72.0;
-const TASKS_WIDTH: f32 = 360.0;
+const RAIL_WIDTH: f32 = 88.0;
+const TASKS_WIDTH: f32 = 440.0;
+/// The sections along the top of the rail; the account sits at its bottom.
+const PRIMARY_SECTIONS: [Section; 4] = [
+    Section::Home,
+    Section::Instances,
+    Section::Catalog,
+    Section::Settings,
+];
 /// The widest the search field of the title bar grows.
 const SEARCH_MAX_WIDTH: f32 = 400.0;
 /// Ctrl+K (Cmd+K on macOS) focuses the search field.
@@ -375,50 +382,70 @@ impl Launcher {
         }
     }
 
+    /// The rail of the sections (layouts «Первый запуск и оболочка», frame 40380): 88 wide, the
+    /// logo on top, four items of 72x56 with a 24 px icon and a 12 pt label, the account pinned
+    /// to the bottom, a hairline border on the right.
     fn rail(&mut self, ui: &mut Ui, p: &Palette) {
         let i18n = &self.i18n;
-        let mut theme_change = None;
-        Panel::left("rail")
+        let panel = Panel::left("rail")
             .exact_size(RAIL_WIDTH)
             .resizable(false)
             .frame(
                 Frame::new()
                     .fill(p.surface)
-                    .inner_margin(Margin::symmetric(0, 16)),
+                    .inner_margin(Margin::symmetric(8, 16)),
             )
             .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                    for section in Section::ALL {
-                        if rail_button(
+                    let logo = ui
+                        .allocate_exact_size(vec2(36.0, 36.0), Sense::hover())
+                        .1
+                        .rect;
+                    gradient_rect(ui, logo, 10, p.accent, p.accent_hover);
+                    text_at(
+                        ui,
+                        logo.center(),
+                        Align2::CENTER_CENTER,
+                        "V",
+                        18.0,
+                        p.on_accent,
+                    );
+                    ui.add_space(12.0);
+                    for section in PRIMARY_SECTIONS {
+                        if rail_item(
                             ui,
                             p,
                             &i18n.t(section.label_id()),
                             self.section == section,
-                            |painter, rect, color| {
-                                icons::paint_section(painter, rect, section, color);
-                            },
+                            section,
                         ) {
                             self.section = section;
                         }
                     }
                 });
                 ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
-                    let dark = self.theme == ThemeMode::Dark;
-                    let label = if dark {
-                        i18n.t(strings::THEME_LIGHT)
-                    } else {
-                        i18n.t(strings::THEME_DARK)
-                    };
-                    if rail_button(ui, p, &label, false, |painter, rect, color| {
-                        icons::paint_theme(painter, rect.center(), dark, color, p.surface);
-                    }) {
-                        theme_change = Some(self.theme.toggled());
+                    let account = Section::Account;
+                    if rail_item(
+                        ui,
+                        p,
+                        &i18n.t(account.label_id()),
+                        self.section == account,
+                        account,
+                    ) {
+                        self.section = account;
                     }
                 });
             });
-        if let Some(theme) = theme_change {
-            self.set_theme(&ui.ctx().clone(), theme);
-        }
+        // The hairline on the right of the rail's column, which goes on up through the bar.
+        let rect = panel.response.rect;
+        ui.painter().line_segment(
+            [
+                pos2(rect.right() - 0.5, 0.0),
+                pos2(rect.right() - 0.5, rect.bottom()),
+            ],
+            egui::Stroke::new(1.0, p.border),
+        );
     }
 
     /// The title bar: the logo, the section, the search field, the status chips, the tasks
@@ -613,6 +640,33 @@ fn error_chip(ui: &mut Ui, p: &Palette, label: &str) -> egui::Response {
             .stroke(egui::Stroke::NONE)
             .corner_radius(CornerRadius::same(12)),
     )
+}
+
+/// A 72x56 item of the rail: a 24x24 icon with its 12 pt label below, the selected one filled
+/// with the track color. Returns whether it was clicked.
+fn rail_item(ui: &mut Ui, p: &Palette, label: &str, selected: bool, section: Section) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(72.0, 56.0), Sense::click());
+    let fill = if selected {
+        p.accent_subtle
+    } else if response.hovered() {
+        p.surface_hover
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    let color = if selected { p.text } else { p.text_muted };
+    let icon = Rect::from_center_size(rect.center() - vec2(0.0, 10.0), vec2(24.0, 24.0));
+    icons::paint_section(ui.painter(), icon, section, color);
+    text_at(
+        ui,
+        rect.center() + vec2(0.0, 16.0),
+        Align2::CENTER_CENTER,
+        label,
+        12.0,
+        color,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    response.clicked()
 }
 
 /// A 48x48 rail button; `paint` draws its icon. Returns whether it was clicked.
@@ -932,6 +986,19 @@ mod tests {
         );
         let mut window = Window::new(WindowChrome::System);
         assert!(window.click(0.0, 400.0).is_empty());
+    }
+
+    #[test]
+    fn the_rail_switches_sections_and_pins_the_account_to_the_bottom() {
+        let mut window = Window::new(WindowChrome::Custom);
+        // The rail: 88 wide, the logo, then Home, Instances, Catalog, Settings; the account
+        // sits at the bottom.
+        window.click(44.0, 212.0);
+        assert_eq!(window.launcher.section, Section::Instances);
+        window.click(44.0, 272.0);
+        assert_eq!(window.launcher.section, Section::Catalog);
+        window.click(44.0, 756.0);
+        assert_eq!(window.launcher.section, Section::Account);
     }
 
     #[test]
