@@ -14,7 +14,7 @@ use vl_core::{BackendInfo, Facade, InstanceId};
 use crate::i18n::I18n;
 use crate::icons;
 use crate::model::{GameSignal, Model};
-use crate::nav::Section;
+use crate::nav::{Page, Router, Section};
 use crate::notice::{self, BannerIcon, BannerSpec, NoticeAction, Toast};
 use crate::screens::{self, Action, Ctx};
 use crate::strings;
@@ -46,7 +46,7 @@ fn search_id() -> Id {
 pub struct Launcher {
     model: Model,
     i18n: I18n,
-    section: Section,
+    router: Router,
     theme: ThemeMode,
     tasks_open: bool,
     /// What the window should do, for the app to take.
@@ -71,7 +71,7 @@ impl Launcher {
         Self {
             model: Model::new(facade),
             i18n: I18n::default(),
-            section: Section::default(),
+            router: Router::default(),
             theme,
             tasks_open: false,
             request: None,
@@ -192,7 +192,7 @@ impl Launcher {
                     if exit.crashed && !exit.stopped_by_user {
                         self.model.last_error = Some(self.crash_message(&instance, &exit));
                         self.model.selected = Some(instance);
-                        self.section = Section::Home;
+                        self.router.open(Page::Root(Section::Home));
                         self.toasts.push(Toast::error(
                             self.i18n.t(strings::TOAST_CRASH_TITLE),
                             self.i18n.t(strings::TOAST_CRASH_BODY),
@@ -269,9 +269,14 @@ impl Launcher {
         self.i18n.set_language(lang, ftl)
     }
 
-    /// Opens a section.
+    /// Opens a section's root page.
     pub fn set_section(&mut self, section: Section) {
-        self.section = section;
+        self.router.open(Page::Root(section));
+    }
+
+    /// The section of the open page.
+    pub fn section(&self) -> Section {
+        self.router.section()
     }
 
     /// Switches the light or dark theme.
@@ -328,7 +333,7 @@ impl Launcher {
         // The offline banner tops the content of the main sections; it leaves on its own.
         let offline = self.model.backend.is_none()
             && matches!(
-                self.section,
+                self.router.section(),
                 Section::Home | Section::Instances | Section::Catalog
             );
         let mut retry = false;
@@ -361,28 +366,28 @@ impl Launcher {
                     i18n: &self.i18n,
                     chrome: self.chrome,
                 };
-                action = match self.section {
-                    Section::Home => screens::home(ui, &mut cx),
-                    Section::Instances => {
+                action = match self.router.page() {
+                    Page::Root(Section::Home) => screens::home(ui, &mut cx),
+                    Page::Root(Section::Instances) => {
                         screens::instances(ui, &mut cx);
                         None
                     }
-                    Section::Catalog => {
+                    Page::Root(Section::Catalog) => {
                         screens::stub(ui, &palette, &self.i18n, strings::STUB_CATALOG);
                         None
                     }
-                    Section::Account => {
+                    Page::Root(Section::Account) => {
                         screens::stub(ui, &palette, &self.i18n, strings::STUB_ACCOUNT);
                         None
                     }
-                    Section::Settings => {
+                    Page::Root(Section::Settings) => {
                         screens::settings(ui, &mut cx);
                         None
                     }
                 };
             });
         if let Some(Action::OpenInstances) = action {
-            self.section = Section::Instances;
+            self.router.open(Page::Root(Section::Instances));
         }
         if retry {
             self.model.retry();
@@ -403,20 +408,21 @@ impl Launcher {
     }
 
     /// Ctrl+1 Home, Ctrl+2 Instances, Ctrl+3 Account, Ctrl+, Settings, Ctrl+J Tasks, Ctrl+K
-    /// search.
+    /// search. Esc closes the topmost layer (N4: menu → modal → panel → page); Alt+← and the
+    /// mouse back button return to the previous page.
     fn shortcuts(&mut self, ctx: &Context) {
         let pressed = |key: Key| ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, key));
         if pressed(Key::Num1) {
-            self.section = Section::Home;
+            self.router.rail(Section::Home);
         }
         if pressed(Key::Num2) {
-            self.section = Section::Instances;
+            self.router.rail(Section::Instances);
         }
         if pressed(Key::Num3) {
-            self.section = Section::Account;
+            self.router.rail(Section::Account);
         }
         if pressed(Key::Comma) {
-            self.section = Section::Settings;
+            self.router.rail(Section::Settings);
         }
         if pressed(Key::J) {
             self.tasks_open = !self.tasks_open;
@@ -424,8 +430,20 @@ impl Launcher {
         if ctx.input_mut(|i| i.consume_shortcut(&SEARCH_SHORTCUT)) {
             ctx.memory_mut(|m| m.request_focus(search_id()));
         }
-        if self.tasks_open && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-            self.tasks_open = false;
+        if ctx.input_mut(|i| i.consume_key(Modifiers::ALT, Key::ArrowLeft)) {
+            self.router.back();
+        }
+        if ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Extra1)) {
+            self.router.back();
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            if self.confirm_stop {
+                self.confirm_stop = false;
+            } else if self.tasks_open {
+                self.tasks_open = false;
+            } else {
+                self.router.back();
+            }
         }
     }
 
@@ -464,10 +482,10 @@ impl Launcher {
                             ui,
                             p,
                             &i18n.t(section.label_id()),
-                            self.section == section,
+                            self.router.section() == section,
                             section,
                         ) {
-                            self.section = section;
+                            self.router.rail(section);
                         }
                     }
                 });
@@ -477,10 +495,10 @@ impl Launcher {
                         ui,
                         p,
                         &i18n.t(account.label_id()),
-                        self.section == account,
+                        self.router.section() == account,
                         account,
                     ) {
-                        self.section = account;
+                        self.router.rail(account);
                     }
                 });
             });
@@ -585,7 +603,7 @@ impl Launcher {
                         .layout(Layout::left_to_right(Align::Center)),
                     |ui| {
                         ui.label(
-                            RichText::new(self.i18n.t(self.section.label_id()))
+                            RichText::new(self.i18n.t(self.router.section().label_id()))
                                 .heading()
                                 .color(p.text),
                         );
@@ -689,18 +707,33 @@ fn error_chip(ui: &mut Ui, p: &Palette, label: &str) -> egui::Response {
     )
 }
 
+/// The stable id of a rail item: focus, tab order and tests share it.
+fn rail_item_id(section: Section) -> Id {
+    Id::unique(("rail-item", section.slot()))
+}
+
 /// A 72x56 item of the rail: a 24x24 icon with its 12 pt label below, the selected one filled
-/// with the track color. Returns whether it was clicked.
+/// with the track color. Reachable by Tab, activated with Enter or Space; returns whether it
+/// was activated.
 fn rail_item(ui: &mut Ui, p: &Palette, label: &str, selected: bool, section: Section) -> bool {
-    let (rect, response) = ui.allocate_exact_size(vec2(72.0, 56.0), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(vec2(72.0, 56.0), Sense::hover());
+    let response = ui.interact(rect, rail_item_id(section), Sense::click());
     let fill = if selected {
         p.accent_subtle
-    } else if response.hovered() {
+    } else if response.hovered() || response.has_focus() {
         p.surface_hover
     } else {
         egui::Color32::TRANSPARENT
     };
     ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(8),
+            egui::Stroke::new(1.5, p.border_strong),
+            egui::StrokeKind::Inside,
+        );
+    }
     let color = if selected { p.text } else { p.text_muted };
     let icon = Rect::from_center_size(rect.center() - vec2(0.0, 10.0), vec2(24.0, 24.0));
     icons::paint_section(ui.painter(), icon, section, color);
@@ -714,6 +747,8 @@ fn rail_item(ui: &mut Ui, p: &Palette, label: &str, selected: bool, section: Sec
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     response.clicked()
+        || (response.has_focus()
+            && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space)))
 }
 
 /// A 48x48 rail button; `paint` draws its icon. Returns whether it was clicked.
@@ -827,7 +862,7 @@ mod tests {
             error.contains("crashed") && error.contains("exit code 1"),
             "{error}"
         );
-        assert_eq!(launcher.section, Section::Home);
+        assert_eq!(launcher.section(), Section::Home);
         assert_eq!(launcher.model.selected, Some(id));
     }
 
@@ -915,9 +950,12 @@ mod tests {
 
     impl Window {
         fn new(chrome: WindowChrome) -> Self {
+            Self::with(chrome, MockOptions::instant())
+        }
+
+        fn with(chrome: WindowChrome, options: MockOptions) -> Self {
             let ctx = Context::default();
-            let mut launcher =
-                Launcher::new(&ctx, Box::new(MockFacade::new(MockOptions::instant())));
+            let mut launcher = Launcher::new(&ctx, Box::new(MockFacade::new(options)));
             launcher.set_window_chrome(chrome);
             let mut window = Self {
                 ctx,
@@ -1041,11 +1079,11 @@ mod tests {
         // The rail: 88 wide, the logo, then Home, Instances, Catalog, Settings; the account
         // sits at the bottom.
         window.click(44.0, 212.0);
-        assert_eq!(window.launcher.section, Section::Instances);
+        assert_eq!(window.launcher.section(), Section::Instances);
         window.click(44.0, 272.0);
-        assert_eq!(window.launcher.section, Section::Catalog);
+        assert_eq!(window.launcher.section(), Section::Catalog);
         window.click(44.0, 756.0);
-        assert_eq!(window.launcher.section, Section::Account);
+        assert_eq!(window.launcher.section(), Section::Account);
     }
 
     #[test]
@@ -1061,5 +1099,123 @@ mod tests {
         }]);
         window.frame(Vec::new());
         assert_eq!(window.ctx.memory(|m| m.focused()), Some(search_id()));
+    }
+
+    fn key(key: Key, modifiers: Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn alt_left_and_the_mouse_back_button_return_to_the_previous_page() {
+        let mut window = Window::new(WindowChrome::Custom);
+        window.click(44.0, 272.0);
+        assert_eq!(window.launcher.section(), Section::Catalog);
+        window.frame(vec![key(Key::ArrowLeft, Modifiers::ALT)]);
+        assert_eq!(window.launcher.section(), Section::Home);
+        // The history is empty now: going back is a no-op.
+        window.frame(vec![key(Key::ArrowLeft, Modifiers::ALT)]);
+        assert_eq!(window.launcher.section(), Section::Home);
+
+        window.click(44.0, 332.0);
+        assert_eq!(window.launcher.section(), Section::Settings);
+        // The back button of the mouse clicks on its release.
+        let press = egui::Event::PointerButton {
+            pos: pos2(640.0, 400.0),
+            button: egui::PointerButton::Extra1,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        };
+        let release = egui::Event::PointerButton {
+            pos: pos2(640.0, 400.0),
+            button: egui::PointerButton::Extra1,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        };
+        window.frame(vec![press]);
+        window.frame(vec![release]);
+        assert_eq!(window.launcher.section(), Section::Home);
+    }
+
+    #[test]
+    fn escape_closes_the_layers_in_order_modal_panel_page() {
+        let mut window = Window::new(WindowChrome::Custom);
+        // Without layers Esc walks the page history back (N4).
+        window.click(44.0, 212.0);
+        assert_eq!(window.launcher.section(), Section::Instances);
+        window.frame(vec![key(Key::Escape, Modifiers::NONE)]);
+        assert_eq!(window.launcher.section(), Section::Home);
+        window.frame(vec![key(Key::Escape, Modifiers::NONE)]);
+        assert_eq!(window.launcher.section(), Section::Home, "history is empty");
+
+        // The panel closes before the page goes back.
+        window.frame(vec![key(Key::J, Modifiers::COMMAND)]);
+        assert!(window.launcher.tasks_open);
+        window.frame(vec![key(Key::J, Modifiers::COMMAND)]);
+        window.click(44.0, 272.0);
+        window.frame(vec![key(Key::J, Modifiers::COMMAND)]);
+        assert!(window.launcher.tasks_open);
+        window.frame(vec![key(Key::Escape, Modifiers::NONE)]);
+        assert!(!window.launcher.tasks_open);
+        assert_eq!(
+            window.launcher.section(),
+            Section::Catalog,
+            "the page stays"
+        );
+
+        // The modal closes first, then the panel, then the page. The modal only stands while a
+        // game runs, so start one on the mock.
+        let mut window = Window::with(WindowChrome::Custom, running_game());
+        launch(&mut window.launcher);
+        for _ in 0..20 {
+            window.frame(Vec::new());
+            if window.launcher.game_running() {
+                break;
+            }
+        }
+        assert!(window.launcher.game_running());
+        window.launcher.ask_stop_game();
+        window.launcher.tasks_open = true;
+        window.frame(Vec::new());
+        assert!(window.launcher.tasks_open && window.launcher.confirm_stop);
+        window.frame(vec![key(Key::Escape, Modifiers::NONE)]);
+        assert!(!window.launcher.confirm_stop, "the modal layer first");
+        assert!(window.launcher.tasks_open, "the panel stays");
+        window.frame(vec![key(Key::Escape, Modifiers::NONE)]);
+        assert!(!window.launcher.tasks_open, "then the panel");
+        assert_eq!(
+            window.launcher.section(),
+            Section::Home,
+            "the page stays until the layers are closed"
+        );
+    }
+
+    #[test]
+    fn the_rail_is_reachable_by_tab_and_activates_with_enter() {
+        let mut window = Window::new(WindowChrome::Custom);
+        // Tab walks every focusable widget; the rail items are among them.
+        let rail_ids: Vec<Id> = Section::ALL.into_iter().map(rail_item_id).collect();
+        let mut reached = false;
+        for _ in 0..32 {
+            window.frame(vec![key(Key::Tab, Modifiers::NONE)]);
+            let focused = window.ctx.memory(|m| m.focused());
+            if rail_ids.contains(&focused.expect("tab keeps the focus somewhere")) {
+                reached = true;
+                break;
+            }
+        }
+        assert!(reached, "Tab reaches the rail items");
+        // Enter on a focused rail item activates it.
+        window
+            .ctx
+            .memory_mut(|m| m.request_focus(rail_item_id(Section::Instances)));
+        window.frame(Vec::new());
+        window.frame(vec![key(Key::Enter, Modifiers::NONE)]);
+        assert_eq!(window.launcher.section(), Section::Instances);
     }
 }
