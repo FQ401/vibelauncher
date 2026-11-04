@@ -24,6 +24,12 @@ pub const LAST_ERROR: &str = "last-error";
 pub const DISMISS_HINT: &str = "dismiss-hint";
 pub const STARTUP_FAILED: &str = "startup-failed";
 
+pub const BANNER_OFFLINE_TITLE: &str = "banner-offline-title";
+pub const BANNER_OFFLINE_BODY: &str = "banner-offline-body";
+pub const ACTION_RETRY: &str = "action-retry";
+pub const TOAST_CRASH_TITLE: &str = "toast-crash-title";
+pub const TOAST_CRASH_BODY: &str = "toast-crash-body";
+
 pub const COL_NAME: &str = "col-name";
 pub const COL_VERSION: &str = "col-version";
 pub const COL_LOADER: &str = "col-loader";

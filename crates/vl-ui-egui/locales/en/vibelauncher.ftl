@@ -27,8 +27,12 @@ backend-lost = Core is not responding
 last-error = Something went wrong
 dismiss-hint = Click to dismiss
 startup-failed = The launcher could not start
-theme-to-dark = Dark theme
-theme-to-light = Light theme
+
+banner-offline-title = No connection
+banner-offline-body = The core is not answering. Check the network, then try again.
+action-retry = Retry
+toast-crash-title = The game crashed
+toast-crash-body = The details are in the game log next to the crash report.
 
 col-name = Name
 col-version = Version

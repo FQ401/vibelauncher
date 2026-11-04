@@ -74,6 +74,11 @@ impl Model {
         model
     }
 
+    /// Asks the core for everything again (the offline banner's Retry).
+    pub fn retry(&mut self) {
+        self.refresh();
+    }
+
     /// Re-reads all state with commands.
     fn refresh(&mut self) {
         self.send(Pending::Hello, Command::Hello);

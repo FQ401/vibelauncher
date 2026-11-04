@@ -15,6 +15,7 @@ use crate::i18n::I18n;
 use crate::icons;
 use crate::model::{GameSignal, Model};
 use crate::nav::Section;
+use crate::notice::{self, BannerIcon, BannerSpec, NoticeAction, Toast};
 use crate::screens::{self, Action, Ctx};
 use crate::strings;
 use crate::theme::{self, Palette, ThemeMode};
@@ -58,6 +59,8 @@ pub struct Launcher {
     chrome: WindowChrome,
     /// The text of the search field.
     search: String,
+    /// The event toasts, bottom right of the window.
+    toasts: notice::Toasts,
 }
 
 impl Launcher {
@@ -76,6 +79,7 @@ impl Launcher {
             confirm_stop: false,
             chrome: WindowChrome::default(),
             search: String::new(),
+            toasts: notice::Toasts::default(),
         }
     }
 
@@ -189,6 +193,10 @@ impl Launcher {
                         self.model.last_error = Some(self.crash_message(&instance, &exit));
                         self.model.selected = Some(instance);
                         self.section = Section::Home;
+                        self.toasts.push(Toast::error(
+                            self.i18n.t(strings::TOAST_CRASH_TITLE),
+                            self.i18n.t(strings::TOAST_CRASH_BODY),
+                        ));
                         self.request(WindowRequest::Show);
                     } else if self.quit_after_game && !self.game_running() {
                         self.request(WindowRequest::Quit);
@@ -317,9 +325,36 @@ impl Launcher {
                 });
         }
         let mut action = None;
+        // The offline banner tops the content of the main sections; it leaves on its own.
+        let offline = self.model.backend.is_none()
+            && matches!(
+                self.section,
+                Section::Home | Section::Instances | Section::Catalog
+            );
+        let mut retry = false;
+        let (offline_title, offline_body, retry_label) = (
+            self.i18n.t(strings::BANNER_OFFLINE_TITLE),
+            self.i18n.t(strings::BANNER_OFFLINE_BODY),
+            self.i18n.t(strings::ACTION_RETRY),
+        );
         CentralPanel::default()
             .frame(Frame::new().fill(palette.bg).inner_margin(Margin::same(24)))
             .show(ui, |ui| {
+                if offline {
+                    let outcome = notice::banner(
+                        ui,
+                        &palette,
+                        &BannerSpec {
+                            icon: BannerIcon::Dot,
+                            title: offline_title.clone(),
+                            body: offline_body.clone(),
+                            actions: vec![NoticeAction::primary("retry", retry_label.clone())],
+                            dismissible: false,
+                        },
+                    );
+                    retry = outcome.action.as_deref() == Some("retry");
+                    ui.add_space(12.0);
+                }
                 let mut cx = Ctx {
                     model: &mut self.model,
                     palette,
@@ -349,7 +384,19 @@ impl Launcher {
         if let Some(Action::OpenInstances) = action {
             self.section = Section::Instances;
         }
+        if retry {
+            self.model.retry();
+        }
         self.stop_question(ui);
+        // The toasts tick on the frame clock and stand while hovered or unfocused.
+        let focused = ctx.input(|i| i.focused);
+        let paused = !focused || self.toasts.hovered();
+        self.toasts
+            .tick(Duration::from_secs_f32(ctx.input(|i| i.stable_dt)), paused);
+        let toast_outcome = self
+            .toasts
+            .show(ui, &palette, &self.i18n.t(strings::DISMISS_HINT));
+        let _ = toast_outcome;
         if self.chrome == WindowChrome::Custom {
             title_bar::handle_resize(&ctx, title_bar::frame_of(&ctx, self.chrome));
         }

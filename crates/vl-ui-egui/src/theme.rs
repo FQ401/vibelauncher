@@ -45,6 +45,14 @@ pub struct Palette {
     pub selection: Color32,
     pub success: Color32,
     pub danger: Color32,
+    /// Inactive dots (steps, banner icons).
+    pub dots: Color32,
+    /// The inverted surface of toasts: dark on the light theme, light on the dark one.
+    pub inverse_surface: Color32,
+    /// Text on the inverted surface.
+    pub on_inverse: Color32,
+    /// Secondary text and the close sign on the inverted surface.
+    pub on_inverse_muted: Color32,
 }
 
 impl Palette {
@@ -67,6 +75,10 @@ impl Palette {
         selection: hex(0x48484B),
         success: hex(0x4ADE80),
         danger: hex(0xF87171),
+        dots: hex(0x4C4C4F),
+        inverse_surface: hex(0xF2F2F2),
+        on_inverse: hex(0x1B1B1D),
+        on_inverse_muted: hex(0x6B6B6B),
     };
 
     /// The light theme: a monochrome scale (`#F2F2F2` … `#222222`), no hue.
@@ -88,6 +100,10 @@ impl Palette {
         selection: hex(0xE6E6E6),
         success: hex(0x166534),
         danger: hex(0xB91C1C),
+        dots: hex(0xD9D9D9),
+        inverse_surface: hex(0x222222),
+        on_inverse: hex(0xFFFFFF),
+        on_inverse_muted: hex(0xCFCFCF),
     };
 }
 

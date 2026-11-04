@@ -14,6 +14,7 @@ mod i18n;
 mod icons;
 mod model;
 mod nav;
+mod notice;
 mod screens;
 mod strings;
 mod theme;
