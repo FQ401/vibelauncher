@@ -284,7 +284,6 @@ impl Toast {
     }
 
     /// A passing message with an action; stays a bit longer.
-    #[allow(dead_code)] // joined by the sections' events as they land
     pub fn action(title: impl Into<String>, body: impl Into<String>, action: NoticeAction) -> Self {
         Self {
             title: title.into(),
@@ -322,7 +321,8 @@ impl Toasts {
         }
     }
 
-    #[allow(dead_code)] // the tests count the stack; the shell will too
+    /// How many toasts stack up now.
+    #[allow(dead_code)] // the stack's size matters to the shell's tests
     pub fn len(&self) -> usize {
         self.toasts.len()
     }

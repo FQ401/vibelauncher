@@ -10,6 +10,7 @@ pub use home::home;
 pub use instances::instances;
 pub use settings::settings;
 pub use stub::stub;
+pub(crate) use tasks::task_title;
 pub use tasks::tasks_panel;
 
 use vl_core::instance::{InstanceSummary, Loader};

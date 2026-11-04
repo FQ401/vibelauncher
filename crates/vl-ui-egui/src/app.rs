@@ -1,5 +1,6 @@
 //! The window shell: the title bar, left rail, tasks panel and the page of the current section.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use egui::{
@@ -9,7 +10,7 @@ use egui::{
 use vl_core::instance::InstanceState;
 use vl_core::launch::GameExit;
 use vl_core::settings::{AfterLaunch, OnGameExit};
-use vl_core::{BackendInfo, Facade, InstanceId};
+use vl_core::{BackendInfo, Facade, InstanceId, TaskId};
 
 use crate::i18n::I18n;
 use crate::icons;
@@ -61,6 +62,8 @@ pub struct Launcher {
     search: String,
     /// The event toasts, bottom right of the window.
     toasts: notice::Toasts,
+    /// Failed tasks already announced by a toast («Нужно действие»).
+    toasted_failures: HashSet<TaskId>,
 }
 
 impl Launcher {
@@ -80,6 +83,7 @@ impl Launcher {
             chrome: WindowChrome::default(),
             search: String::new(),
             toasts: notice::Toasts::default(),
+            toasted_failures: HashSet::new(),
         }
     }
 
@@ -230,6 +234,27 @@ impl Launcher {
         text
     }
 
+    /// Announces failed background tasks: a toast with a «Подробнее» button that opens the
+    /// tasks panel (VL-A-2: фон → уведомление «Нужно действие» → панель по щелчку; модалка
+    /// сама не открывается).
+    fn announce_failures(&mut self) {
+        if self.model.failures.is_empty() {
+            self.toasted_failures.clear();
+            return;
+        }
+        for failure in &self.model.failures {
+            if self.toasted_failures.contains(&failure.id) {
+                continue;
+            }
+            self.toasted_failures.insert(failure.id);
+            self.toasts.push(Toast::action(
+                screens::task_title(&self.i18n, failure.kind, failure.subject.as_deref()),
+                failure.error.clone(),
+                NoticeAction::primary("details", self.i18n.t(strings::DETAILS)),
+            ));
+        }
+    }
+
     /// The "stop the game?" question.
     fn stop_question(&mut self, ui: &mut Ui) {
         if !self.confirm_stop {
@@ -301,6 +326,7 @@ impl Launcher {
         let ctx = ui.ctx().clone();
         self.model.poll();
         self.handle_signals();
+        self.announce_failures();
         self.shortcuts(&ctx);
         let delay = if self.model.busy() { 80 } else { 400 };
         ctx.request_repaint_after(Duration::from_millis(delay));
@@ -401,7 +427,9 @@ impl Launcher {
         let toast_outcome = self
             .toasts
             .show(ui, &palette, &self.i18n.t(strings::DISMISS_HINT));
-        let _ = toast_outcome;
+        if toast_outcome.action.as_deref() == Some("details") {
+            self.tasks_open = true;
+        }
         if self.chrome == WindowChrome::Custom {
             title_bar::handle_resize(&ctx, title_bar::frame_of(&ctx, self.chrome));
         }
@@ -640,15 +668,15 @@ impl Launcher {
         );
     }
 
-    /// The tasks (downloads) indicator: a ring of the first task's progress. Returns whether it
-    /// was clicked.
+    /// The tasks (downloads) indicator: a ring of the first task's progress, the «Нужно
+    /// действие» dot while failed tasks wait in the panel. Returns whether it was clicked.
     fn tasks_indicator(&self, ui: &mut Ui, p: &Palette) -> bool {
         let fraction = self
             .model
             .tasks
             .iter()
             .find_map(|t| t.progress.as_ref().and_then(|pr| pr.fraction()));
-        let active = !self.model.tasks.is_empty();
+        let needs_action = !self.model.failures.is_empty();
         rail_button(
             ui,
             p,
@@ -656,7 +684,7 @@ impl Launcher {
             self.tasks_open,
             |painter, rect, color| {
                 icons::paint_ring(painter, rect.center(), fraction, color, p.border);
-                if active {
+                if needs_action {
                     painter.circle_filled(rect.center() + vec2(14.0, -14.0), 4.0, p.accent);
                 }
             },
@@ -1193,6 +1221,52 @@ mod tests {
             Section::Home,
             "the page stays until the layers are closed"
         );
+    }
+
+    /// The width of `text` at 12 pt, for clicking a toast's action.
+    fn text_width(ctx: &Context, text: &str) -> f32 {
+        ctx.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(
+                    text.to_owned(),
+                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                    egui::Color32::WHITE,
+                )
+                .size()
+                .x
+        })
+    }
+
+    #[test]
+    fn a_failed_task_toasts_and_the_details_action_opens_the_tasks_panel() {
+        use vl_core::task::TaskKind;
+
+        use crate::model::TaskFailure;
+
+        let mut window = Window::new(WindowChrome::Custom);
+        window.launcher.model.failures.push(TaskFailure {
+            id: TaskId(1),
+            kind: Some(TaskKind::Download),
+            subject: Some("sodium.jar".to_owned()),
+            error: "no connection".to_owned(),
+        });
+        window.frame(Vec::new());
+        assert_eq!(window.launcher.toasts.len(), 1, "the failure is announced");
+        // The panel renders the «Нужно действие» block while the failure waits.
+        window.launcher.tasks_open = true;
+        window.frame(Vec::new());
+        assert_eq!(window.launcher.model.failures.len(), 1);
+        window.launcher.tasks_open = false;
+
+        // The toast's «Details» button: right to left, × (20), a gap (8), the button; the
+        // newest toast sits at the bottom right of the window.
+        let label = text_width(&window.ctx, "Details") + 24.0 + 2.0;
+        let center_x = 1280.0 - 24.0 - 16.0 - 20.0 - 8.0 - label / 2.0;
+        let center_y = 800.0 - 24.0 - 79.0 / 2.0;
+        window.click(center_x, center_y);
+        assert!(window.launcher.tasks_open, "the action opens the panel");
+        assert_eq!(window.launcher.toasts.len(), 0, "the clicked toast closes");
+        assert_eq!(window.launcher.model.failures.len(), 1);
     }
 
     #[test]

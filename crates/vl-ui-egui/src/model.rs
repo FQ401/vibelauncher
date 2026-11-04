@@ -7,11 +7,25 @@ use vl_core::account::AccountCommand;
 use vl_core::instance::{InstanceCommand, InstanceEvent, InstanceState, InstanceSummary};
 use vl_core::launch::{GameExit, LaunchCommand, LaunchEvent, LaunchRequest};
 use vl_core::settings::{LauncherSettings, Settings, SettingsCommand, SettingsEvent};
-use vl_core::task::{TaskCommand, TaskEvent, TaskOutcome, TaskSnapshot};
+use vl_core::task::{TaskCommand, TaskEvent, TaskKind, TaskOutcome, TaskSnapshot};
 use vl_core::{
     AccountId, BackendInfo, Command, Event, EventStream, Facade, InstanceId, Reply, Response,
     TaskId,
 };
+
+/// How many failed tasks the «Нужно действие» block keeps; the oldest fall off.
+const FAILURE_LIMIT: usize = 5;
+
+/// A background task that failed and waits for the user: the panel's «Нужно действие» block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskFailure {
+    pub id: TaskId,
+    /// `None` when the finished task was already gone from the list (a re-read raced it).
+    pub kind: Option<TaskKind>,
+    pub subject: Option<String>,
+    /// The error in English technical form (N10: «Подробности»).
+    pub error: String,
+}
 
 /// What an outstanding reply was asked for.
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +57,8 @@ pub struct Model {
     pub instances: Vec<InstanceSummary>,
     pub accounts: Vec<Account>,
     pub tasks: Vec<TaskSnapshot>,
+    /// Failed background tasks waiting for the user («Нужно действие»).
+    pub failures: Vec<TaskFailure>,
     /// The instance shown on the home showcase; `None` means the most recently played one.
     pub selected: Option<InstanceId>,
     /// The latest error to show, in English technical form.
@@ -65,6 +81,7 @@ impl Model {
             instances: Vec::new(),
             accounts: Vec::new(),
             tasks: Vec::new(),
+            failures: Vec::new(),
             selected: None,
             last_error: None,
             settings: None,
@@ -229,10 +246,24 @@ impl Model {
                 }
             }
             Event::Task(TaskEvent::Finished { id, outcome }) => {
-                self.tasks.retain(|t| t.info.id != id);
-                if let TaskOutcome::Failed(error) = outcome {
+                if let TaskOutcome::Failed(error) = &outcome {
+                    let info = self
+                        .tasks
+                        .iter()
+                        .find(|t| t.info.id == id)
+                        .map(|t| t.info.clone());
+                    self.failures.push(TaskFailure {
+                        id,
+                        kind: info.as_ref().map(|i| i.kind),
+                        subject: info.and_then(|i| i.subject),
+                        error: error.to_string(),
+                    });
+                    while self.failures.len() > FAILURE_LIMIT {
+                        self.failures.remove(0);
+                    }
                     self.last_error = Some(error.to_string());
                 }
+                self.tasks.retain(|t| t.info.id != id);
             }
             Event::Account(_) => {
                 self.send(Pending::Accounts, Command::Accounts(AccountCommand::List))
@@ -317,8 +348,101 @@ impl Model {
         self.send(Pending::Fire, Command::Tasks(TaskCommand::Cancel { id }));
     }
 
+    /// Drops a record of the panel's «Нужно действие» block (its ×).
+    pub fn dismiss_failure(&mut self, id: TaskId) {
+        self.failures.retain(|f| f.id != id);
+    }
+
     /// Whether anything is changing on its own, so the UI should keep repainting quickly.
     pub fn busy(&self) -> bool {
         !self.tasks.is_empty() || !self.pending.is_empty() || self.game_active()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use vl_core::error::Error;
+    use vl_core::facade::{EventBus, Reply};
+    use vl_core::task::{TaskInfo, TaskOutcome};
+
+    use super::*;
+
+    /// A facade that answers everything with `Done` and lets the test publish events.
+    struct Stub {
+        bus: Arc<EventBus>,
+    }
+
+    impl Facade for Stub {
+        fn call(&self, _command: Command) -> Reply {
+            Reply::ready(Ok(Response::Done))
+        }
+
+        fn subscribe(&self) -> EventStream {
+            self.bus.subscribe()
+        }
+    }
+
+    fn model() -> (Model, Arc<EventBus>) {
+        let bus = Arc::new(EventBus::default());
+        let model = Model::new(Box::new(Stub {
+            bus: Arc::clone(&bus),
+        }));
+        (model, bus)
+    }
+
+    fn start(bus: &EventBus, id: u64, kind: TaskKind, subject: Option<&str>) {
+        bus.publish(&Event::Task(TaskEvent::Started(TaskInfo {
+            id: TaskId(id),
+            parent: None,
+            kind,
+            subject: subject.map(str::to_owned),
+            cancellable: true,
+        })));
+    }
+
+    fn fail(bus: &EventBus, id: u64, error: &str) {
+        bus.publish(&Event::Task(TaskEvent::Finished {
+            id: TaskId(id),
+            outcome: TaskOutcome::Failed(Error::internal(error)),
+        }));
+    }
+
+    #[test]
+    fn a_failed_task_waits_in_the_needs_action_block() {
+        let (mut model, bus) = model();
+        start(&bus, 7, TaskKind::InstallResource, Some("sodium.jar"));
+        fail(&bus, 7, "the download link is gone");
+        model.poll();
+        assert!(model.tasks.is_empty(), "the task leaves the running list");
+        assert_eq!(model.failures.len(), 1);
+        let failure = &model.failures[0];
+        assert_eq!(failure.id, TaskId(7));
+        assert_eq!(failure.kind, Some(TaskKind::InstallResource));
+        assert_eq!(failure.subject.as_deref(), Some("sodium.jar"));
+        assert!(failure.error.contains("the download link is gone"));
+        assert_eq!(model.last_error.as_deref(), Some(failure.error.as_str()));
+
+        // Closing the record clears the block; a task gone from the list loses its kind.
+        model.dismiss_failure(TaskId(7));
+        assert!(model.failures.is_empty());
+        fail(&bus, 8, "offline");
+        model.poll();
+        assert_eq!(model.failures.len(), 1);
+        assert_eq!(model.failures[0].kind, None);
+    }
+
+    #[test]
+    fn the_needs_action_block_keeps_only_the_newest_failures() {
+        let (mut model, bus) = model();
+        for id in 0..8 {
+            start(&bus, id, TaskKind::Download, None);
+            fail(&bus, id, "failed");
+        }
+        model.poll();
+        assert_eq!(model.failures.len(), 5, "the oldest fall off");
+        assert_eq!(model.failures[0].id, TaskId(3));
+        assert_eq!(model.failures[4].id, TaskId(7));
     }
 }

@@ -11,6 +11,7 @@ pub const PLAY: &str = "action-play";
 pub const STOP: &str = "action-stop";
 pub const CONFIGURE: &str = "action-configure";
 pub const CANCEL: &str = "action-cancel";
+pub const DETAILS: &str = "action-details";
 
 pub const PREPARING: &str = "state-preparing";
 pub const PLAYING: &str = "state-playing";
@@ -18,6 +19,7 @@ pub const PLAYING: &str = "state-playing";
 pub const OTHER_INSTANCES: &str = "home-other-instances";
 pub const NO_INSTANCES: &str = "instances-empty";
 pub const NO_TASKS: &str = "tasks-empty";
+pub const NEEDS_ACTION: &str = "tasks-needs-action";
 pub const MOCK_DATA: &str = "mock-data";
 pub const BACKEND_LOST: &str = "backend-lost";
 pub const LAST_ERROR: &str = "last-error";

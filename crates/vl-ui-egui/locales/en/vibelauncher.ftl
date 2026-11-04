@@ -12,6 +12,7 @@ action-play = Play
 action-stop = Stop
 action-configure = Configure
 action-cancel = Cancel
+action-details = Details
 
 state-preparing = Preparing
 state-preparing-percent = Preparing { $percent }%
@@ -22,6 +23,7 @@ home-other-instances = Other instances
 home-play-time = Play time: { $time }
 instances-empty = No instances yet
 tasks-empty = No active tasks
+tasks-needs-action = Action needed
 mock-data = Test data
 backend-lost = Core is not responding
 last-error = Something went wrong
