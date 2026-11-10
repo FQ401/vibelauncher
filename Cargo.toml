@@ -39,7 +39,7 @@ vl-updater = { path = "crates/vl-updater" }
 
 # Third-party crates.
 apple-native-keyring-store = { version = "1.0.2", default-features = false, features = ["keychain"] }
-getrandom = "0.3.4"
+getrandom = "0.4.3"
 ctrlc = "3.5.2"
 rpassword = "7.5.4"
 regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode"] }
@@ -52,7 +52,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha1 = "0.11.0"
 sha2 = "0.11.1"
-sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk"] }
+sysinfo = { version = "0.40.1", default-features = false, features = ["system", "disk"] }
 tar = { version = "0.4.45", default-features = false }
 toml = "1.1.8"
 windows-native-keyring-store = "1.1.0"
